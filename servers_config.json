@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": ".\\venv\\Scripts\\python.exe",
+      "args": ["weather_server.py"],
+      "transport": "stdio"
+    },
+    "write": {
+      "command": ".\\venv\\Scripts\\python.exe", 
+      "args": ["write_server.py"],
+      "transport": "stdio"
+    },
+    "calculator": {
+      "command": ".\\venv\\Scripts\\python.exe",
+      "args": ["calculator_server.py"],
+      "transport": "stdio"
+    },
+    "amap": {
+      "command": ".\\venv\\Scripts\\python.exe",
+      "args": ["amap_server.py"],
+      "transport": "stdio"
+    }
+  }
+}

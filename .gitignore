@@ -1,0 +1,4 @@
+doc/
+venv/
+.env
+outputs/
