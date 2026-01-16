@@ -6,8 +6,12 @@ import asyncio
 import json
 import os
 import sys
+import warnings
 from typing import Optional
 from datetime import datetime
+
+# 过滤弃用警告
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from dotenv import load_dotenv
 
@@ -144,12 +148,14 @@ async def run_chat_loop() -> None:
     
     try:
         tools = await mcp_client.get_tools()
-        print(f"🔧 已加载 {len(tools)} 个工具")
+        print(f"🔧 已加载 {len(tools)} 个工具:")
         
-        # 打印可用工具
-        for tool in tools:
-            desc = tool.description[:50] if tool.description else "无描述"
-            print(f"   - {tool.name}: {desc}...")
+        # 按类别分组显示工具（紧凑格式）
+        tool_names = [t.name for t in tools]
+        # 简单分行显示，每行4个工具
+        for i in range(0, len(tool_names), 4):
+            row = tool_names[i:i+4]
+            print(f"   {' | '.join(row)}")
         
         # 3. 初始化大模型
         model = ChatTongyi(
