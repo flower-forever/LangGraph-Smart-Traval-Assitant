@@ -6,8 +6,9 @@
 - 用 AST 白名单替代 eval：只允许数字、四则运算、幂、取模、负号、
   括号、白名单函数和 pi/e，其余语法（属性访问、下标、比较、字符串等）直接拒绝
 - 校验先于求值：先检查表达式长度、嵌套深度、节点数量，再做运算
-- 幂运算在计算前检查底数和指数规模，9**9**9 这类超大幂会被立即拒绝，
-  不会先算出巨大的整数导致任务卡死
+- 幂运算按结果规模预判：整数幂在计算前用 log10(底数) * 指数估算结果的量级，
+  超过 MAX_INT_MAGNITUDE（10**1000）的巨大幂（如 9**9**9）被立即拒绝，
+  不会先算出天文数字；结果在限内的普通幂（如 2**100、10000**2）正常计算
 - 普通二元/一元运算只接受有限 int/float；列表/元组只能作为 sum/min/max 的
   受限参数，[1] * 1000000000 这类序列运算在分配内存前就被拒绝
 - 运算结果限定为有限 int/float，布尔、复数等不支持的结果直接报错
@@ -24,10 +25,15 @@ mcp = FastMCP("CalculatorServer")
 MAX_EXPRESSION_LENGTH = 200   # 表达式最大长度
 MAX_DEPTH = 12                # 最大嵌套深度（括号、函数调用等）
 MAX_NODES = 100               # AST 节点总数上限
-MAX_POWER_BASE = 1000         # 幂运算底数绝对值上限（整数底数）
-MAX_POWER_EXPONENT = 64       # 幂运算整数指数上限
 MAX_INT_MAGNITUDE = 10 ** 1000  # 任意中间/最终整数结果的位数上限
+MAX_POWER_EXPONENT = 1000000  # 幂运算整数指数绝对值上限（0/±1 底数除外）
 MAX_SEQUENCE_LENGTH = 50      # 列表/元组作为 sum/min/max 参数时的元素个数上限
+
+# MAX_INT_MAGNITUDE 的常用对数，用于幂运算的结果规模预判，由上方常量派生保持一致
+_MAX_INT_MAGNITUDE_LOG10 = float(len(str(MAX_INT_MAGNITUDE)) - 1)
+# 结果规模预判的安全余量：估算误差（约 1e-6）远小于它，
+# 估算落在 [上限-0.5, 上限+0.5] 的临界情况交由真实计算后精确比较
+_POW_ESTIMATE_MARGIN = 0.5
 
 # 允许的数学函数（白名单）
 SAFE_FUNCTIONS = {
@@ -99,23 +105,44 @@ def _as_number(value, context: str):
 
 def _safe_pow(base, exponent):
     """
-    带规模限制的幂运算。先做数值类型检查，再在真正计算前检查底数与指数，
-    避免 9**9**9 这类超大幂先算出天文数字；浮点溢出、复数等结果统一转成 ValueError。
+    带结果规模预判的幂运算。不做底数/指数的固定小上限，而是按结果规模拦截：
+
+    对整数底数和整数指数，计算前用 log10(|base|) * exponent 估算结果的常用对数，
+    超过 MAX_INT_MAGNITUDE（10**1000）对数量级的结果直接拒绝，不先计算超大整数；
+    估算值落在上限附近（±0.5，远大于浮点估算误差）的临界情况才真正计算，
+    因此被允许计算的整数结果不超过约 1002 位，9**9**9 这类超大幂毫秒级拒绝。
+    0/±1 底数的结果恒为 -1/0/1，不受指数上限影响；浮点溢出、复数结果、
+    0 的负指数幂统一转成 ValueError。
     """
     base = _as_number(base, "幂运算底数")
     exponent = _as_number(exponent, "幂运算指数")
 
-    # 整数底数 + 整数指数是最危险的组合，必须在计算前拦截
     if isinstance(base, int) and isinstance(exponent, int):
-        if abs(base) > MAX_POWER_BASE:
-            raise ValueError(f"幂运算底数过大（|底数| 不能超过 {MAX_POWER_BASE}）")
-        if exponent > MAX_POWER_EXPONENT:
-            raise ValueError(f"幂运算指数过大（指数不能超过 {MAX_POWER_EXPONENT}）")
+        # 0/±1 底数：任意合法整数指数的结果都是 O(1) 小数（0 的负指数报除零），
+        # 不存在大数分配风险，不做指数与规模限制，直接落到下方计算
+        if abs(base) > 1:
+            if abs(exponent) > MAX_POWER_EXPONENT:
+                raise ValueError(
+                    f"幂运算指数过大（指数绝对值不能超过 {MAX_POWER_EXPONENT}）"
+                )
+            if exponent > 0:
+                # 结果规模预判：log10(|base|**exponent) = exponent * log10(|base|)。
+                # 底数不超过 10**1000、指数不超过 MAX_POWER_EXPONENT，
+                # 浮点估算误差在 1e-6 量级，0.5 的余量足以覆盖：
+                # - 估算 > 上限+0.5：真实结果必然超过 10**1000，计算前拒绝；
+                # - 估算 < 上限-0.5：真实结果必然在限内，正常计算；
+                # - 之间的临界情况：结果距上限 3 倍以内（至多约 1002 位），
+                #   直接计算后交给 _check_result 精确比较，开销可忽略。
+                estimated_log10 = exponent * math.log10(abs(base))
+                if estimated_log10 > _MAX_INT_MAGNITUDE_LOG10 + _POW_ESTIMATE_MARGIN:
+                    raise ValueError(
+                        "幂运算结果过大（超过允许的 10**1000 规模上限）"
+                    )
 
     try:
         result = base ** exponent
     except OverflowError:
-        raise ValueError("计算错误: 幂运算结果溢出") from None
+        raise ValueError("计算错误: 幂运算指数或结果溢出") from None
     except ZeroDivisionError:
         raise ValueError("计算错误: 除数不能为零") from None
     return _check_result(result)

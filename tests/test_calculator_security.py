@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """calculator_server AST 白名单与运算规模限制测试。
 
-覆盖：原示例与常用运算正确、危险语法被拒、超大幂被快速拒绝（不先计算）、
-非白名单名称/函数被拒、深度和长度限制生效。
+覆盖：原示例与常用运算正确、危险语法被拒、超大幂按结果规模在计算前快速拒绝
+（不先计算）、结果规模限内的普通幂不被误伤、非白名单名称/函数被拒、
+深度和长度限制生效。
 """
 
 import asyncio
@@ -108,13 +109,19 @@ def test_huge_power_9_9_9_rejected_fast():
     [
         "9**9**9",
         "9^9^9",
-        "2**100000",
-        "2**999999999999",
-        "pow(2, 100000)",
-        "(9**9)**9",              # 中间结果作为底数超限
-        "9**(9*9)",               # 指数为表达式时同样受限
+        "pow(9, 9**9)",           # 超大指数从函数调用进来同样被拒
+        "pow(2, 100000)",         # 结果约 10**30103，函数形式同样被拒
+        "2**100000",              # 结果约 10**30103，超过 10**1000
+        "10**1001",               # 恰好超过结果规模上限
+        "2**999999999999",        # 指数远超上限
+        "2**(10**6)",             # 结果约 10**301030
+        "10**(10**5)",            # 结果为 10**100000
+        "(9**9)**(9**9)",         # 中间结果构成超大幂，等价于 9**(9**10)
+        "(10**300)**4",           # 中间结果做底数，结果约 10**1200
+        "(10**500)**3",           # 同上，约 10**1500
+        "(2**500)**(2**500)",     # 中间结果做指数，远超任何允许规模
         "2.0**10000",             # 浮点溢出快速失败
-        "1e308 * 10",
+        "1e308 * 10",             # 浮点乘法溢出为 inf
     ],
 )
 def test_huge_power_and_overflow_rejected_fast(bad_expr):
@@ -138,6 +145,46 @@ def test_large_but_allowed_math_still_works():
     assert safe_eval("10**50") == 10 ** 50
     assert safe_eval("1000**10") == 10 ** 30
     assert safe_eval("99999999999 * 99999999999") == 99999999999 ** 2
+
+
+def test_normal_powers_no_longer_rejected():
+    """结果规模限内的普通幂不再被底数/指数的固定小上限误伤（兼容性回归）。"""
+    assert safe_eval("10000**2") == 100000000
+    assert safe_eval("pow(10000, 2)") == 100000000
+    assert safe_eval("2**100") == 2 ** 100
+    assert safe_eval("pow(2, 100)") == 2 ** 100
+    assert safe_eval("10**65") == 10 ** 65
+    assert safe_eval("2**1000") == 2 ** 1000
+    assert safe_eval("(9**9)**9") == 9 ** 81     # 中间结果做底数，结果约 10**77
+    assert safe_eval("9**(9*9)") == 9 ** 81      # 指数为表达式，结果同样在限内
+    assert safe_eval("(-10000)**3") == -(10 ** 12)
+
+
+def test_power_result_size_boundary():
+    """恰好在 MAX_INT_MAGNITUDE = 10**1000 边界上的幂：一侧允许、一侧拒绝。"""
+    assert safe_eval("10**1000") == 10 ** 1000
+    with pytest.raises(ValueError, match="过大"):
+        safe_eval("10**1001")
+    # 2**3321 < 10**1000 < 2**3322
+    assert safe_eval("2**3321") == 2 ** 3321
+    with pytest.raises(ValueError, match="过大"):
+        safe_eval("2**3322")
+
+
+def test_special_bases_and_negative_exponents():
+    """0/±1 底数与负指数的边界：结果恒为小数，不受指数上限影响。"""
+    assert safe_eval("0**0") == 1
+    assert safe_eval("0**7") == 0
+    assert safe_eval("1**1000000000000") == 1
+    assert safe_eval("(-1)**999") == -1
+    assert safe_eval("(-1)**1000") == 1
+    assert safe_eval("1**-3") == 1.0
+    assert safe_eval("2**-10") == 1 / 1024
+    assert safe_eval("2**-100") == 2 ** -100
+    with pytest.raises(ValueError):              # 0 的负指数幂按除零拒绝
+        safe_eval("0**-1")
+    with pytest.raises(ValueError):
+        safe_eval("0 ** -1000000000000")
 
 
 # ---------------------------------------------------------------- 序列字面量与数值类型边界
