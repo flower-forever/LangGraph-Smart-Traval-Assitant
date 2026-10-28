@@ -8,12 +8,15 @@
 - MCP 初始化、模型初始化都做渐进降级：依赖缺失、venv 路径失效、上游超时都不会
   阻止 FastAPI 启动。
 - 新增的结构化行程逻辑在 travel_itinerary.py，保持 /chat、/tools 等旧接口兼容。
+- 地图增强有独立的 MAP_ENRICH_TIMEOUT（默认 40 秒）；超时只降级为纯文字行程，
+  不影响已经完成的模型调用。
 - 默认只监听 127.0.0.1（本机预览且没有认证）；显式设置 API_HOST（例如 0.0.0.0）
   才会对外监听，启动日志与 /health 的 warnings 会提示该风险。
 """
 import asyncio
 import inspect
 import json
+import math
 import os
 import re
 import sys
@@ -81,6 +84,25 @@ except Exception as exc:  # pragma: no cover - 本机常见缺少该可选依赖
 
 # ==================== 配置类 ====================
 
+# 地图增强（地址解析 + 路线）单独限时，避免网络抖动把请求拖到模型超时之外。
+# 默认值留出足够余量覆盖多站点并发请求，同时远小于 TRIP_PLAN_TIMEOUT。
+DEFAULT_MAP_ENRICH_TIMEOUT = 40.0
+
+
+def _positive_finite_timeout(name: str, default: float) -> float:
+    """读取正数超时配置；缺失、非法、非有限或非正数时回退默认值。"""
+
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(value) or value <= 0:
+        return default
+    return value
+
 
 class Configuration:
     """应用配置。每次 lifespan 启动时刷新，便于测试与热启动。"""
@@ -111,6 +133,9 @@ class Configuration:
             self.amap_timeout = float(os.getenv("AMAP_TIMEOUT", "6"))
         except ValueError:
             self.amap_timeout = 6.0
+        self.map_enrich_timeout = _positive_finite_timeout(
+            "MAP_ENRICH_TIMEOUT", DEFAULT_MAP_ENRICH_TIMEOUT
+        )
 
     @staticmethod
     def load_servers() -> dict:
@@ -218,6 +243,51 @@ def _safe_error(exc: BaseException) -> str:
     text = re.sub(r"(?i)(key=)[^&\s]+", r"\1***", text)
     text = re.sub(r"\s+", " ", text).strip()
     return (text or type(exc).__name__)[:300]
+
+
+def _with_map_warning(trip: TripPlan, warning: str) -> TripPlan:
+    """保留已生成的行程内容，只追加一条地图增强降级提示。"""
+
+    return trip.model_copy(
+        update={"warnings": dedupe_warnings(list(trip.warnings) + [warning])}
+    )
+
+
+async def _enrich_with_amap(trip: TripPlan, request: TripPlanRequest) -> TripPlan:
+    """创建并关闭本次请求专用的高德客户端，完成地图增强。"""
+
+    async with AMapClient(cfg.amap_api_key, timeout=cfg.amap_timeout) as amap:
+        return await enrich_trip_with_map(trip, request, amap)
+
+
+async def _apply_map_enrichment(trip: TripPlan, request: TripPlanRequest) -> TripPlan:
+    """给已生成的文字行程补地图数据，只对这段增强单独限时。
+
+    - 未配置高德密钥时直接返回，不做无意义的网络等待。
+    - 超时只放弃地图数据，保留已生成的文字行程，不编造坐标或路线。
+    - 内部任务被取消时 ``async with`` 会关闭 httpx 客户端；外层取消
+      （``CancelledError``）不在这里捕获，继续向上传播。
+    """
+
+    if not cfg.amap_api_key:
+        return await enrich_trip_with_map(trip, request, None)
+
+    try:
+        return await asyncio.wait_for(
+            _enrich_with_amap(trip, request),
+            timeout=cfg.map_enrich_timeout,
+        )
+    except asyncio.TimeoutError:
+        return _with_map_warning(
+            trip,
+            f"地图数据超时（>{cfg.map_enrich_timeout:g} 秒）："
+            "已保留已生成的文字行程，坐标与路线未获取，未使用推测数据。",
+        )
+    except Exception as exc:
+        return _with_map_warning(
+            trip,
+            "地图数据增强失败，已返回不含实时地图数据的行程：" + _safe_error(exc),
+        )
 
 
 def _resolve_server_config(raw_servers: dict) -> dict:
@@ -562,6 +632,7 @@ async def plan_trip(request: TripPlanRequest):
     """通过已初始化的 LangGraph Agent 生成结构化行程，再补地图坐标与路线。
 
     - 未配置高德密钥时仍返回行程，但坐标为空、路线为 unavailable，并给出 warnings。
+    - 地图增强使用独立的 MAP_ENRICH_TIMEOUT；超时只返回文字行程并写入 warnings。
     - 不会把示例数据冒充为动态生成结果。
     """
     if planner_agent is None:
@@ -609,25 +680,8 @@ async def plan_trip(request: TripPlanRequest):
             detail=f"行程结构校验失败：{_safe_error(exc)}",
         ) from exc
 
-    # 地图增强是可选能力：上游失败只降级，不丢掉已生成的文字行程。
-    if cfg.amap_api_key:
-        try:
-            async with AMapClient(cfg.amap_api_key, timeout=cfg.amap_timeout) as amap:
-                trip = await enrich_trip_with_map(trip, request, amap)
-        except Exception as exc:
-            trip = trip.model_copy(
-                update={
-                    "warnings": dedupe_warnings(
-                        list(trip.warnings)
-                        + [
-                            "地图数据增强失败，已返回不含实时地图数据的行程："
-                            f"{_safe_error(exc)}"
-                        ]
-                    )
-                }
-            )
-    else:
-        trip = await enrich_trip_with_map(trip, request, None)
+    # 地图增强是可选能力：独立限时，超时/失败只降级，不丢掉已生成的文字行程。
+    trip = await _apply_map_enrichment(trip, request)
 
     return trip
 

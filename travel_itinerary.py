@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import json
 import math
@@ -48,6 +49,59 @@ GENERATED_CONTENT_WARNING = (
     "只有 route_type=navigation 的路段来自高德路线规划接口，其余连线只是示意或不可用，"
     "不能用于导航。本接口不提供实时价格或预订。"
 )
+
+# 高德 Web 服务错误码。鉴权、权限或配额类错误不会因为单独重试某个请求而恢复；
+# 本次地图增强识别到后只停止发起新请求，已经发出的请求允许正常完成并保留结果。
+_AMAP_FATAL_ERROR_CODES = frozenset(
+    {
+        "10001",  # INVALID_USER_KEY
+        "10002",  # SERVICE_NOT_AVAILABLE
+        "10003",  # DAILY_QUERY_OVER_LIMIT
+        "10005",  # INVALID_USER_IP
+        "10006",  # INVALID_USER_DOMAIN
+        "10007",  # INVALID_USER_SIGNATURE
+        "10008",  # INVALID_USER_SCODE
+        "10009",  # USERKEY_PLAT_NOMATCH
+        "10012",  # INSUFFICIENT_PRIVILEGES
+        "10013",  # USER_KEY_RECYCLED
+        "10026",  # INVALID_REQUEST（账号封禁）
+        "10041",  # NO_EFFECTIVE_INTERFACE
+        "10044",  # USER_DAILY_QUERY_OVER_LIMIT
+        "10045",  # USER_ABROAD_DAILY_QUERY_OVER_LIMIT
+        "40000",  # QUOTA_PLAN_RUN_OUT
+        "40002",  # SERVICE_EXPIRED
+        "40003",  # ABROAD_QUOTA_PLAN_RUN_OUT
+    }
+)
+
+_AMAP_ERROR_HINTS = {
+    "10001": "API Key 无效或已过期",
+    "10002": "没有权限使用该服务或接口路径错误",
+    "10003": "日访问量已超限",
+    "10005": "IP 白名单校验失败",
+    "10006": "Key 绑定的域名无效",
+    "10007": "数字签名校验失败",
+    "10008": "MD5 安全码校验失败",
+    "10009": "Key 与 Web 服务接口不匹配",
+    "10012": "没有该服务的权限",
+    "10013": "Key 已被删除",
+    "10026": "账号处于封禁状态",
+    "10041": "接口权限已过期",
+    "10044": "账号日调用量超出限制",
+    "10045": "账号海外服务日调用量超出限制",
+    "40000": "服务余额已耗尽",
+    "40002": "购买的服务已到期",
+    "40003": "海外服务余额已耗尽",
+}
+
+# 高德官方地理编码匹配级别里，这些结果只是行政区或区域中心，不能当景点坐标。
+_BROAD_GEOCODE_LEVELS = frozenset({"国家", "省", "市", "区县", "开发区", "未知"})
+# 这些级别可能是具体地点，也可能只是道路/乡镇中心，需要再用返回地址做一次核对。
+_LOW_PRECISION_GEOCODE_LEVELS = frozenset({"乡镇", "村庄", "道路"})
+
+# POI 名称匹配阈值。断桥残雪 vs 断桥、灵隐寺 vs 灵隐禅寺能通过，
+# 西湖 vs 西湖音乐喷泉这种只共享短地名的结果会被拒绝。
+_POI_NAME_MATCH_MIN_SCORE = 0.6
 
 
 # ==================== 异常 ====================
@@ -267,15 +321,17 @@ def _normalize_time(value: Any, fallback_index: int) -> str:
 
 
 def _coerce_duration(value: Any) -> int | None:
+    """把模型给的停留时间转成 0..1440 分钟；inf / nan 一律视为缺失。"""
+
     if value is None or isinstance(value, bool):
         return None
     try:
-        minutes = int(float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
-    if minutes < 0 or minutes > 1440:
+    if not math.isfinite(number) or number < 0 or number > 1440:
         return None
-    return minutes
+    return int(number)
 
 
 def dedupe_warnings(warnings: list[str]) -> list[str]:
@@ -714,7 +770,9 @@ def parse_amap_polyline(polyline: Any) -> list[Coordinate]:
         try:
             lng = float(parts[0])
             lat = float(parts[1])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not (math.isfinite(lng) and math.isfinite(lat)):
             continue
         if not (-180.0 <= lng <= 180.0 and -90.0 <= lat <= 90.0):
             continue
@@ -722,16 +780,385 @@ def parse_amap_polyline(polyline: Any) -> list[Coordinate]:
     return points
 
 
+# ==================== 地图结果可信度 ====================
+
+_GENERIC_PLACE_SUFFIXES = (
+    "风景名胜区",
+    "历史文化街区",
+    "旅游度假区",
+    "风景区",
+    "度假区",
+    "博物院",
+    "博物馆",
+    "纪念馆",
+    "步行街",
+    "商业街",
+    "游览区",
+    "旅游区",
+    "景区",
+    "公园",
+    "广场",
+)
+
+# 同一类场所的通用后缀可以互换；公园和广场这种不同类别不能只因为共有词干就算匹配。
+_GENERIC_SUFFIX_CATEGORIES = {
+    "风景名胜区": "景区",
+    "风景区": "景区",
+    "景区": "景区",
+    "旅游度假区": "景区",
+    "度假区": "景区",
+    "游览区": "景区",
+    "旅游区": "景区",
+    "博物院": "博物馆",
+    "博物馆": "博物馆",
+    "纪念馆": "博物馆",
+    "步行街": "街区",
+    "商业街": "街区",
+    "历史文化街区": "街区",
+    "公园": "公园",
+    "广场": "广场",
+}
+
+_ADMIN_NAME_SUFFIXES = (
+    "特别行政区",
+    "维吾尔自治区",
+    "壮族自治区",
+    "回族自治区",
+    "自治区",
+    "自治州",
+    "自治县",
+    "市辖区",
+    "地区",
+    "新区",
+    "市",
+    "区",
+    "县",
+    "旗",
+)
+
+
+def _optional_field_text(value: Any, *, max_length: int) -> str | None:
+    """读取高德字段，同时处理字符串、数组和缺省值。
+
+    高德部分字段“存在但为空”时会返回数组。这里用 ``None`` 表示字段根本不存在，
+    空字符串表示字段存在但取不到内容，避免把 ``[]`` 当成地方名。
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _sanitize_text(value, max_length=max_length, allow_newlines=False)
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, (str, int, float)) and not isinstance(item, bool):
+                text = str(item).strip()
+                if text:
+                    return _sanitize_text(text, max_length=max_length, allow_newlines=False)
+        return ""
+    if isinstance(value, dict):
+        for item in value.values():
+            if isinstance(item, (str, int, float)) and not isinstance(item, bool):
+                text = str(item).strip()
+                if text:
+                    return _sanitize_text(text, max_length=max_length, allow_newlines=False)
+        return ""
+    return _sanitize_text(value, max_length=max_length, allow_newlines=False)
+
+
+def _normalize_place_name(value: Any) -> str:
+    """去掉括号补充说明、空白和标点，用于比较地点名称。"""
+
+    text = _sanitize_text(value, max_length=160, allow_newlines=False)
+    text = re.sub(r"[（(][^）)]*[）)]", "", text)
+    text = text.lower()
+    return re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+
+
+def _strip_generic_place_suffix(text: str) -> str:
+    for suffix in _GENERIC_PLACE_SUFFIXES:
+        if len(text) > len(suffix) and text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def _generic_place_category(text: str) -> str:
+    for suffix in _GENERIC_PLACE_SUFFIXES:
+        if len(text) > len(suffix) and text.endswith(suffix):
+            return _GENERIC_SUFFIX_CATEGORIES.get(suffix, "其他")
+    return ""
+
+
+def _place_name_score(query: str, candidate: str) -> float:
+    """0..4 的名称匹配分；用于避免把搜索结果里明显无关的首条 POI 当成景点。"""
+
+    left = _normalize_place_name(query)
+    right = _normalize_place_name(candidate)
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 4.0
+
+    left_category = _generic_place_category(left)
+    right_category = _generic_place_category(right)
+    if left_category and right_category and left_category != right_category:
+        return 0.0
+
+    left_base = _strip_generic_place_suffix(left)
+    right_base = _strip_generic_place_suffix(right)
+    if left_base and left_base == right_base:
+        return 3.5
+    if left_base and right_base:
+        if left_base in right_base and len(left_base) >= 3:
+            return 2.8
+        if right_base in left_base and len(right_base) >= 2:
+            return 2.4
+        return difflib.SequenceMatcher(None, left_base, right_base).ratio()
+    return 0.0
+
+
+def _normalize_admin_name(value: Any) -> str:
+    text = _normalize_place_name(value)
+    for suffix in _ADMIN_NAME_SUFFIXES:
+        if len(text) > len(suffix) and text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def _city_names_compatible(destination: Any, city: Any) -> bool:
+    """比较“杭州”和“杭州市”这类行政区名称；任意一方缺失时不作限制。"""
+
+    left = _normalize_admin_name(destination)
+    right = _normalize_admin_name(city)
+    if not left or not right:
+        return True
+    return left == right or left in right or right in left
+
+
+def _address_mentions_query(query: Any, formatted_address: Any) -> bool:
+    """粗略核对地理编码返回地址是否真的包含查询中的地名词根。"""
+
+    query_text = _normalize_place_name(query)
+    address_text = _normalize_place_name(formatted_address)
+    if not query_text or not address_text:
+        return False
+    if query_text in address_text:
+        return True
+    for size in (4, 3, 2):
+        token = query_text[-size:]
+        if len(token) == size and token in address_text:
+            return True
+    return False
+
+
+def _looks_like_broad_admin_address(query: Any) -> bool:
+    """查询本身只写到省市/区县时，即使高德硬给一个坐标也不是景点位置。"""
+
+    # 这里不能去掉括号内容：“北京市朝阳区（三里屯）”仍然是具体地点。
+    text = _sanitize_text(query, max_length=160, allow_newlines=False).lower()
+    text = re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+    if not text:
+        return False
+    if text.endswith(("省", "市", "县", "区")):
+        # “西湖风景名胜区”“小区”等是具体区域，不属于我们要拒绝的行政区中心。
+        if text.endswith(
+            (
+                "景区",
+                "风景区",
+                "名胜区",
+                "度假区",
+                "街区",
+                "小区",
+                "园区",
+                "校区",
+                "厂区",
+                "社区",
+            )
+        ):
+            return False
+        return True
+    return text.endswith(("自治区", "自治州", "地区"))
+
+
+def _geocode_is_trusted(
+    level: str | None,
+    query: str,
+    formatted_address: str,
+) -> tuple[bool, str]:
+    """判断地理编码结果能不能当景点坐标。
+
+    ``level is None`` 只用于兼容没有级别字段的注入客户端；真实高德响应一定会带
+    ``level``。字段存在但为空（高德缺省时返回数组）会被当作不可信，而不是退回猜坐标。
+    """
+
+    if level is not None and not isinstance(level, str):
+        level = _optional_field_text(level, max_length=32)
+    level_text = "" if level is None else level.strip()
+    if level is not None:
+        if not level_text:
+            return False, "高德未返回地理编码匹配级别"
+        if level_text in _BROAD_GEOCODE_LEVELS:
+            return False, f"地理编码只匹配到{level_text}级行政/区域中心"
+    if _looks_like_broad_admin_address(query):
+        return False, "查询地址只到行政区级，不能作为景点坐标"
+    if level is None:
+        # 兼容没有 level 字段的注入客户端；真实高德响应不会走到这里。
+        return True, ""
+    if level_text in _LOW_PRECISION_GEOCODE_LEVELS and not _address_mentions_query(
+        query, formatted_address
+    ):
+        return False, f"地理编码只匹配到{level_text}级，且返回地址与查询不吻合"
+    return True, ""
+
+
+def _coordinate_to_wgs(location: Coordinate) -> Coordinate:
+    wgs_lng, wgs_lat = gcj02_to_wgs84(location.lng, location.lat)
+    return Coordinate(lng=round(wgs_lng, 6), lat=round(wgs_lat, 6))
+
+
+def _join_address_parts(parts: tuple[str, ...]) -> str:
+    """拼接城市/区县/街道地址，并去掉相邻部分的重叠字。"""
+
+    result = ""
+    for raw in parts:
+        part = _sanitize_text(raw, max_length=300, allow_newlines=False)
+        if not part:
+            continue
+        if not result:
+            result = part
+            continue
+        if result.endswith(part):
+            continue
+        if part.startswith(result):
+            result = part
+            continue
+        overlap = 0
+        for size in range(min(len(result), len(part)), 0, -1):
+            if result[-size:] == part[:size]:
+                overlap = size
+                break
+        result += part[overlap:]
+    return result[:300]
+
+
+def _describe_amap_error(exc: AMapError) -> str:
+    """把上游错误转成可给用户看的原因；不回显请求、key 或原始异常文本。"""
+
+    code = _sanitize_text(getattr(exc, "code", None), max_length=32, allow_newlines=False)
+    if not code:
+        return "高德服务暂时不可用"
+    hint = _AMAP_ERROR_HINTS.get(code)
+    if hint:
+        return f"高德接口错误 {code}：{hint}"
+    if code == "timeout":
+        return "高德服务请求超时"
+    if code == "http_error":
+        return "高德服务网络请求失败"
+    if code in {
+        "bad_json",
+        "bad_response",
+        "bad_geocode",
+        "bad_poi",
+        "bad_route",
+        "bad_path",
+        "bad_location",
+    }:
+        return "高德返回的数据格式异常"
+    if code in {"geocode_not_found", "poi_not_found"}:
+        return "高德没有找到匹配地点"
+    if code == "poi_mismatch":
+        return "高德返回的 POI 与站点名称不匹配"
+    if code == "missing_distance":
+        return "高德未返回有效的路线距离"
+    if code in {"missing_polyline", "degenerate_polyline"}:
+        return "高德未返回有效的路线几何"
+    if code == "implausible_polyline":
+        return "高德返回的路线几何明显偏离起终点"
+    if code in {"empty_address", "empty_keywords"}:
+        return "查询内容为空"
+    if code.isdigit():
+        return f"高德接口错误 {code}"
+    return "高德接口不可用"
+
+
+def _map_error_warnings(codes: list[str | None]) -> list[str]:
+    """把可辨识的高德错误码聚合为用户可见提示，同一错误码只提示一次。"""
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw_code in codes:
+        code = _sanitize_text(raw_code, max_length=32, allow_newlines=False)
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        hint = _AMAP_ERROR_HINTS.get(code)
+        if not hint:
+            if code.isdigit():
+                result.append(f"高德地图接口返回错误码 {code}，相关地图数据已降级。")
+            continue
+        if code == "10001":
+            result.append(
+                "高德地图 API Key 无效或已过期（错误码 10001），已停止继续请求；"
+                "请检查服务端 AMAP_API_KEY 配置。"
+            )
+        elif code == "10009":
+            result.append(
+                "高德地图 Key 与 Web 服务接口不匹配（错误码 10009），已停止继续请求；"
+                "请使用 Web 服务类型的 Key。"
+            )
+        elif code in {"10003", "10044", "10045"}:
+            result.append(
+                f"高德地图调用配额受限（错误码 {code}：{hint}），已停止继续请求；"
+                "请稍后重试或检查高德控制台配额。"
+            )
+        else:
+            result.append(
+                f"高德地图接口错误（错误码 {code}：{hint}），已停止继续请求，相关地图数据已降级。"
+            )
+    return result
+
+
+class _AMapCallGuard:
+    """一次地图增强共享的熔断标记。
+
+    只在事件循环里读写；不取消已经在途的请求，也不影响已经拿到的有效结果。
+    """
+
+    __slots__ = ("fatal_code", "fatal_reason")
+
+    def __init__(self) -> None:
+        self.fatal_code: str | None = None
+        self.fatal_reason: str | None = None
+
+    @property
+    def blocked(self) -> bool:
+        return self.fatal_code is not None
+
+    def observe(self, exc: AMapError) -> None:
+        code = _sanitize_text(getattr(exc, "code", None), max_length=32, allow_newlines=False)
+        if not code or code not in _AMAP_FATAL_ERROR_CODES or self.blocked:
+            return
+        self.fatal_code = code
+        self.fatal_reason = _describe_amap_error(exc)
+
+
 # ==================== 高德地图客户端 ====================
 
 
 @dataclass(frozen=True)
 class GeoResult:
-    """地理编码 / POI 结果，坐标是 GCJ-02。"""
+    """地理编码 / POI 结果，坐标是 GCJ-02。
+
+    ``level`` 是高德地理编码接口的匹配级别（兴趣点 / 门牌号 / 区县等）。
+    真实高德响应总会带这个字段；字段缺失时高德可能返回空数组，内部统一成空字符串。
+    ``None`` 表示调用方（例如测试注入的简化客户端）没有提供级别信息。
+    """
 
     location: Coordinate
     formatted_address: str = ""
     name: str = ""
+    level: str | None = None
+    city: str = ""
+    district: str = ""
 
 
 @dataclass(frozen=True)
@@ -807,11 +1234,12 @@ class AMapClient:
             raise AMapError("高德服务响应不是合法 JSON", code="bad_json") from exc
         if not isinstance(data, dict):
             raise AMapError("高德服务响应结构异常", code="bad_response")
-        if str(data.get("status")) != "1":
-            info = _sanitize_text(data.get("info"), max_length=120, allow_newlines=False)
+        status = _optional_field_text(data.get("status"), max_length=8)
+        if status != "1":
+            info = _optional_field_text(data.get("info"), max_length=120) or "未知错误"
             raise AMapError(
-                f"高德接口返回错误：{info or '未知错误'}",
-                code=_sanitize_text(data.get("infocode"), max_length=32, allow_newlines=False) or None,
+                f"高德接口返回错误：{info}",
+                code=_optional_field_text(data.get("infocode"), max_length=32) or None,
             )
         return data
 
@@ -833,45 +1261,101 @@ class AMapClient:
         if not isinstance(item, dict):
             raise AMapError("高德地理编码响应结构异常", code="bad_geocode")
         location = _parse_location(item.get("location"))
-        formatted = _sanitize_text(
-            item.get("formatted_address"), max_length=300, allow_newlines=False
+        formatted = (
+            _optional_field_text(item.get("formatted_address"), max_length=300) or ""
         )
-        return GeoResult(location=location, formatted_address=formatted)
+        # 真实高德地理编码回包一定带 level；字段缺失、null 或空数组时不能凭猜测使用坐标。
+        raw_level = item.get("level")
+        if "level" not in item or raw_level is None:
+            level = ""
+        else:
+            level = _optional_field_text(raw_level, max_length=32) or ""
+        return GeoResult(
+            location=location,
+            formatted_address=formatted,
+            level=level,
+            city=_optional_field_text(item.get("city"), max_length=80) or "",
+            district=_optional_field_text(item.get("district"), max_length=80) or "",
+        )
 
     async def search_poi(self, keywords: str, *, city: str | None = None) -> GeoResult:
-        """POI 搜索 -> 最匹配地点的 GCJ-02 坐标。"""
+        """POI 搜索 -> 名称最匹配地点的 GCJ-02 坐标。
+
+        高德搜索的第一条不一定是目标景点（尤其关键词短或重名时）。这里取前 10 条，
+        先按城市过滤，再按名称匹配度选最优；没有达到阈值的结果一律不当作景点。
+        """
 
         query = _sanitize_text(keywords, max_length=120, allow_newlines=False)
         if not query:
             raise AMapError("POI 搜索关键词为空", code="empty_keywords")
         params: dict[str, Any] = {
             "keywords": query,
-            "offset": 5,
+            "offset": 10,
             "page": 1,
         }
-        if city:
-            params["city"] = _sanitize_text(city, max_length=80, allow_newlines=False)
+        city_text = _sanitize_text(city, max_length=80, allow_newlines=False) if city else ""
+        if city_text:
+            params["city"] = city_text
             params["citylimit"] = "true"
 
         data = await self._get("/v3/place/text", params)
         pois = data.get("pois")
         if not isinstance(pois, list) or not pois:
             raise AMapError("高德没有搜到匹配的地点", code="poi_not_found")
-        item = pois[0]
-        if not isinstance(item, dict):
-            raise AMapError("高德 POI 响应结构异常", code="bad_poi")
-        location = _parse_location(item.get("location"))
-        address = item.get("address")
-        if isinstance(address, list):
-            address = ""
-        formatted_address = _sanitize_text(address, max_length=300, allow_newlines=False)
-        city_text = _sanitize_text(city, max_length=80, allow_newlines=False) if city else ""
-        if formatted_address and city_text and city_text not in formatted_address:
-            formatted_address = f"{city_text}{formatted_address}"[:300]
+
+        best_score = 0.0
+        best_item: dict[str, Any] | None = None
+        best_location: Coordinate | None = None
+        for item in pois:
+            if not isinstance(item, dict):
+                continue
+            poi_name = _sanitize_text(item.get("name"), max_length=120, allow_newlines=False)
+            if not poi_name:
+                continue
+            poi_city = _optional_field_text(item.get("cityname"), max_length=80) or ""
+            district = _optional_field_text(item.get("adname"), max_length=80) or ""
+            address_value = item.get("address")
+            street = (
+                _sanitize_text(address_value, max_length=300, allow_newlines=False)
+                if isinstance(address_value, str)
+                else ""
+            )
+            if (
+                city_text
+                and poi_city
+                and not _city_names_compatible(city_text, poi_city)
+                and not _address_mentions_query(city_text, f"{poi_name}{district}{street}")
+            ):
+                continue
+            try:
+                location = _parse_location(item.get("location"))
+            except AMapError:
+                continue
+            score = _place_name_score(query, poi_name)
+            if score > best_score:
+                best_score = score
+                best_item = item
+                best_location = location
+
+        if best_item is None or best_location is None or best_score < _POI_NAME_MATCH_MIN_SCORE:
+            raise AMapError("高德返回的 POI 与站点名称不够匹配", code="poi_mismatch")
+
+        poi_city = _optional_field_text(best_item.get("cityname"), max_length=80) or city_text
+        district = _optional_field_text(best_item.get("adname"), max_length=80) or ""
+        address_value = best_item.get("address")
+        street_address = (
+            _sanitize_text(address_value, max_length=300, allow_newlines=False)
+            if isinstance(address_value, str)
+            else ""
+        )
+        formatted_address = _join_address_parts((poi_city, district, street_address))
+
         return GeoResult(
-            location=location,
+            location=best_location,
             formatted_address=formatted_address,
-            name=_sanitize_text(item.get("name"), max_length=120, allow_newlines=False),
+            name=_sanitize_text(best_item.get("name"), max_length=120, allow_newlines=False),
+            city=poi_city,
+            district=district,
         )
 
     async def route(
@@ -925,6 +1409,11 @@ class AMapClient:
             gcj_points = parse_amap_polyline(path.get("polyline"))
         if len(gcj_points) < 2:
             raise AMapError("高德路线响应缺少可用的 polyline 几何", code="missing_polyline")
+        if not _polyline_is_plausible(gcj_points, origin, destination):
+            raise AMapError(
+                "高德返回的路线几何明显偏离起终点",
+                code="implausible_polyline",
+            )
 
         geometry: list[Coordinate] = []
         for point in gcj_points:
@@ -948,6 +1437,32 @@ def _format_lnglat(coordinate: Coordinate) -> str:
     return f"{coordinate.lng:.6f},{coordinate.lat:.6f}"
 
 
+def _polyline_is_plausible(
+    points: list[Coordinate],
+    origin: Coordinate,
+    destination: Coordinate,
+) -> bool:
+    """拒绝明显偏离起终点的路线几何。
+
+    起点和终点之间用经纬度包围盒加余量限定。城市内路线不会超出这个走廊；
+    高德偶发返回的 (0,0)、其他城市坐标等脏点会被挡下，避免前端把地图
+    缩放到半个地球外。跨城长路线按跨度放宽余量。
+    """
+
+    if len(points) < 2:
+        return False
+    span = max(abs(destination.lng - origin.lng), abs(destination.lat - origin.lat))
+    padding = max(0.5, span * 0.75)
+    lng_lo = min(origin.lng, destination.lng) - padding
+    lng_hi = max(origin.lng, destination.lng) + padding
+    lat_lo = min(origin.lat, destination.lat) - padding
+    lat_hi = max(origin.lat, destination.lat) + padding
+    for point in points:
+        if not (lng_lo <= point.lng <= lng_hi and lat_lo <= point.lat <= lat_hi):
+            return False
+    return True
+
+
 def _parse_location(value: Any) -> Coordinate:
     if not isinstance(value, str) or "," not in value:
         raise AMapError("高德返回的坐标格式异常", code="bad_location")
@@ -959,19 +1474,42 @@ def _parse_location(value: Any) -> Coordinate:
         lat = float(parts[1])
     except (TypeError, ValueError) as exc:
         raise AMapError("高德返回的坐标不是数字", code="bad_location") from exc
+    if not (math.isfinite(lng) and math.isfinite(lat)):
+        raise AMapError("高德返回的坐标不是有限数值", code="bad_location")
     if not (-180.0 <= lng <= 180.0 and -90.0 <= lat <= 90.0):
         raise AMapError("高德返回的坐标超出合法范围", code="bad_location")
     return Coordinate(lng=round(lng, 6), lat=round(lat, 6))
 
 
 def _to_int(value: Any) -> int | None:
+    """把上游数值转成非负整数；inf / nan / 超范围字符串一律视为缺失。"""
+
     if value is None or isinstance(value, bool):
         return None
     try:
-        number = int(round(float(value)))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
-    return number if number >= 0 else None
+    if not math.isfinite(number) or number < 0:
+        return None
+    try:
+        return int(round(number))
+    except (OverflowError, ValueError):
+        return None
+
+
+def _to_finite_float(value: Any) -> float | None:
+    """把上游数值转成有限非负浮点数；inf / nan / 负数视为无效。"""
+
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
 
 
 def _extract_duration_minutes(path: dict[str, Any]) -> float | None:
@@ -985,15 +1523,20 @@ def _extract_duration_minutes(path: dict[str, Any]) -> float | None:
         seconds = cost[0].get("duration")
     if seconds is None:
         seconds = path.get("duration")
-    if seconds is None or isinstance(seconds, bool):
+    if isinstance(seconds, bool):
+        return None
+    if seconds is None:
         return None
     try:
         seconds_value = float(seconds)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    if seconds_value < 0:
+    if not math.isfinite(seconds_value) or seconds_value < 0:
         return None
-    return round(seconds_value / 60.0, 1)
+    minutes = seconds_value / 60.0
+    if not math.isfinite(minutes):
+        return None
+    return round(minutes, 1)
 
 
 # ==================== 地图增强 ====================
@@ -1005,6 +1548,33 @@ class _ResolvedStop:
     gcj: Coordinate | None
     address: str
     error: str | None = None
+    error_code: str | None = None
+
+
+def _poi_is_trusted(result: GeoResult, stop_name: str, destination: str) -> tuple[bool, str]:
+    """兜底校验 POI 结果；真实 AMapClient 已在候选列表里做过一次匹配。"""
+
+    if result.name and _place_name_score(stop_name, result.name) < _POI_NAME_MATCH_MIN_SCORE:
+        return False, "POI 搜索结果与站点名称不符"
+    if result.city and destination and not _city_names_compatible(destination, result.city):
+        # 目的地也可能是“西湖”“外滩”这类区县/景区名，只要真实地址里出现就不算跑题。
+        if not _address_mentions_query(destination, result.formatted_address):
+            return False, "POI 所在城市与目的地不符"
+    return True, ""
+
+
+def _geocode_result_is_trusted(
+    result: GeoResult,
+    query: str,
+    destination: str,
+) -> tuple[bool, str]:
+    trusted, reason = _geocode_is_trusted(result.level, query, result.formatted_address)
+    if not trusted:
+        return False, reason
+    if result.city and destination and not _city_names_compatible(destination, result.city):
+        if not _address_mentions_query(destination, result.formatted_address):
+            return False, "地理编码返回的城市与目的地不符"
+    return True, ""
 
 
 async def _resolve_stop(
@@ -1012,52 +1582,117 @@ async def _resolve_stop(
     stop: Stop,
     destination: str,
     semaphore: asyncio.Semaphore,
+    guard: _AMapCallGuard | None = None,
 ) -> _ResolvedStop:
-    """按地址地理编码 -> POI 搜索 -> 名称地理编码的顺序取可信坐标。"""
+    """按 POI 名称核对 -> 地址地理编码 -> 名称地理编码的顺序取可信坐标。
+
+    模型生成的 address 可能只写到区县；这种结果即使高德能返回坐标，也只是行政区中心，
+    不能当景点位置。无法可信定位时返回空坐标和可读原因，由上层统一降级。
+    """
 
     async with semaphore:
         errors: list[str] = []
+        notes: list[str] = []
+        unexpected = False
+
+        def blocked_result() -> _ResolvedStop | None:
+            if guard is None or not guard.blocked:
+                return None
+            return _ResolvedStop(
+                wgs=None,
+                gcj=None,
+                address=stop.address,
+                error="地图服务鉴权、权限或配额错误，已停止继续请求",
+                error_code=guard.fatal_code,
+            )
+
+        # 1. 名称可识别时先搜 POI：景点名称通常比模型写的宽泛地址可靠。
+        if guard is None or not guard.blocked:
+            try:
+                poi = await amap.search_poi(stop.name, city=destination)
+            except asyncio.CancelledError:
+                raise
+            except AMapError as exc:
+                errors.append(_describe_amap_error(exc))
+                if guard is not None:
+                    guard.observe(exc)
+            except Exception:
+                unexpected = True
+                errors.append("POI 搜索发生内部异常")
+            else:
+                trusted, reason = _poi_is_trusted(poi, stop.name, destination)
+                if trusted:
+                    return _ResolvedStop(
+                        wgs=_coordinate_to_wgs(poi.location),
+                        gcj=poi.location,
+                        address=poi.formatted_address or stop.address,
+                    )
+                notes.append(reason)
+
+        blocked = blocked_result()
+        if blocked is not None:
+            return blocked
 
         async def try_geocode(query: str) -> _ResolvedStop | None:
+            nonlocal unexpected
             if not query:
+                return None
+            if guard is not None and guard.blocked:
                 return None
             try:
                 result = await amap.geocode(query, city=destination)
+            except asyncio.CancelledError:
+                raise
             except AMapError as exc:
-                errors.append(str(exc))
+                errors.append(_describe_amap_error(exc))
+                if guard is not None:
+                    guard.observe(exc)
                 return None
-            wgs_lng, wgs_lat = gcj02_to_wgs84(result.location.lng, result.location.lat)
-            wgs = Coordinate(lng=round(wgs_lng, 6), lat=round(wgs_lat, 6))
+            except Exception:
+                unexpected = True
+                errors.append("地理编码发生内部异常")
+                return None
+            trusted, reason = _geocode_result_is_trusted(result, query, destination)
+            if not trusted:
+                notes.append(reason)
+                return None
             return _ResolvedStop(
-                wgs=wgs,
+                wgs=_coordinate_to_wgs(result.location),
                 gcj=result.location,
                 address=result.formatted_address or stop.address,
             )
 
+        # 2. 模型地址只在通过级别/城市校验后使用。
         if stop.address:
             resolved = await try_geocode(stop.address)
             if resolved is not None:
                 return resolved
+            blocked = blocked_result()
+            if blocked is not None:
+                return blocked
 
-        try:
-            poi = await amap.search_poi(stop.name, city=destination)
-        except AMapError as exc:
-            errors.append(str(exc))
-        else:
-            wgs_lng, wgs_lat = gcj02_to_wgs84(poi.location.lng, poi.location.lat)
-            return _ResolvedStop(
-                wgs=Coordinate(lng=round(wgs_lng, 6), lat=round(wgs_lat, 6)),
-                gcj=poi.location,
-                address=stop.address or poi.formatted_address,
-            )
-
-        if not stop.address:
+        # 3. 名称地理编码兜底；地址已经精确命中时不会走到这里。
+        if stop.name and stop.name != stop.address:
             resolved = await try_geocode(stop.name)
             if resolved is not None:
                 return resolved
 
-        reason = _sanitize_text(errors[-1], max_length=120, allow_newlines=False) if errors else "未找到坐标"
-        return _ResolvedStop(wgs=None, gcj=None, address=stop.address, error=reason)
+        blocked = blocked_result()
+        if blocked is not None:
+            return blocked
+
+        reason_parts = list(dict.fromkeys([*notes, *errors]))
+        reason = "；".join(part for part in reason_parts if part)[:160] or "未找到可信坐标"
+        error_code = guard.fatal_code if guard is not None and guard.blocked else None
+        if error_code is None and unexpected:
+            error_code = "internal_error"
+        return _ResolvedStop(
+            wgs=None,
+            gcj=None,
+            address=stop.address,
+            error=reason,
+            error_code=error_code,
+        )
 
 
 def _format_distance(distance_m: int) -> str:
@@ -1076,6 +1711,48 @@ def _format_minutes(minutes: float | None) -> str:
     return f"{hours} 小时 {remainder} 分钟" if remainder else f"{hours} 小时"
 
 
+def _time_to_minutes(value: str) -> int | None:
+    match = _TIME_RE.match(_sanitize_text(value, max_length=8, allow_newlines=False))
+    if not match:
+        return None
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
+def _minutes_to_time(value: int) -> str:
+    value %= 24 * 60
+    return f"{value // 60:02d}:{value % 60:02d}"
+
+
+def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) -> list[str]:
+    """用真实路线耗时检查时刻表；只告警，不改站点时间或停留时长。"""
+
+    warnings: list[str] = []
+    stops_by_id = {stop.id: stop for stop in day.stops}
+    for leg in legs:
+        if leg.route_type != "navigation" or leg.duration_minutes is None:
+            continue
+        current = stops_by_id.get(leg.from_stop_id)
+        following = stops_by_id.get(leg.to_stop_id)
+        if current is None or following is None:
+            continue
+        start = _time_to_minutes(current.time)
+        planned = _time_to_minutes(following.time)
+        if start is None or planned is None:
+            continue
+        stay = current.duration_minutes if current.duration_minutes is not None else 0
+        arrival = start + stay + leg.duration_minutes
+        if arrival <= planned:
+            continue
+        travel = int(round(leg.duration_minutes))
+        warnings.append(
+            f"时间冲突：{current.name} {current.time} 起停留 {stay} 分钟，"
+            f"{mode_label}到{following.name}约需 {travel} 分钟，"
+            f"预计 {_minutes_to_time(round(arrival))} 才能抵达，"
+            f"但计划安排在 {following.time}，按当前时刻表赶不上。"
+        )
+    return warnings
+
+
 async def enrich_trip_with_map(
     trip: TripPlan,
     request: TripPlanRequest,
@@ -1090,15 +1767,47 @@ async def enrich_trip_with_map(
 
     all_stops = [stop for day in trip.days for stop in day.stops]
     semaphore = asyncio.Semaphore(4)
-    resolved_list = await asyncio.gather(
-        *(_resolve_stop(amap, stop, trip.destination, semaphore) for stop in all_stops)
-    )
+    guard = _AMapCallGuard()
+    internal_error_count = 0
+    route_error_codes: list[str | None] = []
+
+    async def safe_resolve(stop: Stop) -> _ResolvedStop:
+        nonlocal internal_error_count
+        try:
+            return await _resolve_stop(amap, stop, trip.destination, semaphore, guard)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 单个站点的意外错误不能拖垮整趟行程，也不向用户回显原始异常。
+            internal_error_count += 1
+            return _ResolvedStop(
+                wgs=None,
+                gcj=None,
+                address=stop.address,
+                error="站点地图解析发生内部异常",
+                error_code="internal_error",
+            )
+
+    resolved_list = await asyncio.gather(*(safe_resolve(stop) for stop in all_stops))
     resolved_by_id = {stop.id: result for stop, result in zip(all_stops, resolved_list)}
-    missing_count = sum(1 for result in resolved_list if result.wgs is None)
-    if missing_count:
+
+    missing = [
+        (stop, result)
+        for stop, result in zip(all_stops, resolved_list)
+        if result.wgs is None
+    ]
+    if missing:
+        details = []
+        for stop, result in missing[:4]:
+            reason = _sanitize_text(result.error, max_length=60, allow_newlines=False) or "未找到可信坐标"
+            name = _sanitize_text(stop.name, max_length=40, allow_newlines=False)
+            details.append(f"{name}（{reason}）")
+        preview = "；".join(details)
+        if len(missing) > len(details):
+            preview += f"；等共 {len(missing)} 个"
         warnings.append(
-            f"{missing_count} 个站点无法通过高德获取可信坐标，相关位置保持 null，"
-            "涉及的路段标记为 unavailable。"
+            f"{len(missing)} 个站点无法通过高德获取可信坐标，location 保持 null："
+            f"{preview}。相关路段标记为 unavailable。"
         )
 
     new_days: list[DayPlan] = []
@@ -1106,11 +1815,17 @@ async def enrich_trip_with_map(
         new_stops: list[Stop] = []
         for stop in day.stops:
             resolved = resolved_by_id[stop.id]
+            address = _sanitize_text(
+                resolved.address or stop.address,
+                max_length=300,
+                allow_newlines=False,
+            )
             new_stops.append(
                 stop.model_copy(
                     update={
                         "location": resolved.wgs,
-                        "address": stop.address or resolved.address,
+                        # 已验证的高德 POI / 格式化地址优先于模型写的地址。
+                        "address": address,
                     }
                 )
             )
@@ -1129,58 +1844,106 @@ async def enrich_trip_with_map(
         for current, following in zip(day.stops, day.stops[1:]):
             leg_tasks.append((day, current, following))
 
+    def straight_line_leg(current: Stop, following: Stop, description: str) -> Leg:
+        return Leg(
+            from_stop_id=current.id,
+            to_stop_id=following.id,
+            mode=request.travel_mode,
+            route_type="straight_line",
+            distance_m=None,
+            duration_minutes=None,
+            geometry=[current.location, following.location],  # type: ignore[list-item]
+            description=description,
+        )
+
+    def unavailable_leg(current: Stop, following: Stop, description: str) -> Leg:
+        return Leg(
+            from_stop_id=current.id,
+            to_stop_id=following.id,
+            mode=request.travel_mode,
+            route_type="unavailable",
+            distance_m=None,
+            duration_minutes=None,
+            geometry=[],
+            description=description,
+        )
+
     async def build_leg(current: Stop, following: Stop) -> Leg:
+        nonlocal internal_error_count
         async with semaphore:
             current_gcj = resolved_by_id[current.id].gcj
             following_gcj = resolved_by_id[following.id].gcj
             mode_label = "步行" if request.travel_mode == "walking" else "驾车"
 
-            if current.location is None or following.location is None or current_gcj is None or following_gcj is None:
-                return Leg(
-                    from_stop_id=current.id,
-                    to_stop_id=following.id,
-                    mode=request.travel_mode,
-                    route_type="unavailable",
-                    distance_m=None,
-                    duration_minutes=None,
-                    geometry=[],
-                    description="缺少可信坐标，无法生成路线或直线示意。",
+            if (
+                current.location is None
+                or following.location is None
+                or current_gcj is None
+                or following_gcj is None
+            ):
+                return unavailable_leg(current, following, "缺少可信坐标，无法生成路线或直线示意。")
+
+            if guard.blocked:
+                return straight_line_leg(
+                    current,
+                    following,
+                    "地图服务已因鉴权/配额错误停止继续请求，这里只画两点间直线示意，"
+                    "距离与耗时未知。",
                 )
 
             try:
                 route = await amap.route(current_gcj, following_gcj, request.travel_mode)
+            except asyncio.CancelledError:
+                raise
             except AMapError as exc:
-                reason = _sanitize_text(str(exc), max_length=120, allow_newlines=False)
+                route_error_codes.append(exc.code)
+                guard.observe(exc)
+                reason = _describe_amap_error(exc)
                 warnings.append(
                     f"{current.name} → {following.name} 的{mode_label}路线获取失败，已降级为直线示意。"
                 )
-                return Leg(
-                    from_stop_id=current.id,
-                    to_stop_id=following.id,
-                    mode=request.travel_mode,
-                    route_type="straight_line",
-                    distance_m=None,
-                    duration_minutes=None,
-                    geometry=[current.location, following.location],
-                    description=(
-                        f"无法获取{mode_label}路线数据（{reason or '上游不可用'}），"
-                        "这里只画两点间直线示意，距离与耗时未知。"
-                    ),
+                return straight_line_leg(
+                    current,
+                    following,
+                    f"无法获取{mode_label}路线数据（{reason}），"
+                    "这里只画两点间直线示意，距离与耗时未知。",
+                )
+            except Exception:
+                internal_error_count += 1
+                warnings.append(
+                    f"{current.name} → {following.name} 的{mode_label}路线解析异常，已降级为直线示意。"
+                )
+                return straight_line_leg(
+                    current,
+                    following,
+                    f"{mode_label}路线数据解析异常，这里只画两点间直线示意，距离与耗时未知。",
                 )
 
             if len(route.geometry) < 2:
                 warnings.append(
                     f"{current.name} → {following.name} 的{mode_label}路线几何不足，已降级为直线示意。"
                 )
-                return Leg(
-                    from_stop_id=current.id,
-                    to_stop_id=following.id,
-                    mode=request.travel_mode,
-                    route_type="straight_line",
-                    distance_m=None,
-                    duration_minutes=None,
-                    geometry=[current.location, following.location],
-                    description=f"高德未返回可用的{mode_label}路线几何，仅显示两点直线示意。",
+                return straight_line_leg(
+                    current,
+                    following,
+                    f"高德未返回可用的{mode_label}路线几何，仅显示两点直线示意。",
+                )
+
+            distance_m = _to_int(route.distance_m)
+            if distance_m is None:
+                warnings.append(
+                    f"{current.name} → {following.name} 的{mode_label}路线距离异常，已降级为直线示意。"
+                )
+                return straight_line_leg(
+                    current,
+                    following,
+                    f"高德返回的{mode_label}路线距离无效，仅显示两点直线示意。",
+                )
+
+            duration_minutes = _to_finite_float(route.duration_minutes)
+            if route.duration_minutes is not None and duration_minutes is None:
+                warnings.append(
+                    f"{current.name} → {following.name} 的{mode_label}路线耗时异常，已标记为未知。"
                 )
 
             return Leg(
@@ -1188,19 +1951,55 @@ async def enrich_trip_with_map(
                 to_stop_id=following.id,
                 mode=request.travel_mode,
                 route_type="navigation",
-                distance_m=route.distance_m,
-                duration_minutes=route.duration_minutes,
+                distance_m=distance_m,
+                duration_minutes=duration_minutes,
                 geometry=route.geometry,
                 description=(
-                    f"高德{mode_label}路线规划：约 {_format_distance(route.distance_m)}，"
-                    f"预计 {_format_minutes(route.duration_minutes)}。"
+                    f"高德{mode_label}路线规划：约 {_format_distance(distance_m)}，"
+                    f"预计 {_format_minutes(duration_minutes)}。"
                 ),
             )
 
-    built_legs = await asyncio.gather(*(build_leg(current, following) for _, current, following in leg_tasks))
+    async def safe_build_leg(current: Stop, following: Stop) -> Leg:
+        nonlocal internal_error_count
+        try:
+            return await build_leg(current, following)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 单段路线的构造/校验异常只降级这一段，其他站点与路段保留。
+            internal_error_count += 1
+            if current.location is not None and following.location is not None:
+                return straight_line_leg(
+                    current,
+                    following,
+                    "路线数据解析发生内部异常，仅显示两点直线示意，距离与耗时未知。",
+                )
+            return unavailable_leg(current, following, "缺少可信坐标，无法生成路线或直线示意。")
+
+    built_legs = await asyncio.gather(
+        *(safe_build_leg(current, following) for _, current, following in leg_tasks)
+    )
     legs_by_day: dict[int, list[Leg]] = {day.day: [] for day in new_days}
     for (day, _, _), leg in zip(leg_tasks, built_legs):
         legs_by_day[day.day].append(leg)
+
+    if internal_error_count:
+        warnings.append(
+            "部分站点或路段的地图数据解析发生内部异常，相关位置/路段已降级，其他数据保留。"
+        )
+
+    error_codes = [result.error_code for result in resolved_list]
+    error_codes.extend(route_error_codes)
+    error_codes.append(guard.fatal_code)
+    # 鉴权/配额等真实原因优先保留，避免大量普通降级提示把关键告警挤出上限。
+    warnings.extend(_map_error_warnings(error_codes))
+
+    mode_label = "步行" if request.travel_mode == "walking" else "驾车"
+    for day in new_days:
+        warnings.extend(
+            _schedule_conflict_warnings(day, legs_by_day.get(day.day, []), mode_label)
+        )
 
     final_days = [
         day.model_copy(update={"legs": legs_by_day.get(day.day, [])}) for day in new_days
