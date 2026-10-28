@@ -4,11 +4,15 @@ langchain>=0.3.0
 langchain-community>=0.3.0
 
 # 通义千问模型支持
-langchain-community[tongyi]
+# ChatTongyi 由 langchain-community 提供，运行时额外只需要 dashscope。
+# 新版 langchain-community 已不再声明 tongyi extra，故去掉 langchain-community[tongyi]，
+# 直接依赖下面的 dashscope。
 dashscope>=1.14.0
 
 # MCP (Model Context Protocol) 支持
-mcp>=1.0.0
+# 必须限制在 1.x：mcp 2.x 移除了 mcp.server.fastmcp，weather/write/calculator/amap
+# 四个服务器都会在 import 阶段失败。langchain-mcp-adapters 自身只要求 mcp>=1.24。
+mcp>=1.24.0,<2
 langchain-mcp-adapters>=0.1.0
 
 # FastAPI 服务器

@@ -1,0 +1,4 @@
+# 开发/测试依赖，仅用于在虚拟环境里跑 tests/，运行时不需要安装。
+# 用法：pip install -r requirements-dev.txt
+-r requirements.txt
+pytest>=8.0.0
