@@ -1409,11 +1409,13 @@ class AMapClient:
             gcj_points = parse_amap_polyline(path.get("polyline"))
         if len(gcj_points) < 2:
             raise AMapError("高德路线响应缺少可用的 polyline 几何", code="missing_polyline")
-        if not _polyline_is_plausible(gcj_points, origin, destination):
+        if not _polyline_is_plausible(gcj_points, origin, destination, mode):
             raise AMapError(
                 "高德返回的路线几何明显偏离起终点",
                 code="implausible_polyline",
             )
+        # 包围盒与端点检查都通过之后才做安全抽样，抽样不会掩盖坏几何。
+        gcj_points = _thin_polyline_points(gcj_points, _MAX_ROUTE_GEOMETRY_POINTS)
 
         geometry: list[Coordinate] = []
         for point in gcj_points:
@@ -1437,16 +1439,64 @@ def _format_lnglat(coordinate: Coordinate) -> str:
     return f"{coordinate.lng:.6f},{coordinate.lat:.6f}"
 
 
+# 折线端点与请求起终点之间的最大允许偏差（米）。高德会把请求坐标吸附到
+# 路网，城市内吸附误差通常在几十米，大型景区可能到几百米；这里按出行
+# 方式留足余量，只拦截端点明显不是请求起终点的假几何。
+_ROUTE_ENDPOINT_TOLERANCE_METERS = {"walking": 2000.0, "driving": 5000.0}
+_ROUTE_ENDPOINT_TOLERANCE_FALLBACK_METERS = 5000.0
+
+# 单条路线几何的点数上限。真实城市内路线远到不了这个规模；用于防御
+# 异常巨大的响应把内存与前端渲染撑爆。超限时保留首末点、中间等距抽样。
+_MAX_ROUTE_GEOMETRY_POINTS = 5000
+
+
+def _great_circle_distance_m(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
+    """Haversine 球面距离（米）。
+
+    直接在 GCJ-02 原坐标上计算：GCJ-02 相对 WGS84 只是小幅平滑偏移，
+    对局部距离的拉伸远小于端点阈值，不必先做坐标转换。
+    """
+
+    radius = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+    a = (
+        math.sin(d_phi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2.0) ** 2
+    )
+    return 2.0 * radius * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _thin_polyline_points(points: list[Coordinate], max_points: int) -> list[Coordinate]:
+    """超长折线的安全抽样：保留首末点，中间按等间隔选取。"""
+
+    if len(points) <= max_points:
+        return points
+    inner = points[1:-1]
+    keep = max_points - 2
+    if keep <= 0:
+        return [points[0], points[-1]]
+    step = len(inner) / keep
+    thinned = [inner[int(i * step)] for i in range(keep)]
+    return [points[0], *thinned, points[-1]]
+
+
 def _polyline_is_plausible(
     points: list[Coordinate],
     origin: Coordinate,
     destination: Coordinate,
+    mode: Literal["walking", "driving"],
 ) -> bool:
-    """拒绝明显偏离起终点的路线几何。
+    """拒绝明显偏离起终点的路线几何，共两道检查。
 
-    起点和终点之间用经纬度包围盒加余量限定。城市内路线不会超出这个走廊；
-    高德偶发返回的 (0,0)、其他城市坐标等脏点会被挡下，避免前端把地图
-    缩放到半个地球外。跨城长路线按跨度放宽余量。
+    第一道沿用经纬度包围盒加余量：城市内路线不会超出这个走廊，高德
+    偶发返回的 (0,0)、其他城市坐标等脏点会被挡下；跨城长路线按跨度
+    放宽余量。第二道在 GCJ-02 原坐标空间里核验折线首点接近请求
+    origin、末点接近 destination——包围盒拦不住整条折线平移到走廊内
+    别处的假路线，端点距离检查补上这个洞。正常路网吸附误差远小于
+    阈值，不会误拒。
     """
 
     if len(points) < 2:
@@ -1460,6 +1510,16 @@ def _polyline_is_plausible(
     for point in points:
         if not (lng_lo <= point.lng <= lng_hi and lat_lo <= point.lat <= lat_hi):
             return False
+
+    tolerance = _ROUTE_ENDPOINT_TOLERANCE_METERS.get(
+        mode, _ROUTE_ENDPOINT_TOLERANCE_FALLBACK_METERS
+    )
+    first = points[0]
+    last = points[-1]
+    if _great_circle_distance_m(first.lng, first.lat, origin.lng, origin.lat) > tolerance:
+        return False
+    if _great_circle_distance_m(last.lng, last.lat, destination.lng, destination.lat) > tolerance:
+        return False
     return True
 
 

@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""路线质量回归测试（独立评审确认的两个问题，写给你正在修的 travel_itinerary.py）。
+"""路线质量回归测试：异常几何不得以 navigation 输出，时间冲突必须告警。
 
-问题 1：高德 v5 返回的 polyline 若混入 (0,0) 或离起点/终点很远的离群点，
-当前会原样穿过 parse_amap_polyline -> GCJ-02 转 WGS84 -> Leg.geometry，
-以 route_type=navigation 输出，前端地图直接画到半个地球外。
-预期：异常几何被拒绝，或明确降级为 straight_line / unavailable；
-同时合法的北京路线必须仍然生成 navigation（防修过头）。
+问题 1（路线几何真实性）：高德 v5 返回的 polyline 若混入 (0,0)、
+离起点/终点很远的离群点，或整条折线端点根本不是请求的起终点
+（哪怕全部点都落在起终点包围盒内），都不允许穿过 parse_amap_polyline
+-> GCJ-02 转 WGS84 -> Leg.geometry 以 route_type=navigation 输出，
+否则前端地图会画到几十公里甚至半个地球外。
+预期：异常几何被拒绝并降级为 straight_line / unavailable；同时合法的
+北京路线、端点仅有路网吸附级偏移的路线必须仍然生成 navigation
+（防修过头）。
 
 问题 2：一天里 A 09:00 停留 10 分钟、B 排在 09:10，但地图服务返回
 A→B 步行 30 分钟——按计划根本赶不到。预期：保留原站点时间与真实路线
@@ -20,10 +23,6 @@ fixture 约定（沿用 tests/test_amap_client.py 的做法）：
 - mock 同时应答 /v3/geocode/geo、/v3/place/text、/v5/direction/*；
   POI 名与站名一致、geocode 带 level=兴趣点，满足实现侧的坐标可信度
   校验。实现内部先 POI 还是先 geocode 都能工作，不过度耦合实现结构。
-
-修复前预期失败的用例：异常几何三类（零点 / 远途离群点 / 全垃圾）、
-客户端层垃圾 polyline 一类、时间冲突告警一类，共 5 个；其余 3 个是
-防误报/防回退的护栏，修复前后都应通过。
 """
 
 import asyncio
@@ -62,6 +61,8 @@ STOP_B_GCJ = (116.411, 39.909)  # 王府井附近，直线约 1.2 公里
 # 允许几何点偏离起终点走廊的余量。0.5 度约 50 公里，北京两点间的步行
 # 路线绝不会超出；而 (0,0)、上海（约 1000 公里外）都会被拦下。GCJ-02
 # 与 WGS84 在北京相差约 0.005 度，相对这个余量可以忽略。
+# 这个余量只用于断言侧的离群点检测；实现侧还会核验折线首末点接近
+# 请求的起终点（见 travel_itinerary.py 的 _polyline_is_plausible）。
 CORRIDOR_TOLERANCE_DEG = 0.5
 
 
@@ -218,15 +219,23 @@ async def _enrich_with_handler(trip, request, handler):
         return await enrich_trip_with_map(trip, request, amap)
 
 
-async def _route_with_handler(handler, mode="walking"):
-    """直接调用 AMapClient.route，用于客户端层面的几何检查。"""
+async def _route_with_handler(handler, mode="walking", *, origin_gcj=None, destination_gcj=None):
+    """直接调用 AMapClient.route，用于客户端层面的几何检查。
 
+    origin_gcj / destination_gcj 缺省用公共 fixture 的两个北京站点；
+    需要更长腿（逆向、阈值差异等场景）时单独传入。
+    """
+
+    if origin_gcj is None:
+        origin_gcj = STOP_A_GCJ
+    if destination_gcj is None:
+        destination_gcj = STOP_B_GCJ
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
         amap = AMapClient("fixture-key", client=http_client)
         return await amap.route(
-            Coordinate(lng=STOP_A_GCJ[0], lat=STOP_A_GCJ[1]),
-            Coordinate(lng=STOP_B_GCJ[0], lat=STOP_B_GCJ[1]),
+            Coordinate(lng=origin_gcj[0], lat=origin_gcj[1]),
+            Coordinate(lng=destination_gcj[0], lat=destination_gcj[1]),
             mode,
         )
 
@@ -273,7 +282,7 @@ def test_polyline_with_zero_point_must_not_reach_navigation_geometry():
             f"{offenders}; 实际 warnings: {trip.warnings!r}"
         )
     else:
-        # 明确降级为 straight_line / unavailable 也算修复达标。
+        # 明确降级为 straight_line / unavailable 也算达标。
         assert leg.route_type in ("straight_line", "unavailable")
 
 
@@ -351,9 +360,161 @@ def test_valid_beijing_route_still_becomes_navigation():
     assert leg.geometry[-1].lat == pytest.approx(expected_dest[1], abs=1e-5)
 
 
+# ==================== 问题 3：折线端点必须真是请求的起终点 ====================
+#
+# 包围盒检查拦得住 (0,0) 和外市坐标，拦不住“整条折线都平移到走廊内
+# 别处”的假路线。实现侧按出行方式在 GCJ-02 原坐标空间核验首末点：
+# 步行 2 公里、驾车 5 公里，容忍正常路网吸附，超限即抛 implausible_polyline
+# 并降级，不把假几何标成 navigation。
+
+
+def test_bbox_passing_polyline_with_distant_endpoints_is_rejected():
+    """整条折线在原包围盒内、但端点离请求起终点几十公里，必须拒绝。"""
+
+    # (116.75,40.20)→(116.76,40.21) 在 ±0.5 度包围盒内，但首点离天安门
+    # 约 44 公里——旧的包围盒检查放行，端点距离检查必须拦下。
+    fake_polyline = "116.750000,40.200000;116.755000,40.205000;116.760000,40.210000"
+    handler = _beijing_amap_handler(polyline=fake_polyline)
+
+    with pytest.raises(AMapError) as exc_info:
+        run(_route_with_handler(handler))
+    assert exc_info.value.code == "implausible_polyline"
+
+    trip = run(_enrich_with_handler(_beijing_trip(), _beijing_request(), handler))
+    leg = _first_leg(trip)
+    assert leg.route_type == "straight_line", (
+        f"端点偏离几十公里的假路线不得以 navigation 输出: {leg.route_type}, "
+        f"warnings={trip.warnings!r}"
+    )
+    # 直线示意的几何只允许是两个站点的 WGS84 坐标，假折线不许漏进来。
+    stops = trip.days[0].stops
+    assert [(p.lng, p.lat) for p in leg.geometry] == [
+        (stops[0].location.lng, stops[0].location.lat),
+        (stops[1].location.lng, stops[1].location.lat),
+    ]
+
+
+def test_moderate_road_snap_offset_still_navigates():
+    """端点只有路网吸附级偏移（几百米）时不得误拒，且几何不被悄悄替换。"""
+
+    polyline = (
+        "116.399000,39.906000;"  # 离 STOP_A 约 280 米
+        "116.404000,39.907500;"
+        "116.409000,39.911000"  # 离 STOP_B 约 280 米
+    )
+    handler = _beijing_amap_handler(
+        polyline=polyline, distance="1500", duration_seconds="900"
+    )
+    trip = run(_enrich_with_handler(_beijing_trip(), _beijing_request(), handler))
+
+    leg = _first_leg(trip)
+    assert leg.route_type == "navigation", (
+        f"吸附级端点偏移被误拒: route_type={leg.route_type}, "
+        f"warnings={trip.warnings!r}"
+    )
+    assert leg.distance_m == 1500
+    assert leg.duration_minutes == pytest.approx(15.0)
+    # 输出仍是 WGS84、经度在前；首末点来自折线本身（吸附后的端点），
+    # 不是被替换成站点坐标。
+    expected_first = gcj02_to_wgs84(116.399, 39.906)
+    expected_last = gcj02_to_wgs84(116.409, 39.911)
+    assert leg.geometry[0].lng == pytest.approx(expected_first[0], abs=1e-5)
+    assert leg.geometry[0].lat == pytest.approx(expected_first[1], abs=1e-5)
+    assert leg.geometry[-1].lng == pytest.approx(expected_last[0], abs=1e-5)
+    assert leg.geometry[-1].lat == pytest.approx(expected_last[1], abs=1e-5)
+
+
+def test_reversed_polyline_is_not_passed_off_as_navigation():
+    """把 A→B 的路线反过来发给 A→B 的请求，不得伪装成真实导航。"""
+
+    # 造一段 7 公里级的腿：正向路线首点必须贴 origin，反向折线的首点
+    # 在 destination 一侧、离 origin 数公里，超出步行 2 公里阈值。
+    # 站点距离小于阈值时（如 fixture 的 1.2 公里），端点检查无法区分
+    # 正反向，这类几何上等价的路径不在拦截范围内。
+    far_b = (116.480, 39.910)
+    reversed_polyline = ";".join(
+        f"{lng:.6f},{lat:.6f}" for lng, lat in (far_b, (116.440, 39.909), STOP_A_GCJ)
+    )
+    handler = _beijing_amap_handler(polyline=reversed_polyline)
+
+    with pytest.raises(AMapError) as exc_info:
+        run(_route_with_handler(handler, origin_gcj=STOP_A_GCJ, destination_gcj=far_b))
+    assert exc_info.value.code == "implausible_polyline"
+
+
+def test_polyline_missing_destination_end_is_rejected():
+    """缺终点：折线从 origin 出发却停在离 destination 二十多公里的半路。"""
+
+    truncated_polyline = (
+        f"{STOP_A_GCJ[0]:.6f},{STOP_A_GCJ[1]:.6f};"
+        "116.700000,40.000000"  # 离 STOP_B 约 27 公里，仍在包围盒内
+    )
+    handler = _beijing_amap_handler(polyline=truncated_polyline)
+
+    with pytest.raises(AMapError) as exc_info:
+        run(_route_with_handler(handler))
+    assert exc_info.value.code == "implausible_polyline"
+
+    trip = run(_enrich_with_handler(_beijing_trip(), _beijing_request(), handler))
+    leg = _first_leg(trip)
+    assert leg.route_type != "navigation", (
+        f"缺终点的路径不得伪装成 navigation: {leg.route_type}, warnings={trip.warnings!r}"
+    )
+
+
+def test_endpoint_tolerance_is_wider_for_driving_than_walking():
+    """3 公里级端点偏差：按驾车阈值（5 公里）放行，按步行阈值（2 公里）拒绝。"""
+
+    off_origin = (116.430, 39.908)  # 离 STOP_A 约 2.9 公里
+    off_dest = (116.440, 39.910)    # 离 STOP_B 约 2.5 公里
+    polyline = ";".join(
+        f"{lng:.6f},{lat:.6f}" for lng, lat in (off_origin, (116.435, 39.909), off_dest)
+    )
+    handler = _beijing_amap_handler(polyline=polyline)
+
+    result = run(
+        _route_with_handler(
+            handler, mode="driving", origin_gcj=STOP_A_GCJ, destination_gcj=STOP_B_GCJ
+        )
+    )
+    assert len(result.geometry) >= 2
+
+    with pytest.raises(AMapError) as exc_info:
+        run(
+            _route_with_handler(
+                handler, mode="walking", origin_gcj=STOP_A_GCJ, destination_gcj=STOP_B_GCJ
+            )
+        )
+    assert exc_info.value.code == "implausible_polyline"
+
+
+def test_oversized_polyline_is_thinned_without_losing_endpoints():
+    """6000 点的超长折线被安全抽样到上限内，首末点原样保留。"""
+
+    count = 6000
+    chunks = []
+    for index in range(count):
+        ratio = index / (count - 1)
+        lng = STOP_A_GCJ[0] + (STOP_B_GCJ[0] - STOP_A_GCJ[0]) * ratio
+        lat = STOP_A_GCJ[1] + (STOP_B_GCJ[1] - STOP_A_GCJ[1]) * ratio
+        chunks.append(f"{lng:.6f},{lat:.6f}")
+    handler = _beijing_amap_handler(polyline=";".join(chunks), distance="1500")
+
+    result = run(_route_with_handler(handler))
+
+    assert result.distance_m == 1500
+    assert len(result.geometry) <= 5000
+    expected_first = gcj02_to_wgs84(*STOP_A_GCJ)
+    expected_last = gcj02_to_wgs84(*STOP_B_GCJ)
+    assert result.geometry[0].lng == pytest.approx(expected_first[0], abs=1e-5)
+    assert result.geometry[0].lat == pytest.approx(expected_first[1], abs=1e-5)
+    assert result.geometry[-1].lng == pytest.approx(expected_last[0], abs=1e-5)
+    assert result.geometry[-1].lat == pytest.approx(expected_last[1], abs=1e-5)
+
+
 # ==================== 问题 2：时刻表与真实耗时的冲突必须告警 ====================
 
-# 宽松关键词池：修复作者的措辞可以不同，但至少要出现冲突相关的语义。
+# 宽松关键词池：实现侧的措辞可以不同，但至少要出现冲突相关的语义。
 _CONFLICT_KEYWORDS = (
     "时间", "冲突", "赶不上", "来不及", "无法", "没法", "不符",
     "早于", "晚于", "超过", "抵达", "到达", "间隔", "紧张", "矛盾", "不可行",
