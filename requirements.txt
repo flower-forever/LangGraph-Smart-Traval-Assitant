@@ -1,5 +1,6 @@
 # LangGraph 和 LangChain 核心
-langgraph>=0.2.0
+# langgraph 2.x 移除 langgraph.prebuilt.create_react_agent，暂锁 <2；这是兼容护栏，后续应迁移到 langchain.agents.create_agent
+langgraph>=0.2.0,<2
 langchain>=0.3.0
 langchain-community>=0.3.0
 
