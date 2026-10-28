@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+*.local
+*.log
+verify/*.png
+.hallmark
+.DS_Store

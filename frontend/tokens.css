@@ -1,0 +1,70 @@
+/* Hallmark · macrostructure: Split Waypoint Ledger · tone: roadbook-editorial（旅行手记）
+ * theme: custom（vibe: 宣纸路书 朱砂手账）
+ * paper: oklch(96.5% 0.012 85) · accent: oklch(52% 0.14 30) 朱砂
+ * display: 楷体（Kaiti SC / KaiTi）+ body: 苹方/雅黑 · 等宽时刻: JetBrains Mono/Consolas
+ * diversification axes: 宣纸暖底 / 楷体-display / 朱砂单强调
+ */
+:root {
+  /* ---- 颜色 ---- */
+  --color-paper: oklch(96.5% 0.012 85);        /* 宣纸底 */
+  --color-paper-2: oklch(98.4% 0.008 85);      /* 卡面，略亮 */
+  --color-paper-3: oklch(93.5% 0.014 85);      /* 按压/悬浮底 */
+  --color-ink: oklch(24% 0.018 150);           /* 正文墨色（偏墨绿黑） */
+  --color-ink-2: oklch(38% 0.02 150);          /* 次级文字 */
+  --color-muted: oklch(50% 0.016 150);         /* 辅助文字 */
+  --color-faint: oklch(62% 0.012 150);         /* 弱化说明 */
+  --color-line: oklch(87% 0.014 85);           /* 分隔线（淡茶） */
+  --color-line-strong: oklch(78% 0.018 85);
+  --color-accent: oklch(52% 0.14 30);          /* 朱砂 */
+  --color-accent-strong: oklch(44% 0.15 30);   /* 朱砂加深（hover） */
+  --color-accent-ink: oklch(38% 0.14 30);      /* 朱砂文字用（对比更高） */
+  --color-accent-soft: oklch(92.5% 0.03 30);   /* 朱砂淡底 */
+  --color-ok: oklch(50% 0.11 150);             /* 成功/就绪 */
+  --color-warn-bg: oklch(94% 0.035 85);        /* 警示淡底（琥珀纸） */
+  --color-warn-ink: oklch(42% 0.09 65);
+  --color-map-water: oklch(90% 0.02 230);      /* 地图未加载时的底色 */
+
+  /* ---- 字体 ---- */
+  --font-display: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", "Songti SC", "SimSun", serif;
+  --font-body: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+
+  /* ---- 字号 ---- */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+  --text-display: clamp(27px, 4.2vw, 38px);
+
+  /* ---- 4pt 间距 ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---- 圆角 / 线 ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --rule: 1px solid var(--color-line);
+  --rule-strong: 1px solid var(--color-line-strong);
+
+  /* ---- 动效 ---- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---- 阴影（克制，纸面感） ---- */
+  --shadow-1: 0 1px 2px oklch(24% 0.018 150 / 0.06);
+  --shadow-2: 0 2px 10px oklch(24% 0.018 150 / 0.08);
+}
