@@ -20,8 +20,11 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_community.chat_models import ChatTongyi
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-# 加载环境变量
+import mcp_runtime
+
+# 加载环境变量：先看当前工作目录，再补项目目录，从任意目录启动都能读到 .env
 load_dotenv()
+load_dotenv(mcp_runtime.PROJECT_DIR / ".env")
 
 # 尝试导入 rich 库（用于美化输出）
 try:
@@ -39,22 +42,20 @@ class Configuration:
     
     def __init__(self, config_file: str = None):
         self.model = os.getenv("MODEL_NAME", "qwen-plus")
-        self.api_key = os.getenv("DASHSCOPE_API_KEY")
-        # 支持通过命令行参数指定配置文件
-        self.config_file = config_file or os.getenv("MCP_CONFIG", "servers_config.json")
+        # 只判断「有没有可用的 key」，不读取、不输出 key 内容
+        self.api_key = (os.getenv("DASHSCOPE_API_KEY") or "").strip() or None
+        # 支持通过命令行参数指定配置文件；None 时由 mcp_runtime 按
+        # 「MCP_CONFIG 环境变量 > 项目目录默认配置」解析
+        self.config_file = config_file
     
     def load_servers(self) -> dict:
-        """加载 MCP 服务器配置"""
-        with open(self.config_file, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        return config.get("mcpServers", {})
+        """加载并规整 MCP 服务器配置（路径与启动目录无关）"""
+        return mcp_runtime.load_server_config(self.config_file)
     
     @staticmethod
     def load_prompt() -> str:
-        """加载系统提示词"""
-        prompt_path = "agent_prompts.txt"
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            return f.read()
+        """加载系统提示词（锚定项目目录，与启动目录无关）"""
+        return mcp_runtime.load_prompt()
 
 
 def print_banner():
@@ -129,16 +130,21 @@ async def run_chat_loop() -> None:
     
     cfg = Configuration()
     
-    # 检查 API Key
+    # 检查 API Key：没有有效 key 时明确退出，不假装可聊天
     if not cfg.api_key:
-        print("❌ 错误: 未设置 DASHSCOPE_API_KEY 环境变量")
-        print("   请在 .env 文件中配置或设置环境变量")
+        mcp_runtime.safe_print("❌ 错误: 未检测到有效的 DASHSCOPE_API_KEY 环境变量")
+        mcp_runtime.safe_print("   请在项目目录的 .env 文件中配置 DASHSCOPE_API_KEY，")
+        mcp_runtime.safe_print(f"   或在启动前设置该环境变量后重新运行（项目目录: {mcp_runtime.PROJECT_DIR}）")
         return
     
     print("🔄 正在初始化...")
     
     # 1. 加载配置
-    servers_cfg = cfg.load_servers()
+    try:
+        servers_cfg = cfg.load_servers()
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        mcp_runtime.safe_print(f"❌ 错误: MCP 配置加载失败: {e}")
+        return
     prompt = cfg.load_prompt()
     
     print(f"📋 发现 {len(servers_cfg)} 个 MCP 服务器")
