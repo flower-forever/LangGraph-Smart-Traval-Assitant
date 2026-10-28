@@ -3,12 +3,16 @@
 
 覆盖：中文文件名正常读写、相对/绝对/Windows 风格路径遍历被拒、
 不访问输出目录外的真实文件、符号链接越界拒绝、
-save_travel_plan 目的地清洗与时间戳冲突不覆盖、已有输出不被删除。
+save_travel_plan 目的地清洗与时间戳冲突不覆盖、已有输出不被删除、
+默认输出目录锚定到模块所在目录（从其他 cwd 写入也不落到进程 cwd）。
 """
 
 import asyncio
+import importlib.util
 import os
+import shutil
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +25,20 @@ import write_server
 def run(coro_fn, *args, **kwargs):
     """同步调用 MCP 工具的 async 函数。"""
     return asyncio.run(coro_fn(*args, **kwargs))
+
+
+def _load_module_copy(source, module_name):
+    """把模块文件按独立名字加载成新模块，不干扰会话里已导入的 write_server。"""
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 @pytest.fixture()
@@ -313,3 +331,69 @@ def test_save_travel_plan_existing_directory_not_replaced(outputs_dir, monkeypat
     assert "✅" in result
     assert occupied.is_dir()
     assert (outputs_dir / "travel_plan_上海_20260304_050607_1.md").exists()
+
+
+# ---------------------------------------------------------------- 默认输出目录锚定
+
+
+def test_default_output_dir_anchored_to_module_location():
+    """默认 OUTPUT_DIR 必须锚定在模块所在目录，而不是相对进程 cwd 的 ./outputs。"""
+    expected = Path(write_server.__file__).resolve().parent / "outputs"
+    assert Path(write_server.OUTPUT_DIR).is_absolute()
+    assert Path(write_server.OUTPUT_DIR).resolve() == expected
+
+
+def test_module_copy_writes_to_module_dir_not_cwd(tmp_path, monkeypatch):
+    """从另一个 cwd 导入模块副本并写文件，实际写入模块所在目录的 outputs，
+    而不是当前工作目录；也不碰真实项目的 outputs。"""
+    module_dir = tmp_path / "project_root"
+    module_dir.mkdir()
+    shutil.copyfile(
+        Path(write_server.__file__).resolve(), module_dir / "write_server.py"
+    )
+
+    # 与模块无关的另一个工作目录：旧实现会在这里创建 ./outputs
+    other_cwd = tmp_path / "unrelated_cwd"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+
+    module_name = f"write_server_anchor_copy_{uuid.uuid4().hex}"
+    copied = _load_module_copy(module_dir / "write_server.py", module_name)
+    try:
+        # 副本的默认输出目录应锚定在副本自己所在目录
+        expected = (module_dir / "outputs").resolve()
+        assert Path(copied.OUTPUT_DIR).resolve() == expected
+
+        # 写入前给真实项目 outputs 拍快照，事后对比证明没被碰
+        real_outputs = Path(write_server.OUTPUT_DIR)
+        real_before = (
+            sorted(p.name for p in real_outputs.iterdir())
+            if real_outputs.is_dir()
+            else None
+        )
+
+        write_result = run(copied.write_file, "锚定测试.md", "锚定内容")
+        assert "✅" in write_result, write_result
+
+        plan_result = run(copied.save_travel_plan, "杭州", "锚定计划")
+        assert "✅" in plan_result, plan_result
+
+        # 文件确实落在模块所在目录的 outputs
+        written = module_dir / "outputs" / "锚定测试.md"
+        assert written.read_text(encoding="utf-8") == "锚定内容"
+        plans = list((module_dir / "outputs").glob("travel_plan_杭州_*.md"))
+        assert len(plans) == 1
+        assert "锚定计划" in plans[0].read_text(encoding="utf-8")
+
+        # 当前 cwd 下不能产生 outputs
+        assert not (other_cwd / "outputs").exists()
+
+        # 真实项目的 outputs 与写入前快照一致，证明没被本测试写入
+        real_after = (
+            sorted(p.name for p in real_outputs.iterdir())
+            if real_outputs.is_dir()
+            else None
+        )
+        assert real_after == real_before
+    finally:
+        sys.modules.pop(module_name, None)

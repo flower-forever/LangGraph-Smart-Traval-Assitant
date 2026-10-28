@@ -3,6 +3,7 @@
 提供文件读写功能，用于保存旅行计划、行程记录等
 
 安全策略：
+- 默认输出目录锚定在本模块所在的项目根目录下，不随进程工作目录变化
 - 所有文件名都限制在 OUTPUT_DIR 内，拒绝绝对路径、盘符、UNC 路径和 ".." 目录遍历
 - 读写前把路径按符号链接展开，展开后仍必须落在 OUTPUT_DIR 内
 - save_travel_plan 用 destination 清洗出安全文件名，并用 O_CREAT|O_EXCL 原子创建；
@@ -19,8 +20,8 @@ from mcp.server.fastmcp import FastMCP
 # 初始化 MCP 服务器
 mcp = FastMCP("WriteServer")
 
-# 默认输出目录
-OUTPUT_DIR = "./outputs"
+# 默认输出目录：锚定到本模块所在的项目根目录，不随进程工作目录变化
+OUTPUT_DIR = str(Path(__file__).resolve().parent / "outputs")
 
 # Windows 保留设备名（不区分大小写，CON.txt 这类带扩展名的形式同样保留）
 _WINDOWS_RESERVED = {
@@ -205,10 +206,11 @@ async def list_files() -> str:
     :return: 文件列表
     """
     try:
-        if not os.path.exists(OUTPUT_DIR):
+        base = _get_output_dir()
+        if not base.exists():
             return "📁 输出目录为空"
 
-        files = os.listdir(OUTPUT_DIR)
+        files = os.listdir(base)
         if not files:
             return "📁 输出目录为空"
 
