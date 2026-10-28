@@ -38,7 +38,7 @@ pnpm preview         # 预览 dist 产物
 
 `pnpm test` 也会跑 `dev-stub/server.test.mjs`：只起本机 http 服务核对桩的标识与 503 行为，不连外网、不依赖高德或模型。
 
-接口地址：默认走同源 `/api`（dev 由 Vite 代理，生产需反代同源 `/api`），可用 `VITE_API_BASE` 覆盖（如 `VITE_API_BASE=http://127.0.0.1:8001`）。
+接口地址：默认走同源 `/api`（dev 由 Vite 代理，生产需反代同源 `/api`），也可用 `VITE_API_BASE` 覆盖（如 `VITE_API_BASE=http://127.0.0.1:8001`）。注意 `VITE_API_BASE` 是构建/启动时读取的环境变量，不是运行时变量：开发在 `pnpm dev` 前设置，生产在 `pnpm build` 前设置；bundle 生成后再改系统环境变量不会重写已构建的产物。
 
 ## 目录
 
