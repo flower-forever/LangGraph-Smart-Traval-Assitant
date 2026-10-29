@@ -200,6 +200,7 @@ describe('probeBackendCapabilities', () => {
       reachable: true,
       planner: 'unavailable',
       failure: null,
+      amap: 'unknown',
     })
   })
 
@@ -211,6 +212,7 @@ describe('probeBackendCapabilities', () => {
       reachable: true,
       planner: 'ready',
       failure: null,
+      amap: 'unknown',
     })
   })
 
@@ -225,7 +227,7 @@ describe('probeBackendCapabilities', () => {
     for (const payload of payloads) {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(payload)))
       const caps = await probeBackendCapabilities()
-      expect(caps).toEqual({ reachable: true, planner: 'unknown', failure: null })
+      expect(caps).toEqual({ reachable: true, planner: 'unknown', failure: null, amap: 'unknown' })
     }
   })
 
@@ -237,6 +239,7 @@ describe('probeBackendCapabilities', () => {
       reachable: false,
       planner: 'unknown',
       failure: 'bad_payload',
+      amap: 'unknown',
     })
   })
 
@@ -284,6 +287,45 @@ describe('probeBackendCapabilities', () => {
       reachable: false,
       planner: 'unknown',
       failure: 'timeout',
+      amap: 'unknown',
+    })
+  })
+
+  /* ───────── amap_configured 解析 ───────── */
+
+  it('amap_configured=true：可达且地图服务已配置', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ status: 'healthy', planner_ready: true, amap_configured: true }),
+    ))
+    await expect(probeBackendCapabilities()).resolves.toMatchObject({ amap: 'configured' })
+  })
+
+  it('amap_configured=false：可达但当前服务未配置地图 Key', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ status: 'healthy', planner_ready: true, amap_configured: false }),
+    ))
+    await expect(probeBackendCapabilities()).resolves.toMatchObject({ amap: 'not_configured' })
+  })
+
+  it('amap_configured 缺失、非布尔：unknown，绝不猜', async () => {
+    const payloads: unknown[] = [
+      { status: 'healthy' },
+      { status: 'healthy', amap_configured: 'true' },
+      { status: 'healthy', amap_configured: 1 },
+      { status: 'healthy', amap_configured: null },
+    ]
+    for (const payload of payloads) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(payload)))
+      const caps = await probeBackendCapabilities()
+      expect(caps.amap).toBe('unknown')
+    }
+  })
+
+  it('不可达时 amap 固定 unknown：没连上就无从判断当前服务', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
+    await expect(probeBackendCapabilities()).resolves.toMatchObject({
+      reachable: false,
+      amap: 'unknown',
     })
   })
 })

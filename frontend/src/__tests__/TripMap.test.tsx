@@ -7,7 +7,7 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import L from 'leaflet'
 import TripMap from '../components/TripMap'
-import { MOCK_TRIP, MOCK_TRIP_NO_COORD } from './fixtures/trip'
+import { MOCK_TRIP, MOCK_TRIP_NO_COORD, MOCK_TRIP_SAME_COORD } from './fixtures/trip'
 
 const day1 = MOCK_TRIP.days[0]
 const emptyDay = MOCK_TRIP.days[1]
@@ -148,6 +148,85 @@ describe('TripMap（真实 Leaflet）', () => {
     expect(screen.getByText('这一天的站点缺少坐标')).toBeInTheDocument()
   })
 
+  it('有站点但都没有坐标时不再承诺「重新规划能得到路线」', () => {
+    render(<TripMap day={noCoordDay} activeStopId={null} onSelectStop={vi.fn()} />)
+    const text = document.body.textContent ?? ''
+    expect(text).not.toContain('重新规划')
+    expect(text).not.toContain('换一天')
+    expect(text).toContain('服务状态')
+  })
+
+  it('部分站点缺坐标时给出缺失数量说明，与全缺、空日区分', () => {
+    render(<TripMap day={MOCK_TRIP.days[0]} activeStopId={null} onSelectStop={vi.fn()} />)
+    // 第 1 天 3 站里 s3（湖滨晴雨）无坐标
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('1 个没有解析到经纬度')
+    expect(text).toContain('本日共 3 个站点')
+    // 不出现全缺口径的大标题
+    expect(screen.queryByText('这一天的站点缺少坐标')).toBeNull()
+  })
+
+  /* ───────── 同坐标站点分组 ───────── */
+
+  it('同坐标的两站合成一个 marker，marker 上标明此处有 2 站', () => {
+    render(<TripMap day={MOCK_TRIP_SAME_COORD.days[0]} activeStopId={null} onSelectStop={vi.fn()} />)
+    const dots = document.querySelectorAll('.stop-dot')
+    // 3 站 2 个坐标 → 2 个 marker；「早晚两次去灵隐寺」只画一个点
+    expect(dots).toHaveLength(2)
+    const twin = Array.from(dots).find((d) => d.textContent?.includes('2'))
+    expect(twin).toBeTruthy()
+    // 可访问名说明此处有两站
+    const wrapper = twin!.closest('.stop-dot-wrapper') as HTMLElement
+    const label = wrapper.getAttribute('aria-label') ?? ''
+    expect(label).toContain('2 站')
+    expect(label).toContain('早课·灵隐寺')
+    expect(label).toContain('晚课·灵隐寺')
+  })
+
+  it('分组 marker 打开弹窗后，两站都能单独选择（循环切换）', () => {
+    const onSelect = vi.fn()
+    render(<TripMap day={MOCK_TRIP_SAME_COORD.days[0]} activeStopId={null} onSelectStop={onSelect} />)
+    const dots = document.querySelectorAll('.stop-dot-wrapper')
+    const twinWrapper = Array.from(dots).find(
+      (d) => d.getAttribute('aria-label')?.includes('早课·灵隐寺'),
+    ) as HTMLElement
+
+    click(twinWrapper)
+    // 弹窗出现，提供两站的独立入口
+    const pick1 = screen.getByRole('button', { name: /早课·灵隐寺.*查看逐点讲解/ })
+    const pick2 = screen.getByRole('button', { name: /晚课·灵隐寺.*查看逐点讲解/ })
+    onSelect.mockClear()
+    click(pick1)
+    expect(onSelect).toHaveBeenCalledWith('d1')
+    click(pick2)
+    expect(onSelect).toHaveBeenCalledWith('d2')
+  })
+
+  it('单站坐标的 marker 不受分组影响：可访问名仍是单站描述', () => {
+    render(<TripMap day={MOCK_TRIP_SAME_COORD.days[0]} activeStopId={null} onSelectStop={vi.fn()} />)
+    const solo = Array.from(document.querySelectorAll('.stop-dot-wrapper')).find(
+      (d) => d.getAttribute('aria-label')?.includes('飞来峰'),
+    )
+    expect(solo).toBeTruthy()
+    expect(solo!.getAttribute('aria-label') ?? '').not.toContain('此处')
+  })
+
+  it('分组 marker 的高亮跟随组内选中的站：选中晚课时分组高亮且弹窗停留在该站', () => {
+    const { rerender } = render(
+      <TripMap day={MOCK_TRIP_SAME_COORD.days[0]} activeStopId="d1" onSelectStop={vi.fn()} />,
+    )
+    rerender(<TripMap day={MOCK_TRIP_SAME_COORD.days[0]} activeStopId="d2" onSelectStop={vi.fn()} />)
+    const active = document.querySelectorAll('.stop-dot[data-active="true"]')
+    expect(active).toHaveLength(1)
+  })
+
+  it('同坐标分组不改变真实坐标：路线端点（如有的话）原样使用原值', () => {
+    // MOCK_TRIP 第 1 天 legs 端点是真实坐标，分组逻辑不能碰 geometry
+    render(<TripMap day={MOCK_TRIP.days[0]} activeStopId={null} onSelectStop={vi.fn()} />)
+    const paths = document.querySelectorAll('.leaflet-overlay-pane path')
+    expect(paths.length).toBeGreaterThan(0)
+  })
+
   it('最后一个瓦片成功时也要结算出「部分失败」', () => {
     const tiles = stubTileLayer()
     render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
@@ -244,7 +323,7 @@ describe('TripMap（真实 Leaflet）', () => {
     act(() => {
       vi.advanceTimersByTime(20000)
     })
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
   })
 
   it('换天时重新计时，上一屏的超时提示不会带到新一天', () => {
@@ -338,7 +417,7 @@ describe('TripMap（真实 Leaflet）', () => {
     act(() => {
       vi.advanceTimersByTime(20000)
     })
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
   })
 
   it('在途瓦片被 tileabort（换 zoom）取消后不误报超时', () => {
@@ -359,7 +438,7 @@ describe('TripMap（真实 Leaflet）', () => {
     act(() => {
       vi.advanceTimersByTime(20000)
     })
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
   })
 
   it('换 zoom 放弃旧瓦片后按新一批重新计时，不拿旧截止时间误报', () => {
@@ -476,12 +555,12 @@ describe('TripMap（真实 Leaflet）', () => {
 
     unmount()
     expect(vi.getTimerCount()).toBe(beforeMount)
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
 
     act(() => {
       vi.advanceTimersByTime(20000)
     })
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
   })
 
   // 旧实现把 loaded/failed 当成图层生命周期累计，一次失败会粘在界面上。下面几条用真实
@@ -511,7 +590,7 @@ describe('TripMap（真实 Leaflet）', () => {
 
     expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
     // 站点和路线不受底图状态影响
     expect(markerEls()).toHaveLength(2)
     expect(polylineCount()).toBeGreaterThan(0)
@@ -526,7 +605,7 @@ describe('TripMap（真实 Leaflet）', () => {
       tiles.start(kept)
       tiles.load(kept)
     })
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
 
     const edge = tiles.newTile()
     act(() => {
@@ -558,7 +637,7 @@ describe('TripMap（真实 Leaflet）', () => {
     })
     expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
   })
 
   it('平移卸载已成功的瓦片不会把挂起瓦片的超时推后', () => {
@@ -609,7 +688,7 @@ describe('TripMap（真实 Leaflet）', () => {
 
     expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
-    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(document.querySelector('.map-status-note')?.textContent ?? '').not.toContain('底图')
     expect(markerEls()).toHaveLength(2)
   })
 

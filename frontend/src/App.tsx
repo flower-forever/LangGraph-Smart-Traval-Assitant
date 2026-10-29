@@ -9,9 +9,22 @@ import TripTransferPanel from './components/TripTransferPanel'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { formatDateTime } from './lib/format'
-import type { BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, Trip } from './lib/api'
+import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, Trip } from './lib/api'
 
 type LoadPhase = 'initial' | 'loading' | 'ready' | 'failed'
+
+/**
+ * 请求结果的归属说明：只描述「当前展示的行程对应哪次请求」，
+ * 是当前视图的临时状态，不写进 Trip、不进本地保存/备份。
+ */
+type RequestOutcome =
+  | { kind: 'none' }
+  /** 有一次规划请求在飞：下方是上次结果，新行程正在生成 */
+  | { kind: 'pending'; destination: string }
+  /** 最近一次规划失败（含超时/网络/5xx）：本次没有生成新行程 */
+  | { kind: 'failed'; destination: string }
+  /** 用户停止等待：这次结果没有等到，下方仍是上次结果 */
+  | { kind: 'stopped'; destination: string }
 
 /** 失败结论是谁给的。探活失败和业务请求失败必须分开说，不能互相冒充。 */
 type FailureSource = 'probe' | 'request'
@@ -30,6 +43,8 @@ interface BackendState {
   failureSource: FailureSource | null
   /** 有探活在飞 */
   probing: boolean
+  /** 当前后端服务是否配置了地图 Key；只有 health 明确表态才不是 unknown */
+  amap: AmapAvailability
 }
 
 const BACKEND_INITIAL: BackendState = {
@@ -39,6 +54,7 @@ const BACKEND_INITIAL: BackendState = {
   failure: null,
   failureSource: null,
   probing: true,
+  amap: 'unknown',
 }
 
 /** 探活失败时的固定提示：不复述后端 warnings，避免把绝对路径、密钥这类内容带进页面 */
@@ -77,6 +93,7 @@ function mergeProbe(prev: BackendState, caps: BackendCapabilities, provenLater: 
     failure: caps.failure,
     failureSource: caps.failure ? 'probe' : null,
     probing: false,
+    amap: caps.reachable ? caps.amap : 'unknown',
   }
 }
 
@@ -134,6 +151,11 @@ export default function App() {
   const [error, setError] = useState<{ title: string; detail: string } | null>(null)
   const [planLoading, setPlanLoading] = useState(false)
   const [planCancelled, setPlanCancelled] = useState(false)
+  /**
+   * 当前行程相对最近一次规划请求的归属：pending/failed/stopped 都属于
+   * 「这次请求」而不是 trip 本身，成功、恢复、导入时清空。
+   */
+  const [requestOutcome, setRequestOutcome] = useState<RequestOutcome>({ kind: 'none' })
   const [backend, setBackend] = useState<BackendState>(BACKEND_INITIAL)
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
@@ -296,6 +318,7 @@ export default function App() {
     setPlanLoading(true)
     setPlanCancelled(false)
     setError(null)
+    setRequestOutcome({ kind: 'pending', destination: payload.destination })
     try {
       const t = await planTrip(payload, { signal: controller.signal })
       if (sequence !== planSeqRef.current) return
@@ -305,14 +328,14 @@ export default function App() {
       setOpenedFromFile(false)
       setActiveDay(t.days[0]?.day ?? 1)
       setActiveStopId(null)
+      setRequestOutcome({ kind: 'none' })
       // 真正拿到规划结果，比 health 更有说服力：此时规划确定可用，迟到的探活不能推翻
       businessProofRef.current += 1
       backendConclusionSeqRef.current += 1
       probeSeqRef.current += 1
       probeControllerRef.current?.abort()
       probeControllerRef.current = null
-      setBackend({ checked: true, reachable: true, planner: 'ready', failure: null, failureSource: null, probing: false })
-      // 新规划已接管页面，加载中的示例请求（即使忽略 abort）不能再覆盖
+      setBackend({ checked: true, reachable: true, planner: 'ready', failure: null, failureSource: null, probing: false, amap: 'unknown' })      // 新规划已接管页面，加载中的示例请求（即使忽略 abort）不能再覆盖
       loadSeqRef.current += 1
       scrollToItinerary()
     } catch (err) {
@@ -322,6 +345,7 @@ export default function App() {
       const failure = requestFailureOf(err)
       if (failure) applyRequestFailure(failure, conclusionAtStart)
       setError(errorText(err))
+      setRequestOutcome({ kind: 'failed', destination: payload.destination })
     } finally {
       if (sequence === planSeqRef.current) {
         if (abortRef.current === controller) abortRef.current = null
@@ -342,6 +366,9 @@ export default function App() {
     setPlanLoading(false)
     setPlanCancelled(true)
     setError(null)
+    setRequestOutcome((prev) =>
+      prev.kind === 'pending' ? { kind: 'stopped', destination: prev.destination } : { kind: 'stopped', destination: '' },
+    )
   }, [planLoading])
 
   /**
@@ -360,6 +387,7 @@ export default function App() {
     setTrip(restored)
     setPhase('ready')
     setError(null)
+    setRequestOutcome({ kind: 'none' })
     setRestoredAt(savedAt)
     setOpenedFromFile(false)
     setActiveStopId(null)
@@ -387,6 +415,8 @@ export default function App() {
     setPlanCancelled(false)
     setTrip(imported)
     setPhase('ready')
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
     setRestoredAt(null)
     setOpenedFromFile(true)
     setActiveStopId(null)
@@ -396,6 +426,27 @@ export default function App() {
 
   const dayTabs = trip?.days ?? []
   const tripIsExample = trip?.source === 'example'
+
+  /**
+   * 规划请求归属说明：有失败/停止/进行中，且页面有行程可看时，
+   * 在行程标题旁注明「下方内容属于哪次结果」，避免旧行程被误读成新请求的答案。
+   * pending 且 planLoading 时也显示——用户可能正在看行程区，需要知道下面是旧结果。
+   */
+  const outcomeNote = (() => {
+    if (!trip) return null
+    const dest =
+      requestOutcome.kind !== 'none' && requestOutcome.destination ? `「${requestOutcome.destination}」` : ''
+    switch (requestOutcome.kind) {
+      case 'pending':
+        return `正在生成${dest}的新行程；下方显示的仍是上一次的结果，生成完成后会自动替换。`
+      case 'failed':
+        return `刚才为${dest}生成行程的请求没有成功，本次没有生成新行程；下方显示的是上一次的结果，可以继续浏览。可修改参数后重新提交。`
+      case 'stopped':
+        return `已停止等待${dest || '这次'}的规划请求，本次没有拿到新行程；下方显示的是上一次的结果，可以继续浏览。`
+      default:
+        return null
+    }
+  })()
 
   // 只有后端明确返回 planner_ready=false 才锁提交；unknown 保持旧行为，照常允许
   const plannerUnavailable = backend.reachable && backend.planner === 'unavailable'
@@ -432,9 +483,18 @@ export default function App() {
             <span className="backend-note">
               {' · '}
               {backend.planner === 'ready' ? '可以生成行程' : '规划能力未知'}
+              {backend.amap === 'not_configured' && ' · 地图 Key 未配置'}
             </span>
           </>
         )
+
+  /**
+   * 地图 Key 的说明只描述「当前后端服务」：它解释不了某份行程里坐标为什么缺
+   * ——导入/恢复的行程由当时的生成环境决定，这里不能替历史结果背书。
+   */
+  const amapNote = backend.checked && backend.reachable && backend.amap === 'not_configured'
+    ? '当前后端服务没有配置地图 Key：新规划的行程不会有站点坐标和导航路线。已经生成的行程（包括导入或恢复的）不受此说明影响，它们的坐标取决于各自生成时的服务配置。'
+    : null
 
   return (
     <div className="app-shell">
@@ -472,6 +532,10 @@ export default function App() {
 
       {backendHint && (
         <p className="backend-hint" id={BACKEND_HINT_ID}>{backendHint}</p>
+      )}
+
+      {amapNote && (
+        <p className="backend-hint backend-hint-amap">{amapNote}</p>
       )}
 
       <div className="topbar-progress" data-active={planLoading || phase === 'loading'} aria-hidden="true" />
@@ -528,9 +592,21 @@ export default function App() {
         {trip && (
           <section aria-label="行程安排">
             <header className="trip-header">
-              <span className="trip-source-tag" data-source={trip.source}>
-                {tripIsExample ? '示例行程' : 'AI 规划'}
-              </span>
+              <div className="trip-head-row">
+                <span className="trip-source-tag" data-source={trip.source}>
+                  {tripIsExample ? '示例行程' : 'AI 规划'}
+                </span>
+                {outcomeNote && (
+                  /*
+                   * 归属说明是当前请求/视图的临时状态：不写进 trip，保存/备份不会带上它。
+                   * 失败细节由 role=alert 的错误横幅播报，这里只做视觉归属标注，
+                   * 不再挂 live region，避免同一事件被读屏播报两遍。
+                   */
+                  <p className="trip-outcome-note" data-testid="request-status-note">
+                    {outcomeNote}
+                  </p>
+                )}
+              </div>
               <h2 className="trip-title" ref={tripTitleRef} tabIndex={-1}>{trip.title}</h2>
               <p className="trip-summary">{trip.summary}</p>
               {trip.warnings.length > 0 && (
@@ -550,7 +626,7 @@ export default function App() {
               {openedFromFile && (
                 /*
                  * 来源说明：source 是文件里写的内容，标签本身证明不了真实来源。
-                 * 样式沿用 .trip-restored-note（本轮只改 App.tsx，不动 app.css）。
+                 * 样式沿用 .trip-restored-note。
                  */
                 <p className="trip-restored-note trip-imported-note" data-note="imported-file">
                   这份行程来自你选择的备份文件：页面没有向服务器核对过内容，也没有写入本浏览器的本地保存。

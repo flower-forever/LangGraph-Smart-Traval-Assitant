@@ -100,6 +100,56 @@ export const MOCK_TRIP: Trip = {
   ],
 }
 
+/**
+ * 同一天两个站点坐标完全相同（早晚各去一次同一景点），另有一站坐标不同。
+ * 用于同坐标分组回归：三个站点在图上应是 2 个 marker，且每站都可单独访问。
+ */
+export const MOCK_TRIP_SAME_COORD: Trip = {
+  ...MOCK_TRIP,
+  id: 'trip-mock-3',
+  source: 'agent',
+  title: '同坐标测试行程',
+  warnings: [],
+  days: [
+    {
+      day: 1,
+      date: null,
+      title: '同一地点早晚两站',
+      summary: '测试用。',
+      stops: [
+        {
+          id: 'd1',
+          name: '早课·灵隐寺',
+          time: '09:00',
+          duration_minutes: 90,
+          description: '上午参访。',
+          address: '杭州市灵隐路法云弄',
+          location: { lng: 120.0972, lat: 30.2408 },
+        },
+        {
+          id: 'd2',
+          name: '晚课·灵隐寺',
+          time: '17:00',
+          duration_minutes: 60,
+          description: '傍晚再访。',
+          address: '杭州市灵隐路法云弄',
+          location: { lng: 120.0972, lat: 30.2408 },
+        },
+        {
+          id: 'd3',
+          name: '飞来峰',
+          time: '12:00',
+          duration_minutes: 45,
+          description: '石窟造像。',
+          address: '杭州市灵隐路法云弄',
+          location: { lng: 120.0999, lat: 30.2415 },
+        },
+      ],
+      legs: [],
+    },
+  ],
+}
+
 /** 仅有无坐标站点的一日，用于空态测试 */
 export const MOCK_TRIP_NO_COORD: Trip = {
   ...MOCK_TRIP,

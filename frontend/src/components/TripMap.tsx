@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { TripDay, TripStop } from '../lib/api'
-import { buildDayMapData, type DayMapData } from '../lib/mapData'
+import type { TripDay } from '../lib/api'
+import { buildDayMapData, groupStopsByLocation, type DayMapData, type StopRef } from '../lib/mapData'
 import { osmSearchUrl, displayTime } from '../lib/format'
 import { createTileWatch, type TileState, type TileWatch } from '../lib/tileStatus'
 
@@ -13,10 +13,12 @@ interface TripMapProps {
 }
 
 /** 用 divIcon 圆点替代默认 marker，避免默认图钉资源加载问题 */
-function makeStopIcon(index: number, active: boolean, hasCoord: boolean): L.DivIcon {
+function makeStopIcon(index: number, active: boolean, hasCoord: boolean, groupSize = 1): L.DivIcon {
+  // 同坐标分组时圆点里放组内站数（2/3/…），单站仍显示全天序号
+  const label = groupSize > 1 ? String(groupSize) : String(index + 1)
   return L.divIcon({
     className: 'stop-dot-wrapper',
-    html: `<span class="stop-dot" data-active="${active}" data-nocoord="${!hasCoord}">${index + 1}</span>`,
+    html: `<span class="stop-dot" data-active="${active}" data-nocoord="${!hasCoord}" data-group="${groupSize > 1}">${label}</span>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
     popupAnchor: [0, -12],
@@ -24,51 +26,91 @@ function makeStopIcon(index: number, active: boolean, hasCoord: boolean): L.DivI
 }
 
 /** divIcon 没有原生 alt，只能手动补可访问名与选中状态；setIcon 会重建节点，所以每次都要重设 */
-function decorateMarker(marker: L.Marker, index: number, stop: TripStop, active: boolean): void {
+function markerAriaLabel(refs: StopRef[], active: boolean): string {
+  const first = refs[0]
+  if (refs.length === 1) {
+    return `站点 ${first.index + 1}：${first.stop.name}${active ? '（当前选中）' : ''}，按回车查看讲解`
+  }
+  const names = refs.map((r) => `${r.index + 1}. ${r.stop.name}`).join('、')
+  return `此处 ${refs.length} 站（坐标相同）：${names}${active ? '（当前选中）' : ''}，按回车查看各站讲解`
+}
+
+function decorateMarker(marker: L.Marker, refs: StopRef[], active: boolean): void {
   const el = marker.getElement()
   if (!el) return
   el.setAttribute('role', 'button')
   el.setAttribute('aria-pressed', active ? 'true' : 'false')
-  el.setAttribute('aria-label', `站点 ${index + 1}：${stop.name}${active ? '（当前选中）' : ''}，按回车查看讲解`)
+  el.setAttribute('aria-label', markerAriaLabel(refs, active))
 }
 
-function buildPopupEl(stop: TripStop, index: number, onSelectStop: (id: string) => void, onClose: () => void): HTMLElement {
+function buildPopupEl(refs: StopRef[], onSelectStop: (id: string) => void, onClose: () => void): HTMLElement {
   const wrap = document.createElement('div')
+  if (refs.length === 1) {
+    // 单站：沿用原弹窗结构
+    const stop = refs[0].stop
+    const index = refs[0].index
+    const title = document.createElement('b')
+    title.textContent = `${index + 1}. ${stop.name}`
+    wrap.appendChild(title)
+
+    const meta = document.createElement('div')
+    meta.className = 'pop-meta'
+    meta.textContent = [displayTime(stop.time), stop.address].filter(Boolean).join(' · ')
+    if (meta.textContent) wrap.appendChild(meta)
+
+    if (stop.description) {
+      const desc = document.createElement('div')
+      desc.className = 'pop-desc'
+      desc.textContent = stop.description
+      wrap.appendChild(desc)
+    }
+
+    const row = document.createElement('div')
+    const more = document.createElement('a')
+    more.className = 'pop-more'
+    more.href = osmSearchUrl(stop)
+    more.target = '_blank'
+    more.rel = 'noopener noreferrer'
+    more.textContent = '在 OpenStreetMap 中查看'
+    row.appendChild(more)
+
+    const detailBtn = document.createElement('button')
+    detailBtn.type = 'button'
+    detailBtn.className = 'pop-more'
+    detailBtn.textContent = '查看逐点讲解'
+    detailBtn.addEventListener('click', () => {
+      onSelectStop(stop.id)
+      onClose()
+    })
+    row.appendChild(detailBtn)
+    wrap.appendChild(row)
+    return wrap
+  }
+
+  // 同坐标多站：标题说明此处有几站，下面逐站列出可访问入口
   const title = document.createElement('b')
-  title.textContent = `${index + 1}. ${stop.name}`
+  title.textContent = `此处 ${refs.length} 站（坐标相同）`
   wrap.appendChild(title)
 
   const meta = document.createElement('div')
   meta.className = 'pop-meta'
-  meta.textContent = [displayTime(stop.time), stop.address].filter(Boolean).join(' · ')
-  if (meta.textContent) wrap.appendChild(meta)
+  meta.textContent = '这几个站点解析到同一个坐标，点击任意一站查看讲解；站点本身按行程顺序排列。'
+  wrap.appendChild(meta)
 
-  if (stop.description) {
-    const desc = document.createElement('div')
-    desc.className = 'pop-desc'
-    desc.textContent = stop.description
-    wrap.appendChild(desc)
+  for (const ref of refs) {
+    const row = document.createElement('div')
+    row.className = 'pop-stop-row'
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'pop-more pop-stop-btn'
+    btn.textContent = `${ref.index + 1}. ${ref.stop.name}（${displayTime(ref.stop.time)}）查看逐点讲解`
+    btn.addEventListener('click', () => {
+      onSelectStop(ref.stop.id)
+      onClose()
+    })
+    row.appendChild(btn)
+    wrap.appendChild(row)
   }
-
-  const row = document.createElement('div')
-  const more = document.createElement('a')
-  more.className = 'pop-more'
-  more.href = osmSearchUrl(stop)
-  more.target = '_blank'
-  more.rel = 'noopener noreferrer'
-  more.textContent = '在 OpenStreetMap 中查看'
-  row.appendChild(more)
-
-  const detailBtn = document.createElement('button')
-  detailBtn.type = 'button'
-  detailBtn.className = 'pop-more'
-  detailBtn.textContent = '查看逐点讲解'
-  detailBtn.addEventListener('click', () => {
-    onSelectStop(stop.id)
-    onClose()
-  })
-  row.appendChild(detailBtn)
-  wrap.appendChild(row)
   return wrap
 }
 
@@ -83,6 +125,14 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
   const [tileState, setTileState] = useState<TileState>('loading')
 
   const data: DayMapData = useMemo(() => buildDayMapData(day), [day])
+  /** 同坐标分组：一组对应一个 marker；组内是可单独访问的各站 */
+  const groups: StopRef[][] = useMemo(() => groupStopsByLocation(data.stops), [data])
+  /** 组内任一站被选中，就视为这个 marker 选中 */
+  const activeGroupId = useMemo(() => {
+    if (!activeStopId) return null
+    const idx = groups.findIndex((g) => g.some((s) => s.stop.id === activeStopId))
+    return idx >= 0 ? idx : null
+  }, [groups, activeStopId])
   const activeIsOnMap = useMemo(
     () => data.stops.some((s) => s.stop.id === activeStopId),
     [data, activeStopId],
@@ -173,23 +223,23 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
       layer.addLayer(line)
     }
 
-    for (const { stop, index } of data.stops) {
-      const loc = stop.location!
+    for (const refs of groups) {
+      const loc = refs[0].stop.location!
       const marker = L.marker([loc.lat, loc.lng], {
-        icon: makeStopIcon(index, false, true),
-        title: stop.name,
+        icon: makeStopIcon(refs[0].index, false, true, refs.length),
+        title: refs.length === 1 ? refs[0].stop.name : `此处 ${refs.length} 站：${refs.map((r) => r.stop.name).join('、')}`,
         keyboard: true,
-        alt: `站点 ${index + 1}：${stop.name}`,
+        alt: markerAriaLabel(refs, false),
       })
       const popup = L.popup({ maxWidth: 280, autoPan: true })
-      popup.setContent(buildPopupEl(stop, index, (id) => onSelectRef.current(id), () => marker.closePopup()))
+      popup.setContent(buildPopupEl(refs, (id) => onSelectRef.current(id), () => marker.closePopup()))
       marker.bindPopup(popup)
       // 地图点击只上报选中；选中状态由父组件幂等处理，重复触发不会被抵消
-      marker.on('click', () => onSelectRef.current(stop.id))
+      marker.on('click', () => onSelectRef.current(refs[0].stop.id))
       layer.addLayer(marker)
-      markersRef.current.set(stop.id, marker)
-      popupsRef.current.set(stop.id, popup)
-      decorateMarker(marker, index, stop, false)
+      markersRef.current.set(refs[0].stop.id, marker)
+      popupsRef.current.set(refs[0].stop.id, popup)
+      decorateMarker(marker, refs, false)
     }
 
     // 容器刚挂载时尺寸可能为 0，先同步一次尺寸再适配视野
@@ -208,30 +258,40 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    for (const { stop, index } of data.stops) {
-      const marker = markersRef.current.get(stop.id)
+    for (const [groupIndex, refs] of groups.entries()) {
+      const marker = markersRef.current.get(refs[0].stop.id)
       if (!marker) continue
-      const active = stop.id === activeStopId
-      marker.setIcon(makeStopIcon(index, active, true))
-      decorateMarker(marker, index, stop, active)
+      const active = groupIndex === activeGroupId
+      marker.setIcon(makeStopIcon(refs[0].index, active, true, refs.length))
+      decorateMarker(marker, refs, active)
     }
     if (!activeStopId || !activeIsOnMap) {
       map.closePopup()
       return
     }
-    const marker = markersRef.current.get(activeStopId)
+    // 选中组内哪一站，弹窗就指向哪一站的说明（marker 只有一个，弹窗内容含全组入口）
+    const owningGroup = groups.find((g) => g.some((s) => s.stop.id === activeStopId))
+    const marker = owningGroup ? markersRef.current.get(owningGroup[0].stop.id) : undefined
     if (!marker) return
     map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 13), { duration: 0.6 })
     marker.openPopup()
-  }, [activeStopId, activeIsOnMap, data])
+  }, [activeStopId, activeGroupId, activeIsOnMap, groups])
 
   // 没有站点（空日）不能说「站点均无坐标」；有站点但一个坐标都没有才算缺坐标
   const hasStops = day.stops.length > 0
-  const missingCoords = hasStops && data.stops.length === 0
-  const status = missingCoords
+  const allMissing = hasStops && data.stops.length === 0
+  const someMissing = hasStops && data.stops.length > 0 && data.missingCoordCount > 0
+  /**
+   * 空态文案分情形说，且都不承诺「重新规划就能拿到坐标」：
+   * - 全部缺坐标：全幅说明，原因前端看不到，引导检查服务状态；
+   * - 个别站点缺坐标：角落提示缺了几个，地图本身仍可用；
+   * - 底图瓦片失败/超时：与站点坐标是两回事，分开表述。
+   * 站点坐标是否解析得到由后端当时的地图服务决定，重新提交同样的请求并不能保证改善。
+   */
+  const status = allMissing
     ? {
         big: '这一天的站点缺少坐标',
-        desc: '后端未能解析出本日站点的经纬度，文字行程照常可用。换一天或重新规划可能得到带坐标的路线。',
+        desc: '后端没能解析出本日站点的经纬度，原因前端无法确认（可能是服务未配置地图 Key、上游超时或个别地点没匹配上）。文字行程照常可用；需要地图时请检查后端服务状态后再试。',
       }
     : tileState === 'failed'
       ? {
@@ -240,6 +300,23 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
           // 事件层只能证明「没拿到瓦片」，证明不了原因，所以不能直接断定是网络断了
           desc: '此刻挂在底图上的瓦片没有一张加载成功，可能是网络、代理或图源暂时不可用；缩放地图会重新请求瓦片。下方的文字行程仍可完整使用，站点坐标未受影响。',
         }
+      : null
+
+  // 角落提示条（不拦交互）：站点坐标缺失与瓦片异常是两类问题，分开两条、各自成段。
+  // 瓦片异常保留 role=status（状态会随缩放消失）；缺坐标是当日数据事实，不占 live region，
+  // 避免常驻提示和头部状态播报撞车。
+  const tileNote =
+    tileState === 'partial'
+      ? // 状态的口径是「挂在图层上的瓦片」，含 keepBuffer 在视野外预加载的那几圈，
+        // 不是像素视窗，所以不能说成「你看到的底图有洞」；也不能承诺平移就会重试——
+        // 仍挂在图层上的失败瓦片不会被重新请求，得先移出缓冲区或换 zoom 重建。
+        '底图上有部分瓦片加载失败（含视野外预加载、当前看不见的瓦片），你看到的部分可能看不出缺口。缩放地图，或把该区域移出视野再移回，才会重新请求这些瓦片；站点与路线不受影响。'
+      : tileState === 'stalled'
+        ? '底图加载超时：有瓦片一直没返回结果，这不一定是网络问题，底图可能暂时不完整。缩放地图会重新请求瓦片；站点、路线和文字行程仍可查看。'
+        : null
+  const coordNote =
+    someMissing
+      ? `本日共 ${data.totalStopCount} 个站点，其中 ${data.missingCoordCount} 个没有解析到经纬度，未画在图上；缺少的站点在下方文字行程里仍可查看。`
       : null
 
   return (
@@ -256,18 +333,11 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
             <span>{status.desc}</span>
           </div>
         )}
-        {!status && tileState === 'partial' && (
-          // 状态的口径是「挂在图层上的瓦片」，含 keepBuffer 在视野外预加载的那几圈，
-          // 不是像素视窗，所以不能说成「你看到的底图有洞」；也不能承诺平移就会重试——
-          // 仍挂在图层上的失败瓦片不会被重新请求，得先移出缓冲区或换 zoom 重建。
-          <p className="map-status-note" role="status">
-            底图上有部分瓦片加载失败（含视野外预加载、当前看不见的瓦片），你看到的部分可能看不出缺口。缩放地图，或把该区域移出视野再移回，才会重新请求这些瓦片；站点与路线不受影响。
-          </p>
+        {!status && tileNote && (
+          <p className="map-status-note" role="status">{tileNote}</p>
         )}
-        {!status && tileState === 'stalled' && (
-          <p className="map-status-note" role="status">
-            底图加载超时：有瓦片一直没返回结果，这不一定是网络问题，底图可能暂时不完整。缩放地图会重新请求瓦片；站点、路线和文字行程仍可查看。
-          </p>
+        {!status && coordNote && (
+          <p className="map-status-note map-note-coord">{coordNote}</p>
         )}
       </div>
       <div className="map-legend" aria-label="地图图例">

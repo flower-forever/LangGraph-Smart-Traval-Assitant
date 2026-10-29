@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildDayMapData } from '../lib/mapData'
-import { MOCK_TRIP, MOCK_TRIP_NO_COORD } from './fixtures/trip'
+import { buildDayMapData, groupStopsByLocation } from '../lib/mapData'
+import { MOCK_TRIP, MOCK_TRIP_NO_COORD, MOCK_TRIP_SAME_COORD } from './fixtures/trip'
 
 describe('buildDayMapData', () => {
   it('丢弃无坐标站点，保留合法坐标站点并保持顺序', () => {
@@ -115,5 +115,68 @@ describe('buildDayMapData', () => {
     expect(data.stops).toHaveLength(0)
     expect(data.legs).toHaveLength(0)
     expect(data.hasCoords).toBe(false)
+  })
+})
+
+describe('groupStopsByLocation', () => {
+  it('相同坐标的站点归为一组，保留原序号、名称与坐标原值', () => {
+    const data = buildDayMapData(MOCK_TRIP_SAME_COORD.days[0])
+    const groups = groupStopsByLocation(data.stops)
+    expect(groups).toHaveLength(2)
+    // 每组内部保持站点顺序：早课在前、晚课在后
+    const twin = groups.find((g) => g.length === 2)!
+    expect(twin).toBeTruthy()
+    expect(twin.map((s) => s.stop.id)).toEqual(['d1', 'd2'])
+    // 原序号（全天序号）和真实坐标原值不能被改动
+    expect(twin[0].index).toBe(0)
+    expect(twin[1].index).toBe(1)
+    expect(twin[0].stop.location).toEqual({ lng: 120.0972, lat: 30.2408 })
+    expect(twin[1].stop.location).toEqual({ lng: 120.0972, lat: 30.2408 })
+    expect(groups.find((g) => g.length === 1)![0].stop.id).toBe('d3')
+  })
+
+  it('每组的时间/名称各不相同，marker 不能只显示第一站', () => {
+    const data = buildDayMapData(MOCK_TRIP_SAME_COORD.days[0])
+    const groups = groupStopsByLocation(data.stops)
+    const twin = groups.find((g) => g.length === 2)!
+    expect(twin[0].stop.time).toBe('09:00')
+    expect(twin[1].stop.time).toBe('17:00')
+    expect(twin[0].stop.name).not.toBe(twin[1].stop.name)
+  })
+
+  it('坐标不同（哪怕很近）不合并：分组是字面相等，不做近似猜测', () => {
+    const data = buildDayMapData(MOCK_TRIP.days[0])
+    const groups = groupStopsByLocation(data.stops)
+    expect(groups).toHaveLength(2)
+    expect(groups.every((g) => g.length === 1)).toBe(true)
+  })
+
+  it('全部无坐标时返回空分组列表', () => {
+    const data = buildDayMapData(MOCK_TRIP_NO_COORD.days[0])
+    expect(groupStopsByLocation(data.stops)).toHaveLength(0)
+  })
+})
+
+describe('缺坐标计数（DayMapData 扩展）', () => {
+  it('部分缺坐标时报告缺失数量，与地图可用站点分开', () => {
+    const data = buildDayMapData(MOCK_TRIP.days[0])
+    expect(data.stops).toHaveLength(2)
+    expect(data.missingCoordCount).toBe(1)
+    expect(data.totalStopCount).toBe(3)
+    expect(data.hasCoords).toBe(true)
+  })
+
+  it('全缺坐标时缺失数等于站点总数', () => {
+    const day = MOCK_TRIP_NO_COORD.days[0]
+    const data = buildDayMapData(day)
+    expect(data.missingCoordCount).toBe(day.stops.length)
+    expect(data.totalStopCount).toBe(day.stops.length)
+    expect(data.hasCoords).toBe(false)
+  })
+
+  it('空日：站点总数为 0，与「有站点但全缺坐标」可区分', () => {
+    const data = buildDayMapData(MOCK_TRIP.days[1])
+    expect(data.totalStopCount).toBe(0)
+    expect(data.missingCoordCount).toBe(0)
   })
 })

@@ -224,6 +224,12 @@ function interruptedApiError(clock: RequestClock, err: unknown): ApiError | null
  */
 export type PlannerAvailability = 'ready' | 'unavailable' | 'unknown'
 
+/**
+ * 当前后端服务的地图（高德）配置状态。只回答「这个服务进程」：
+ * 它说明不了历史行程的坐标从哪来——导入/恢复的行程由文件或存储自己说话。
+ */
+export type AmapAvailability = 'configured' | 'not_configured' | 'unknown'
+
 /** 探活失败分级，与请求层 network/server/bad_payload 的口径对齐，另加超时 */
 export type ProbeFailure = 'timeout' | 'network' | 'http' | 'bad_payload'
 
@@ -235,9 +241,11 @@ export interface BackendCapabilities {
   planner: PlannerAvailability
   /** 失败分级；reachable=true 时为 null */
   failure: ProbeFailure | null
+  /** 当前后端服务是否配置了地图 Key；reachable=false 时固定 unknown */
+  amap: AmapAvailability
 }
 
-const UNREACHABLE: BackendCapabilities = { reachable: false, planner: 'unknown', failure: 'network' }
+const UNREACHABLE: BackendCapabilities = { reachable: false, planner: 'unknown', failure: 'network', amap: 'unknown' }
 
 /** 健康响应必须是 JSON 对象且 status 为 healthy；HTML fallback 的 200 不算数 */
 function isHealthyPayload(body: unknown): boolean {
@@ -251,6 +259,15 @@ function readPlannerAvailability(body: unknown): PlannerAvailability {
   const value = (body as { planner_ready?: unknown }).planner_ready
   if (value === true) return 'ready'
   if (value === false) return 'unavailable'
+  return 'unknown'
+}
+
+/** amap_configured 同样只认布尔字面量；说明的是「当前服务」，不是历史行程的坐标来源 */
+function readAmapAvailability(body: unknown): AmapAvailability {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return 'unknown'
+  const value = (body as { amap_configured?: unknown }).amap_configured
+  if (value === true) return 'configured'
+  if (value === false) return 'not_configured'
   return 'unknown'
 }
 
@@ -269,7 +286,7 @@ export async function probeBackendCapabilities(
       headers: { Accept: 'application/json' },
       signal: clock.signal,
     })
-    if (!res.ok) return { reachable: false, planner: 'unknown', failure: 'http' }
+    if (!res.ok) return { reachable: false, planner: 'unknown', failure: 'http', amap: 'unknown' }
     let body: unknown
     try {
       // 响应头到了、body 还在路上：超时后立刻归类，不等底层读取自己醒悟
@@ -277,15 +294,15 @@ export async function probeBackendCapabilities(
     } catch {
       // 响应头先到、body 阶段被超时打断：这是超时，不是返回结构有问题。
       // 只有真正读完却解析不了（200 + HTML 的 SPA fallback / 静态服务器）才算 bad_payload。
-      if (clock.timedOut()) return { reachable: false, planner: 'unknown', failure: 'timeout' }
+      if (clock.timedOut()) return { reachable: false, planner: 'unknown', failure: 'timeout', amap: 'unknown' }
       if (clock.abortedByCaller()) return { ...UNREACHABLE, failure: 'network' }
-      return { reachable: false, planner: 'unknown', failure: 'bad_payload' }
+      return { reachable: false, planner: 'unknown', failure: 'bad_payload', amap: 'unknown' }
     }
     if (!isHealthyPayload(body)) {
-      return { reachable: false, planner: 'unknown', failure: 'bad_payload' }
+      return { reachable: false, planner: 'unknown', failure: 'bad_payload', amap: 'unknown' }
     }
-    // 兼容旧后端与 stub：字段缺失时 planner 是 unknown，不是 false
-    return { reachable: true, planner: readPlannerAvailability(body), failure: null }
+    // 兼容旧后端与 stub：字段缺失时 planner/amap 是 unknown，不是 false
+    return { reachable: true, planner: readPlannerAvailability(body), failure: null, amap: readAmapAvailability(body) }
   } catch {
     return { ...UNREACHABLE, failure: clock.timedOut() ? 'timeout' : 'network' }
   } finally {

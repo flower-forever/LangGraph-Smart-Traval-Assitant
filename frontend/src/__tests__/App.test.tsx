@@ -2,7 +2,7 @@
  * App 集成测试：mock fetch，渲染真实 TripMap（真实 Leaflet + jsdom）。
  * 地图不做组件 mock——marker / popup 的选中联动必须走真实 Leaflet 事件才覆盖得到。
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -620,6 +620,169 @@ describe('App 集成', () => {
     await waitFor(() => expect(screen.getByText(/数据格式不符合约定/)).toBeInTheDocument())
     expect(screen.getByText('路书')).toBeInTheDocument()
     expect(screen.queryByText('杭州三日漫步路书')).toBeNull()
+  })
+
+  /* ───────── 请求结果归属：旧行程在头顶注明来历 ───────── */
+
+  it('规划失败后旧行程继续显示，行程标题旁注明「下方是上次的结果」', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.resolve(textResponse('upstream timeout', 504))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await screen.findByRole('alert')
+
+    // 旧 3 天行程保留，但归属说明出现：这不是新请求的答案
+    expect(screen.getByText('杭州三日漫步路书')).toBeInTheDocument()
+    const note = screen.getByTestId('request-status-note')
+    expect(note.textContent).toContain('上一次')
+    expect(note.textContent).toContain('本次没有生成')
+    // 归属说明在行程标题所在区域，移动端滚到标题也能看到
+    expect(note.textContent).toContain('西安')
+  })
+
+  it('规划进行中：标题旁提示正在生成新行程，下方仍是上次结果', async () => {
+    let resolvePlan!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') {
+        return new Promise<Response>((resolve) => {
+          resolvePlan = resolve
+        })
+      }
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    expect(screen.getByTestId('request-status-note').textContent).toContain('正在生成')
+
+    await act(async () => {
+      resolvePlan(jsonResponse({ ...MOCK_TRIP, id: 'trip-agent-5', source: 'agent', title: '西安五日' }))
+      await Promise.resolve()
+    })
+    // 成功后提示消失，标题换成新行程
+    expect(screen.queryByTestId('request-status-note')).toBeNull()
+    expect(screen.getByText('西安五日')).toBeInTheDocument()
+  })
+
+  it('停止等待后：行程标题旁注明下方仍是上次结果', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return new Promise<Response>(() => {})
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await user.click(screen.getByRole('button', { name: '停止等待' }))
+
+    const note = screen.getByTestId('request-status-note')
+    expect(note.textContent).toContain('已停止等待')
+    expect(note.textContent).toContain('上一次')
+  })
+
+  it('恢复本地副本会清掉失败归属提示', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.resolve(textResponse('upstream timeout', 504))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    window.localStorage.clear()
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+    // 先保存一份，制造可恢复的副本
+    await user.click(within(container).getByRole('button', { name: '保存当前行程' }))
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await screen.findByRole('alert')
+    expect(screen.getByTestId('request-status-note')).toBeInTheDocument()
+
+    // 恢复后归属提示消失
+    await user.click(within(container).getByRole('button', { name: /已保存行程/ }))
+    await user.click(within(container).getByRole('button', { name: /恢复保存的行程《杭州三日漫步路书》/ }))
+    expect(screen.queryByTestId('request-status-note')).toBeNull()
+  })
+
+  it('打开导入文件会清掉失败归属提示与旧错误横幅', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.resolve(textResponse('upstream timeout', 504))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    window.localStorage.clear()
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await screen.findByRole('alert')
+
+    await expandTransferPanel(user)
+    pickBackupFile(IMPORTED_TRIP)
+    expect(await screen.findByText('预览：西安古城两日行')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开这份行程' }))
+
+    expect(screen.queryByTestId('request-status-note')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('迟到的旧失败不能覆盖新一次成功规划：归属提示不出现', async () => {
+    const planResolvers: Array<(response: Response) => void> = []
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') {
+        return new Promise<Response>((resolve) => {
+          planResolvers.push(resolve)
+        })
+      }
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await user.click(screen.getByRole('button', { name: '停止等待' }))
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await waitFor(() => expect(planResolvers).toHaveLength(2))
+
+    // 第 2 次成功；第 1 次的失败迟到
+    await act(async () => {
+      planResolvers[1](jsonResponse({ ...MOCK_TRIP, id: 'trip-new-2', source: 'agent', title: '第二次结果' }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText('第二次结果')).toBeInTheDocument()
+
+    await act(async () => {
+      planResolvers[0](textResponse('late failure', 504))
+      await Promise.resolve()
+    })
+    // 旧失败被序号挡住：既不显示错误横幅，也不出现归属提示
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByTestId('request-status-note')).toBeNull()
   })
 
   it('停止等待会立刻恢复提交，旧请求忽略 abort 迟到也不能覆盖新结果', async () => {

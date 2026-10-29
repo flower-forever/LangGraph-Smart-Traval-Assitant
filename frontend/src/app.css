@@ -336,6 +336,31 @@ textarea.field-input {
   border-color: var(--color-line-strong);
 }
 
+/* 行程头第一行：来源标签 + 规划请求归属说明同行排列，窄屏换行 */
+.trip-head-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.trip-head-row .trip-source-tag { margin-bottom: 0; }
+
+/* 规划请求归属说明：挂在行程标题上方，说明「下方是哪次的结果」。
+   不写进 trip，随请求状态出现/消失。 */
+.trip-outcome-note {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-warn-bg);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
 .trip-title {
   font-family: var(--font-display);
   font-weight: 700;
@@ -755,6 +780,12 @@ textarea.field-input {
   font-size: var(--text-xs);
   line-height: 1.5;
   box-shadow: var(--shadow-1);
+}
+
+/* 站点坐标缺失的角落提示：与瓦片提示同类观感，靠顶部；瓦片提示靠底部，互不遮挡 */
+.map-status-note.map-note-coord {
+  bottom: auto;
+  top: var(--space-3);
 }
 
 /* 图例 */
