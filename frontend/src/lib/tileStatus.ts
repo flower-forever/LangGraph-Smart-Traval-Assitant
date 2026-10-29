@@ -1,31 +1,51 @@
 /**
- * 瓦片加载状态的结算逻辑。
- * 瓦片是并发加载的，必须等「已经开始的瓦片」全部结束（成功或失败）才能下结论，
- * 否则最后一个瓦片失败后状态会永远停在 loading，或者最后一次成功把失败吞掉。
+ * 瓦片加载状态的结算逻辑：只描述「此刻还挂在底图上的瓦片」。
+ *
+ * 为什么不能按图层生命周期累计：tileload / tileerror 只增不减时，一次偶发失败会一直
+ * 粘在界面上。用户平移、缩放之后当前视野的瓦片明明都成功了，界面还在说「部分瓦片加载
+ * 失败」——那是在描述历史，不是在描述底图现在的样子。
+ *
+ * Leaflet 的事件足够支撑按瓦片身份撤销：每个 TileEvent 都带 tile（<img> 元素）和
+ * coords（z/x/y）。tileloadstart 记一张瓦片；tileload / tileerror 给它结论；
+ * tileunload（GridLayer._removeTile：瓦片被移出或离开 keepBuffer）和 tileabort
+ * （TileLayer._abortLoading：换 zoom 时放弃在途瓦片）表示这张瓦片已经不在图上，整条
+ * 记录跟着删掉。之后的迟到事件因为查不到记录被忽略——既不会扣掉别人的 pending，也
+ * 不会把已经撤下的失败重新点亮。
+ *
+ * 判定范围的技术局限（有意保守）：Leaflet 的 keepBuffer 会在视野外额外保留约两圈
+ * 瓦片，只靠事件分不清「视野内」和「缓冲区」。这里把「还挂在图层上」当作判定范围，
+ * 缓冲区里的失败也算失败。方向是宁可多提示、不假装恢复：缓冲区瓦片没被卸载就不会
+ * 重新请求，平移回去真的能看到缺口。要精确到像素视野得读 map.getPixelBounds() 和
+ * 私有 TileRange，不属于事件层的职责，也不适合在没有浏览器布局的单测里自证。
+ *
+ * 容易被误判成「恢复了」的地方：缓冲区里的瓦片失败后并没有被卸载，Leaflet 不会重新
+ * 请求它，那块缺口一直在，只是不在视野里。所以面向用户的文案必须跟着这个口径走——
+ * partial / failed 覆盖的是「图层上的全部瓦片」，不是像素视窗：不能说成「你看到的
+ * 底图有洞」，也不能承诺「平移就会重试」（仍挂在图层上的失败瓦片不会重发请求，要先
+ * 移出缓冲区再移回，或者换 zoom 重建瓦片）。
  *
  * 还有一种结算不了的情况：浏览器只发了 tileloadstart，之后既不 load 也不 error
  * （请求挂住、代理静默丢弃、图片被拦但没有回调）。这时 pending 永远大于 0，
  * 状态会一直停在 loading，用户只看到一片灰底图却没有任何说明。
  * createTileWatch 负责这种情况：在途瓦片超过预算时间没有任何结论就转成 stalled，
  * 迟到的 load/error 仍按真实结果结算回来。
- *
- * 计数必须按瓦片身份来：Leaflet 会在缩放/平移时卸载旧瓦片，其中既有已成功的也有
- * 还在途的。把任意一次 tileunload 都当成「某个在途瓦片结束了」，会让一个已成功的
- * 旧瓦片把另一个仍在挂起的瓦片的 pending 扣掉，watchdog 随之被清掉，挂起的瓦片
- * 就再也不会报超时。所以每个事件都带着 TileEvent 的 tile（<img> 元素）和 coords
- * （z/x/y）进来，只有「这个瓦片此刻仍在途」并且是它第一次给出结果时才记账。
  */
 
 export type TileState = 'loading' | 'ok' | 'partial' | 'failed' | 'stalled'
 
+/** 一张瓦片此刻所处的阶段：在途 / 成功 / 失败 */
+export type TileStatus = 'pending' | 'loaded' | 'failed'
+
 export interface TileStats {
   /** 已开始、还没结束的瓦片数 */
   pending: number
+  /** 当前成功、且仍挂在图上的瓦片数 */
   loaded: number
+  /** 当前失败、且仍挂在图上的瓦片数 */
   failed: number
 }
 
-export const TILE_STATS_INITIAL: TileStats = { pending: 0, loaded: 0, failed: 0 }
+export const TILE_STATS_INITIAL: TileStats = Object.freeze({ pending: 0, loaded: 0, failed: 0 })
 
 /**
  * 底图 watchdog 的等待预算。
@@ -37,7 +57,7 @@ export function onTileLoadStart(stats: TileStats): TileStats {
   return { ...stats, pending: stats.pending + 1 }
 }
 
-/** 单个瓦片结束（成功或失败）后计数；pending 不会掉到负数 */
+/** 单个瓦片结束（成功或失败）后记一笔；pending 不会掉到负数 */
 export function onTileSettled(stats: TileStats, outcome: 'load' | 'error'): TileStats {
   const pending = Math.max(0, stats.pending - 1)
   return outcome === 'load'
@@ -45,12 +65,22 @@ export function onTileSettled(stats: TileStats, outcome: 'load' | 'error'): Tile
     : { ...stats, pending, failed: stats.failed + 1 }
 }
 
-/**
- * 瓦片被移除（缩放/平移时旧瓦片卸载、图层被拿掉）。
- * 它既不是加载成功也不是加载失败，只把在途计数扣掉，避免 pending 泄漏成永久 loading。
- */
+/** 在途瓦片被拿掉（还没结论就离场）：只扣 pending。等价于 onTileRemoved(stats, 'pending') */
 export function onTileUnloaded(stats: TileStats): TileStats {
   return { ...stats, pending: Math.max(0, stats.pending - 1) }
+}
+
+/**
+ * 瓦片离场（tileunload / tileabort）时按它当时的真实阶段撤账。
+ *
+ * 关键点：撤的是「这张瓦片自己」那一笔。已成功的瓦片离场只减 loaded，不会顺手把
+ * 另一张仍在途瓦片的 pending 减掉；已失败的瓦片离场则把那笔失败一起带走，界面不再
+ * 报历史错误。
+ */
+export function onTileRemoved(stats: TileStats, status: TileStatus): TileStats {
+  if (status === 'pending') return onTileUnloaded(stats)
+  if (status === 'loaded') return { ...stats, loaded: Math.max(0, stats.loaded - 1) }
+  return { ...stats, failed: Math.max(0, stats.failed - 1) }
 }
 
 /** 还有瓦片在途就是 loading；全部结束后再区分成功 / 部分失败 / 全失败 */
@@ -107,7 +137,7 @@ export interface TileWatch {
   handleStart(tile?: TileRef): void
   /** tileload / tileerror */
   handleSettled(outcome: 'load' | 'error', tile?: TileRef): void
-  /** tileunload：瓦片被移除 */
+  /** tileunload：瓦片被移除（出视野 / 被 prune / 图层被清） */
   handleUnload(tile?: TileRef): void
   /** tileabort：Leaflet 放弃在途瓦片（换 zoom 时只发这个，不发 unload） */
   handleAbort(tile?: TileRef): void
@@ -115,7 +145,7 @@ export interface TileWatch {
   resetForViewChange(): void
   /** 当前计数快照，供调用方与测试观察 */
   snapshot(): TileStats
-  /** 卸载：清定时器，之后不再回调 */
+  /** 卸载：清定时器与在册瓦片，之后不再回调 */
   dispose(): void
 }
 
@@ -123,15 +153,18 @@ export interface TileWatch {
  * 把「事件 → 状态」和 watchdog 定时器收在一起，组件只负责转发 Leaflet 事件。
  *
  * 记账规则：
+ * - 在册瓦片集合就是界面此刻的底图：只有它里面的瓦片参与计数；
  * - 同一瓦片重复 start 不重复计 pending；
- * - 只有仍在途的瓦片第一次 load/error/unload/abort 才改计数，重复或迟到的同类事件
- *   直接忽略，不去动别的瓦片的 pending；
- * - 已成功的瓦片之后被卸载属于常规清理，不算失败，也不扣别的瓦片的 pending。
+ * - load/error 只对仍在途的那张瓦片生效，重复或迟到的同类事件直接忽略；
+ * - unload/abort 按那张瓦片当时的真实阶段撤账（见 onTileRemoved），撤完就删记录，
+ *   之后它再来什么事件都查不到，不会影响别人。
  *
  * 计时规则：
  * - 没有在途瓦片（pending 为 0）不启动计时，避免空日或还没开始加载就报超时；
  * - 连续 tileloadstart 不重置计时，否则慢吞吞的请求会把截止时间一直往后推；
- * - 任一在途瓦片给出结论后清掉 stalled 并重新给剩余瓦片一个完整预算；
+ * - 只有 pending 真的变了才重新计时：把已结算的瓦片卸载掉不算「加载有进展」，
+ *   不能借它把挂起瓦片的截止时间推后；
+ * - 在途瓦片给出结论后清掉 stalled 并重新给剩余瓦片一个完整预算；
  * - 超时只表示「没有拿到瓦片结果」，不代表网络断了，文案由调用方负责。
  */
 export function createTileWatch(
@@ -139,9 +172,9 @@ export function createTileWatch(
   options: TileWatchOptions = {},
 ): TileWatch {
   const stallTimeoutMs = options.stallTimeoutMs ?? TILE_STALL_TIMEOUT_MS
+  /** 此刻还挂在底图上的瓦片：key → 阶段。stats 是它的汇总 */
+  const live = new Map<string, TileStatus>()
   let stats: TileStats = TILE_STATS_INITIAL
-  /** 在途瓦片的身份集合；与 stats.pending 一一对应 */
-  const inFlight = new Set<string>()
   let anonymousSeq = 0
   let stalled = false
   let disposed = false
@@ -174,25 +207,51 @@ export function createTileWatch(
     }, stallTimeoutMs)
   }
 
-  /** 把该瓦片从在途集合拿掉；不在途说明是重复/迟到事件，返回 false */
-  const takeInFlight = (ref: TileRef | undefined): boolean => {
-    const key = tileKeyOf(ref)
-    if (key !== null) return inFlight.delete(key)
-    for (const candidate of inFlight) {
-      if (candidate.startsWith(ANONYMOUS_PREFIX)) {
-        inFlight.delete(candidate)
-        return true
-      }
+  /**
+   * 计数变化后的统一收尾。
+   *
+   * 只有「在途数量变了」才重新计时：瓦片离场不一定有结论，一次平移把已成功的瓦片
+   * 卸掉不该把挂起瓦片的截止时间往后推。pending 归零则连告警一起撤掉。
+   */
+  const afterDelta = (pendingChanged: boolean): void => {
+    if (stats.pending === 0) {
+      stalled = false
+      clearTimer()
+    } else if (pendingChanged) {
+      stalled = false
+      arm()
     }
-    return false
+    emit()
   }
 
-  /** 在途瓦片减少后的统一收尾：清掉超时告警，按剩余在途瓦片重新计时 */
-  const afterSettled = (): void => {
-    stalled = false
-    if (stats.pending > 0) arm()
-    else clearTimer()
-    emit()
+  /**
+   * 事件 → 此刻在册的瓦片 key。
+   * 返回 null 表示这张瓦片已经不在册（重复事件、迟到事件、已被卸载），一律不记账。
+   */
+  const resolveLiveKey = (ref: TileRef | undefined, onlyPending = false): string | null => {
+    const key = tileKeyOf(ref)
+    if (key !== null) {
+      const status = live.get(key)
+      if (status === undefined) return null
+      return !onlyPending || status === 'pending' ? key : null
+    }
+    // 没有身份的事件只能按到达顺序认领一个匿名在途记录（兜底路径）
+    for (const [candidate, status] of live) {
+      if (status === 'pending' && candidate.startsWith(ANONYMOUS_PREFIX)) return candidate
+    }
+    return null
+  }
+
+  /** 瓦片离场：按真实阶段撤账并删记录；不在册的事件什么都不做 */
+  const forget = (ref: TileRef | undefined, onlyPending = false): void => {
+    if (disposed) return
+    const key = resolveLiveKey(ref, onlyPending)
+    if (key === null) return
+    const status = live.get(key)
+    if (status === undefined) return
+    live.delete(key)
+    stats = onTileRemoved(stats, status)
+    afterDelta(status === 'pending')
   }
 
   return {
@@ -200,8 +259,8 @@ export function createTileWatch(
       if (disposed) return
       const key = tileKeyOf(ref) ?? `${ANONYMOUS_PREFIX}${anonymousSeq++}`
       // 同一个瓦片重复 start：不能重复计 pending，否则永远等不到对应数量的结束事件
-      if (inFlight.has(key)) return
-      inFlight.add(key)
+      if (live.has(key)) return
+      live.set(key, 'pending')
       const wasIdle = stats.pending === 0
       stats = onTileLoadStart(stats)
       if (wasIdle) {
@@ -213,26 +272,25 @@ export function createTileWatch(
 
     handleSettled(outcome, ref) {
       if (disposed) return
-      // 不在途的事件（已结算过的瓦片、已被卸载的瓦片、换视野后才到的迟到事件）
-      // 一律不记账：否则一个瓦片被算两次，还会把别的挂起瓦片的 pending 吃掉
-      if (!takeInFlight(ref)) return
+      // 只有仍在途的那张瓦片能给结论：已结算的重复事件、已被卸载后才到的迟到事件
+      // 都在这里被挡掉，否则一张瓦片会被算两次，还会把别人挂起的 pending 吃掉
+      const key = resolveLiveKey(ref, true)
+      if (key === null) return
+      live.set(key, outcome === 'load' ? 'loaded' : 'failed')
       stats = onTileSettled(stats, outcome)
-      afterSettled()
+      afterDelta(true)
     },
 
     handleUnload(ref) {
-      if (disposed) return
-      // 已结算的瓦片被卸载是缩放/平移里的常规行为，不扣任何在途计数
-      if (!takeInFlight(ref)) return
-      stats = onTileUnloaded(stats)
-      afterSettled()
+      // unload 只说明「这张瓦片离开图层」，成功还是失败都成立，按它当时的阶段撤账
+      forget(ref)
     },
 
     handleAbort(ref) {
-      if (disposed) return
-      if (!takeInFlight(ref)) return
-      stats = onTileUnloaded(stats)
-      afterSettled()
+      // abort 的语义是「这张还在加载的瓦片不要了」：Leaflet 的 _abortLoading 只挑
+      // 未完成的瓦片。已结算的瓦片要是收到 abort（重复/迟到），不能拿它撤掉一条
+      // 真实可见的成功记录
+      forget(ref, true)
     },
 
     resetForViewChange() {
@@ -251,6 +309,8 @@ export function createTileWatch(
       disposed = true
       stalled = false
       clearTimer()
+      live.clear()
+      stats = TILE_STATS_INITIAL
     },
   }
 }

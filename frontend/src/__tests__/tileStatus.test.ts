@@ -242,9 +242,10 @@ describe('createTileWatch / 按瓦片身份结算', () => {
     watch.handleSettled('load', a)
     expect(watch.snapshot()).toEqual({ pending: 1, loaded: 1, failed: 0 })
 
-    // 缩放时 Leaflet 卸载已经成功的旧瓦片：它既不是 B，也不该算任何结算
+    // 缩放时 Leaflet 卸载已经成功的旧瓦片：它离场后不再算进当前底图（loaded 减 1），
+    // 但它既不是 B，也不该算任何结算，B 的 pending 一分不能少
     watch.handleUnload(a)
-    expect(watch.snapshot()).toEqual({ pending: 1, loaded: 1, failed: 0 })
+    expect(watch.snapshot()).toEqual({ pending: 1, loaded: 0, failed: 0 })
     expect(states.at(-1)).toBe('loading')
 
     // B 一直没有响应，9 秒后必须给出结论，而不是被 A 的 unload 静默清掉
@@ -254,27 +255,33 @@ describe('createTileWatch / 按瓦片身份结算', () => {
     expect(states.at(-1)).toBe('stalled')
   })
 
-  it('同一个瓦片重复 load/error/unload 不会重复记账，也不会吃掉别的 pending', () => {
+  it('同一个瓦片重复 load/error 与离场都不会重复记账，也不会吃掉别的 pending', () => {
     vi.useFakeTimers()
     const { states, watch } = recordStates()
     const a = tileRef(1)
     const b = tileRef(2)
+    const c = tileRef(3)
 
     watch.handleStart(a)
     watch.handleStart(b)
+    watch.handleStart(c)
 
     watch.handleSettled('load', a)
-    expect(watch.snapshot()).toEqual({ pending: 1, loaded: 1, failed: 0 })
+    expect(watch.snapshot()).toEqual({ pending: 2, loaded: 1, failed: 0 })
 
-    // 重复的 load、同一瓦片后来的 error、以及已结算瓦片的 unload 都是迟到/重复事件
+    // 重复的 load、同一瓦片后来的 error 都是迟到/重复事件，a 早已结算
     watch.handleSettled('load', a)
     watch.handleSettled('error', a)
-    watch.handleUnload(a)
-    expect(watch.snapshot()).toEqual({ pending: 1, loaded: 1, failed: 0 })
+    expect(watch.snapshot()).toEqual({ pending: 2, loaded: 1, failed: 0 })
     expect(states.at(-1)).toBe('loading')
 
-    // B 自己的结果照常结算
+    // a 离场只撤自己那一笔
+    watch.handleUnload(a)
+    expect(watch.snapshot()).toEqual({ pending: 2, loaded: 0, failed: 0 })
+
+    // b 自己失败、c 最后成功：图上仍有成功的 c，所以是部分失败而不是全失败
     watch.handleSettled('error', b)
+    watch.handleSettled('load', c)
     expect(watch.snapshot()).toEqual({ pending: 0, loaded: 1, failed: 1 })
     expect(states.at(-1)).toBe('partial')
     expect(vi.getTimerCount()).toBe(0)
@@ -364,6 +371,7 @@ describe('createTileWatch / 按瓦片身份结算', () => {
     watch.handleStart(a)
     watch.handleStart(b)
     watch.handleSettled('load', a)
+    // Leaflet 的 _abortLoading 只挑未完成的瓦片，abort 指向已成功的瓦片属于不该出现的事件
     watch.handleAbort(a)
     expect(watch.snapshot()).toEqual({ pending: 1, loaded: 1, failed: 0 })
     expect(states.at(-1)).toBe('loading')
@@ -443,5 +451,238 @@ describe('createTileWatch / 按瓦片身份结算', () => {
     watch.handleSettled('load')
     watch.handleSettled('load')
     expect(watch.snapshot()).toEqual({ pending: 0, loaded: 2, failed: 0 })
+  })
+})
+
+// 旧实现把 loaded / failed 当成图层生命周期累计：一次早高峰里失败的瓦片，哪怕早就被
+// 平移卸载、当前视野全绿，界面还在说「部分瓦片加载失败」。这里锁定新语义——状态只描述
+// 此刻仍挂在图上的瓦片，瓦片离场就把它那一笔一起撤掉。
+describe('createTileWatch / 只反映当前底图上的瓦片', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('旧失败瓦片被卸载后，新视野全部成功就不再显示历史错误', () => {
+    const { states, watch } = recordStates()
+    const old = tileRef(1)
+    const failed = tileRef(2)
+    const fresh = tileRef(3)
+
+    watch.handleStart(old)
+    watch.handleStart(failed)
+    watch.handleSettled('load', old)
+    watch.handleSettled('error', failed)
+    expect(states.at(-1)).toBe('partial')
+
+    // 平移：失败那块出视野被 Leaflet 卸载，新视野的瓦片全部成功
+    watch.handleUnload(failed)
+    watch.handleUnload(old)
+    watch.handleStart(fresh)
+    watch.handleSettled('load', fresh)
+
+    expect(watch.snapshot()).toEqual({ pending: 0, loaded: 1, failed: 0 })
+    expect(states.at(-1)).toBe('ok')
+    expect(states).not.toContain('failed')
+  })
+
+  it('仍挂在图上的成功瓦片 + 平移新请求的一片失败，只算部分失败', () => {
+    const { states, watch } = recordStates()
+    const kept = tileRef(1)
+
+    watch.handleStart(kept)
+    watch.handleSettled('load', kept)
+    expect(states.at(-1)).toBe('ok')
+
+    // 平移只新请求了一片，这一片失败：视野里还有成功的底图，不能说整张图都失败
+    const edge = tileRef(2)
+    watch.handleStart(edge)
+    expect(states.at(-1)).toBe('loading')
+    watch.handleSettled('error', edge)
+
+    expect(watch.snapshot()).toEqual({ pending: 0, loaded: 1, failed: 1 })
+    expect(states.at(-1)).toBe('partial')
+    expect(states).not.toContain('failed')
+  })
+
+  it('卸载已完成的瓦片只撤它自己，在途瓦片的 pending 与超时照旧', () => {
+    vi.useFakeTimers()
+    const { states, watch } = recordStates()
+    const a = tileRef(1)
+    const b = tileRef(2)
+    const c = tileRef(3)
+
+    watch.handleStart(a)
+    watch.handleStart(b)
+    watch.handleStart(c)
+    watch.handleSettled('load', a)
+    watch.handleSettled('load', c)
+
+    watch.handleUnload(a)
+    watch.handleUnload(c)
+    expect(watch.snapshot()).toEqual({ pending: 1, loaded: 0, failed: 0 })
+    expect(states.at(-1)).toBe('loading')
+
+    vi.advanceTimersByTime(TILE_STALL_TIMEOUT_MS - 1)
+    expect(states).not.toContain('stalled')
+    vi.advanceTimersByTime(1)
+    expect(states.at(-1)).toBe('stalled')
+  })
+
+  it('已失败的瓦片离场后，迟到的事件不会把失败重新点亮', () => {
+    const { states, watch } = recordStates()
+    const a = tileRef(1)
+
+    watch.handleStart(a)
+    watch.handleSettled('error', a)
+    expect(states.at(-1)).toBe('failed')
+
+    watch.handleUnload(a)
+    expect(watch.snapshot()).toEqual({ pending: 0, loaded: 0, failed: 0 })
+    expect(states.at(-1)).toBe('loading')
+
+    // 卸载之后补发的任何事件都不能虚构失败或恢复
+    watch.handleSettled('error', a)
+    watch.handleSettled('load', a)
+    watch.handleUnload(a)
+    expect(watch.snapshot()).toEqual({ pending: 0, loaded: 0, failed: 0 })
+    expect(states).not.toContain('partial')
+    expect(states).not.toContain('ok')
+    expect(states.at(-1)).toBe('loading')
+  })
+
+  it('abort 之后迟到的 error 不能把这张瓦片算成失败', () => {
+    const { states, watch } = recordStates()
+    const a = tileRef(1)
+
+    watch.handleStart(a)
+    watch.handleAbort(a)
+    // _abortLoading 清掉 src 之后浏览器仍可能补发 error（请求被取消）
+    watch.handleSettled('error', a)
+
+    expect(watch.snapshot()).toEqual({ pending: 0, loaded: 0, failed: 0 })
+    expect(states).not.toContain('failed')
+    expect(states).not.toContain('partial')
+  })
+
+  it('abort 只清在途瓦片：已成功的瓦片一条记录都不动', () => {
+    const { watch } = recordStates()
+    const a = tileRef(1)
+    const b = tileRef(2)
+
+    watch.handleStart(a)
+    watch.handleStart(b)
+    watch.handleSettled('load', a)
+    watch.handleAbort(a)
+
+    expect(watch.snapshot()).toEqual({ pending: 1, loaded: 1, failed: 0 })
+  })
+
+  it('卸载已成功的瓦片不算进展，不会把挂起瓦片的超时窗口往后推', () => {
+    vi.useFakeTimers()
+    const { states, watch } = recordStates()
+    const settled = tileRef(1)
+    const hung = tileRef(2)
+
+    watch.handleStart(settled)
+    watch.handleSettled('load', settled)
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 挂起的那张开始加载：9 秒从这一刻起算
+    watch.handleStart(hung)
+    vi.advanceTimersByTime(8000)
+
+    // 平移把已成功的旧瓦片卸掉：pending 没变，这不是加载有进展的证据
+    watch.handleUnload(settled)
+    expect(states.at(-1)).toBe('loading')
+
+    vi.advanceTimersByTime(999)
+    expect(states).not.toContain('stalled')
+    vi.advanceTimersByTime(1)
+    expect(states.at(-1)).toBe('stalled')
+  })
+
+  it('全部瓦片失败后把失败的都卸载掉，状态退回等待而不是继续报失败', () => {
+    const { states, watch } = recordStates()
+    const a = tileRef(1)
+    const b = tileRef(2)
+
+    watch.handleStart(a)
+    watch.handleStart(b)
+    watch.handleSettled('error', a)
+    watch.handleSettled('error', b)
+    expect(states.at(-1)).toBe('failed')
+
+    watch.handleUnload(a)
+    watch.handleUnload(b)
+    expect(states.at(-1)).toBe('loading')
+    expect(states).not.toContain('partial')
+    // 退回 loading 不等于宣称恢复：没有成功瓦片就不该出现 ok
+    expect(states).not.toContain('ok')
+  })
+})
+
+// 计时预算和「stats 指回初始值」这两件事写在实现注释里，但没有测试盯着，改动容易漂移。
+describe('createTileWatch / 计时预算与内部状态', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('在途瓦片结算后，剩余瓦片从结算那一刻重新拿一整个预算', () => {
+    // 有瓦片真的拿到了结果，说明加载在推进：不能沿用旧截止时间立刻报超时，
+    // 但也不能让剩余瓦片无限期拖下去。
+    vi.useFakeTimers()
+    const { states, watch } = recordStates()
+    const fast = tileRef(1)
+    const slow = tileRef(2)
+
+    watch.handleStart(fast)
+    watch.handleStart(slow)
+    vi.advanceTimersByTime(8000)
+    watch.handleSettled('load', fast)
+
+    vi.advanceTimersByTime(TILE_STALL_TIMEOUT_MS - 1)
+    expect(states).not.toContain('stalled')
+
+    vi.advanceTimersByTime(1)
+    expect(states.at(-1)).toBe('stalled')
+  })
+
+  it('没有在途瓦片时换视野不会凭空启动计时器', () => {
+    vi.useFakeTimers()
+    const { states, watch } = recordStates()
+
+    watch.resetForViewChange()
+    expect(vi.getTimerCount()).toBe(0)
+
+    vi.advanceTimersByTime(TILE_STALL_TIMEOUT_MS * 3)
+    expect(states).not.toContain('stalled')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('snapshot 返回副本，外部改动不会影响内部计数', () => {
+    const { watch } = recordStates()
+    watch.handleStart(tileRef(1))
+
+    const snap = watch.snapshot()
+    expect(snap).toEqual({ pending: 1, loaded: 0, failed: 0 })
+    expect(snap).not.toBe(watch.snapshot())
+
+    snap.pending = 99
+    expect(watch.snapshot().pending).toBe(1)
+  })
+
+  it('初始计数是冻结的，外部改写不会污染 reset/dispose 指回去的那份基准', () => {
+    // dispose / reset 会把 stats 直接指回 TILE_STATS_INITIAL：它一旦被外部改过，
+    // 之后每个 watch 的起点都跟着串味。
+    expect(Object.isFrozen(TILE_STATS_INITIAL)).toBe(true)
+    expect(() => {
+      TILE_STATS_INITIAL.pending = 99
+    }).toThrow()
+    expect(TILE_STATS_INITIAL).toEqual({ pending: 0, loaded: 0, failed: 0 })
+
+    const { watch } = recordStates()
+    watch.handleStart(tileRef(1))
+    watch.dispose()
+    expect(watch.snapshot()).toEqual({ pending: 0, loaded: 0, failed: 0 })
   })
 })

@@ -162,7 +162,7 @@ describe('TripMap（真实 Leaflet）', () => {
       tiles.load(b)
       tiles.load(c)
     })
-    expect(screen.getByText(/部分地图瓦片加载失败/)).toBeInTheDocument()
+    expect(screen.getByText(/部分瓦片加载失败/)).toBeInTheDocument()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
   })
 
@@ -224,7 +224,7 @@ describe('TripMap（真实 Leaflet）', () => {
       tiles.load(a)
     })
     expect(screen.queryByText(/底图加载超时/)).toBeNull()
-    expect(screen.queryByText(/部分地图瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
   })
 
@@ -295,7 +295,7 @@ describe('TripMap（真实 Leaflet）', () => {
     })
     expect(screen.getByText(/底图加载超时/)).toBeInTheDocument()
     // A 被卸载不是失败：不能顺手报「部分失败」或「全部失败」
-    expect(screen.queryByText(/部分地图瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
     // 站点和路线不受底图状态影响
     expect(markerEls()).toHaveLength(2)
@@ -398,7 +398,7 @@ describe('TripMap（真实 Leaflet）', () => {
     })
     expect(screen.getByText(/底图加载超时/)).toBeInTheDocument()
     // 被放弃的旧瓦片不是失败，也不是全部失败
-    expect(screen.queryByText(/部分地图瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
   })
 
@@ -427,7 +427,7 @@ describe('TripMap（真实 Leaflet）', () => {
       vi.advanceTimersByTime(1000)
     })
     expect(screen.getByText(/底图加载超时/)).toBeInTheDocument()
-    expect(screen.queryByText(/部分地图瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
     expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
     expect(markerEls()).toHaveLength(2)
   })
@@ -482,5 +482,191 @@ describe('TripMap（真实 Leaflet）', () => {
       vi.advanceTimersByTime(20000)
     })
     expect(document.querySelector('.map-status-note')).toBeNull()
+  })
+
+  // 旧实现把 loaded/failed 当成图层生命周期累计，一次失败会粘在界面上。下面几条用真实
+  // <img> 身份 + 真实 Leaflet 事件语义，锁定「只描述此刻还挂在图上的瓦片」。
+  it('旧失败瓦片被卸载后，新视野全部成功就不再显示历史错误', () => {
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const old = tiles.newTile()
+    const stale = tiles.newTile()
+
+    act(() => {
+      tiles.start(old)
+      tiles.start(stale)
+      tiles.load(old)
+      tiles.error(stale)
+    })
+    expect(screen.getByText(/部分瓦片加载失败/)).toBeInTheDocument()
+
+    // 平移：失败那块出视野被 _removeTile 卸载，新视野的瓦片全部成功
+    const fresh = tiles.newTile()
+    act(() => {
+      tiles.unload(stale)
+      tiles.unload(old)
+      tiles.start(fresh)
+      tiles.load(fresh)
+    })
+
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
+    expect(document.querySelector('.map-status-note')).toBeNull()
+    // 站点和路线不受底图状态影响
+    expect(markerEls()).toHaveLength(2)
+    expect(polylineCount()).toBeGreaterThan(0)
+  })
+
+  it('仍看得见的成功瓦片 + 平移只新请求的一片失败，只报部分失败', () => {
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const kept = tiles.newTile()
+
+    act(() => {
+      tiles.start(kept)
+      tiles.load(kept)
+    })
+    expect(document.querySelector('.map-status-note')).toBeNull()
+
+    const edge = tiles.newTile()
+    act(() => {
+      tiles.start(edge)
+      tiles.error(edge)
+    })
+
+    expect(screen.getByText(/部分瓦片加载失败/)).toBeInTheDocument()
+    // 一片失败不能升级成「整张底图失败」的兜底提示
+    expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
+    expect(document.querySelector('.map-status')).toBeNull()
+  })
+
+  it('卸载在途瓦片后迟到的 error 不会把历史失败重新点亮', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const a = tiles.newTile()
+
+    act(() => {
+      tiles.start(a)
+      tiles.unload(a)
+      // 卸载之后补发的 error 属于迟到事件，不能记成失败
+      tiles.error(a)
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(20000)
+    })
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
+    expect(document.querySelector('.map-status-note')).toBeNull()
+  })
+
+  it('平移卸载已成功的瓦片不会把挂起瓦片的超时推后', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const done = tiles.newTile()
+    const hung = tiles.newTile()
+
+    act(() => {
+      tiles.start(done)
+      tiles.load(done)
+    })
+    act(() => {
+      tiles.start(hung)
+      vi.advanceTimersByTime(8000)
+    })
+    // 平移把已成功的旧瓦片卸掉：pending 没变，不该重新给 9 秒
+    act(() => {
+      tiles.unload(done)
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(999)
+    })
+    expect(screen.queryByText(/底图加载超时/)).toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(screen.getByText(/底图加载超时/)).toBeInTheDocument()
+  })
+
+  it('tileabort 取消的瓦片即使补发 error 也不算失败', () => {
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const aborted = tiles.newTile()
+    const ok = tiles.newTile()
+
+    act(() => {
+      tiles.start(aborted)
+      tiles.abort(aborted)
+      // _abortLoading 清掉 src 后浏览器仍可能补发 error
+      tiles.error(aborted)
+      tiles.start(ok)
+      tiles.load(ok)
+    })
+
+    expect(screen.queryByText(/部分瓦片加载失败/)).toBeNull()
+    expect(screen.queryByText('地图瓦片加载失败')).toBeNull()
+    expect(document.querySelector('.map-status-note')).toBeNull()
+    expect(markerEls()).toHaveLength(2)
+  })
+
+  // 事件层能证明的只是「图层上的瓦片」：include keepBuffer 在视野外预加载的两圈，
+  // 口径比像素视窗大。文案不能把它说成「你看到的底图有洞」，也不能承诺平移就会重试
+  // ——仍挂在图层上的失败瓦片不会被重新请求。
+  it('部分失败的提示如实说明范围含视野外瓦片，且不承诺平移就能重试', () => {
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const ok = tiles.newTile()
+    const bad = tiles.newTile()
+
+    act(() => {
+      tiles.start(ok)
+      tiles.load(ok)
+      tiles.start(bad)
+      tiles.error(bad)
+    })
+
+    const note = document.querySelector('.map-status-note')
+    expect(note).not.toBeNull()
+    const text = note!.textContent ?? ''
+    // 说清范围：缓冲区里看不见的瓦片也算在内，视野可能根本看不出缺口
+    expect(text).toContain('部分瓦片加载失败')
+    expect(text).toContain('视野外')
+    expect(text).toContain('看不见')
+    // 旧文案的过度承诺不能回来
+    expect(text).not.toContain('当前底图上有部分')
+    expect(text).not.toContain('平移或缩放会再次尝试加载')
+    // 给出真的能生效的重试方式
+    expect(text).toContain('缩放地图')
+    expect(text).toContain('移出视野再移回')
+    expect(text).toContain('站点与路线不受影响')
+    // 只是角落条，站点和路线仍可点
+    expect(document.querySelector('.map-status')).toBeNull()
+    expect(markerEls()).toHaveLength(2)
+  })
+
+  it('超时提示不把「没等到瓦片」说成断网，也不承诺平移会重试', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const tiles = stubTileLayer()
+    render(<TripMap day={day1} activeStopId={null} onSelectStop={vi.fn()} />)
+    const a = tiles.newTile()
+
+    act(() => {
+      tiles.start(a)
+      vi.advanceTimersByTime(9000)
+    })
+
+    const note = document.querySelector('.map-status-note')
+    expect(note).not.toBeNull()
+    const text = note!.textContent ?? ''
+    expect(text).toContain('底图加载超时')
+    expect(text).toContain('不一定是网络问题')
+    expect(text).toContain('缩放地图会重新请求瓦片')
+    expect(text).not.toContain('平移或缩放')
+    expect(text).toContain('站点、路线和文字行程仍可查看')
+    expect(markerEls()).toHaveLength(2)
   })
 })

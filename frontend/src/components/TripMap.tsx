@@ -115,15 +115,16 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> 贡献者',
     })
-    // 每个事件都把瓦片身份（TileEvent.tile + coords）转给 watchdog：
-    // 只有仍在途的那一个瓦片第一次给出结果才记账，重复或迟到的同瓦片事件不会
-    // 把别的在途瓦片的 pending 扣掉。
+    // 每个事件都把瓦片身份（TileEvent.tile + coords）转给 watchdog：状态只算「此刻
+    // 还挂在图层上的瓦片」。load/error 只结算那张仍在途的瓦片，重复或迟到的事件不会
+    // 把别人的 pending 扣掉；unload/abort 让这张瓦片整条离场，历史失败不会粘在界面上。
     tiles.on('tileloadstart', (e) => watch.handleStart(e))
     tiles.on('tileload', (e) => watch.handleSettled('load', e))
     tiles.on('tileerror', (e) => watch.handleSettled('error', e))
-    // 缩放/平移会卸载旧瓦片：已成功的那些只是常规清理，不能拿来扣在途计数
+    // 缩放/平移会卸载旧瓦片（_removeTile）：离场即撤账，已成功的不算失败也不扣别人的
+    // pending；已失败的不再计入当前底图状态
     tiles.on('tileunload', (e) => watch.handleUnload(e))
-    // 换 zoom 时 Leaflet 会 abort 在途瓦片，只发 tileabort 不发 tileunload；
+    // 换 zoom 时 Leaflet 调 _abortLoading 放弃在途瓦片，只发 tileabort 不发 tileunload；
     // 不跟着取消，这些瓦片会一直挂着，等它们的 9 秒预算到了就误报超时
     tiles.on('tileabort', (e) => watch.handleAbort(e))
     // 底图层被移除后不再结算，避免卸载之后还回调
@@ -234,8 +235,10 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
       }
     : tileState === 'failed'
       ? {
+          // 只在地图上每一张瓦片都失败时才走到这里：不能把「一片失败」说成整体断网
           big: '地图瓦片加载失败',
-          desc: '请检查网络连接。下方的文字行程仍可完整使用，站点坐标未受影响。',
+          // 事件层只能证明「没拿到瓦片」，证明不了原因，所以不能直接断定是网络断了
+          desc: '此刻挂在底图上的瓦片没有一张加载成功，可能是网络、代理或图源暂时不可用；缩放地图会重新请求瓦片。下方的文字行程仍可完整使用，站点坐标未受影响。',
         }
       : null
 
@@ -254,13 +257,16 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
           </div>
         )}
         {!status && tileState === 'partial' && (
+          // 状态的口径是「挂在图层上的瓦片」，含 keepBuffer 在视野外预加载的那几圈，
+          // 不是像素视窗，所以不能说成「你看到的底图有洞」；也不能承诺平移就会重试——
+          // 仍挂在图层上的失败瓦片不会被重新请求，得先移出缓冲区或换 zoom 重建。
           <p className="map-status-note" role="status">
-            部分地图瓦片加载失败，底图可能不完整；站点与路线不受影响。
+            底图上有部分瓦片加载失败（含视野外预加载、当前看不见的瓦片），你看到的部分可能看不出缺口。缩放地图，或把该区域移出视野再移回，才会重新请求这些瓦片；站点与路线不受影响。
           </p>
         )}
         {!status && tileState === 'stalled' && (
           <p className="map-status-note" role="status">
-            底图加载超时，底图可能暂时不可用；站点、路线和文字行程仍可查看。平移或缩放地图会再次尝试加载。
+            底图加载超时：有瓦片一直没返回结果，这不一定是网络问题，底图可能暂时不完整。缩放地图会重新请求瓦片；站点、路线和文字行程仍可查看。
           </p>
         )}
       </div>
