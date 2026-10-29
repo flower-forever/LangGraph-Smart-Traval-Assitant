@@ -8,6 +8,10 @@ import { isTripLike } from './api'
  * - 只写 localStorage，不请求后端、不上传、不跨设备同步；
  * - 显式点击「保存当前行程」才写入，读取不会顺手修改存储；
  * - 恢复数据必须重新过一遍结构校验，并受记录数 / 单条体积 / 总体积上限约束；
+ * - 结构校验（checkTripShape）同时被备份导入复用，两边拒绝的结构完全一致；
+ * - 单份体积的唯一计算对象是「实际写下的记录」（id + savedAt + trip，见
+ *   savedTripRecordBytes），备份导出 / 导入也用同一口径，不会出现「文件能预览、
+ *   保存却必然超限」的边界不一致；
  * - 结构校验与后端契约对齐：单条 leg 的 geometry 上限与 travel_itinerary.py 的
  *   `_MAX_ROUTE_GEOMETRY_POINTS = 5000` 相同，合法长路线不会被当成坏数据；
  *   校验只读不写，绝不抽稀几何、改站点或改路线；
@@ -54,8 +58,9 @@ export const MAX_GEOMETRY_POINTS_PER_LEG = 5_000
  * 每个点最省也要约 20 字节（`{"lng":0,"lat":0},`），40 000 点必然超过 640 KB 的单份上限，
  * 所以命中这个预算的行程只会得到 too_large，而不是把合法结构误判成 invalid；
  * 提前截断逐点遍历，也避免异常数据把校验拖成 CPU 黑洞。
+ * 备份 / 导入（./tripTransfer.ts）复用同一个数字，两边的「结构约束」才是一套。
  */
-const MAX_TOTAL_GEOMETRY_POINTS = 40_000
+export const MAX_TOTAL_GEOMETRY_POINTS = 40_000
 const MAX_TOTAL_STOPS = 5_000
 const MAX_TOTAL_LEGS = 5_000
 const MAX_WARNINGS = 50
@@ -167,6 +172,25 @@ export function utf8ByteLength(value: string): number {
 }
 
 /**
+ * 单份容量判定用的 savedAt 占位值。
+ *
+ * 写入的记录是 `{ id, savedAt, trip }`，savedAt 是 13 位毫秒时间戳（2001-09 到 2286 都固定 13 位）。
+ * 导入 / 导出时还没有真正保存，用这个 13 位占位值算出来的字节数，与实际写入时逐字节相同，
+ * 所以「文件能预览」和「能保存到本地」用的是同一把尺子。
+ */
+export const CAPACITY_SAVED_AT = 1_900_000_000_000
+
+/**
+ * 单份记录（id + savedAt + trip）的 UTF-8 字节数——单份容量的唯一计算对象。
+ *
+ * 本地保存、备份导出、备份导入都走这一个函数。只算 trip 本身会漏掉 id 与 savedAt 的元数据，
+ * 边界文件就会出现「预览通过、保存必然失败」。
+ */
+export function savedTripRecordBytes(trip: Trip, savedAt: number = CAPACITY_SAVED_AT): number {
+  return utf8ByteLength(JSON.stringify({ id: trip.id, savedAt, trip }))
+}
+
+/**
  * 取得可用的 localStorage。SSR / 测试没有 window 时返回 null；
  * Safari 隐私模式等场景下访问 localStorage 本身就可能抛 SecurityError，也归为不可用。
  */
@@ -179,7 +203,7 @@ export function getLocalStorage(): Storage | null {
   }
 }
 
-type TripShapeCheck =
+export type TripShapeCheck =
   | { ok: true }
   | { ok: false; reason: 'invalid' | 'too_large'; message: string }
 
@@ -195,8 +219,12 @@ const GEOMETRY_BUDGET_MESSAGE =
 /**
  * 结构校验。区别于「能不能存下」：这里只判断数据是不是可信的 Trip。
  * 几何点数超预算不算结构损坏（后端确实会返回长路线），单独给 too_large。
+ *
+ * 备份导入（./tripTransfer.ts）复用这一份校验，所以「能预览 / 能打开」的结构约束
+ * 与「能保存到本地」完全一致：重复 day、重复站点 ID、字段超长、天数 / 站点 / 路段数量、
+ * 每段 5000 点、全行程点数预算都在这里统一拒绝。
  */
-function checkTripShape(value: unknown): TripShapeCheck {
+export function checkTripShape(value: unknown): TripShapeCheck {
   if (!isTripLike(value)) return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
   const trip = value
   if (
@@ -299,7 +327,7 @@ function isStoredTripRecord(value: unknown): value is SavedTrip {
   if (!isInteger(savedAt) || savedAt <= 0) return false
   if (!isStorableTrip(trip) || trip.id !== id) return false
   try {
-    return utf8ByteLength(JSON.stringify(value)) <= MAX_SAVED_TRIP_BYTES
+    return savedTripRecordBytes(trip, savedAt) <= MAX_SAVED_TRIP_BYTES
   } catch {
     return false
   }
@@ -520,7 +548,8 @@ export function saveTripToStorage(
   const saved: SavedTrip = { id: trip.id, savedAt: Date.now(), trip }
   let recordBytes: number
   try {
-    recordBytes = utf8ByteLength(JSON.stringify(saved))
+    // 与备份 / 导入共用同一个计算对象（id + savedAt + trip）
+    recordBytes = savedTripRecordBytes(trip, saved.savedAt)
   } catch (error) {
     return {
       ok: false,

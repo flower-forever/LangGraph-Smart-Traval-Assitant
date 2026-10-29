@@ -6,6 +6,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import type { Trip } from '../lib/api'
+import { SAVED_TRIPS_STORAGE_KEY, saveTripToStorage } from '../lib/savedTrips'
+import { createTripBackup } from '../lib/tripTransfer'
 import { MOCK_TRIP, MOCK_TRIP_NO_COORD } from './fixtures/trip'
 
 function jsonResponse(data: unknown, status = 200) {
@@ -45,6 +48,99 @@ function stopRow(container: HTMLElement, name: string): HTMLElement {
     .find((node) => node.textContent?.includes(name))
   if (!row) throw new Error(`找不到站点行：${name}`)
   return row
+}
+
+/**
+ * 导入用行程夹具：标题、目的地、站点都和示例行程不同，便于确认主视图真的换了。
+ * 结构按 Trip 契约写全（含 legs），才能通过备份解析的结构校验。
+ */
+const IMPORTED_TRIP: Trip = {
+  id: 'trip-imported-xa',
+  source: 'agent',
+  destination: '西安',
+  title: '西安古城两日行',
+  summary: '从备份文件导入的行程，用来验证打开后的主视图。',
+  map_coordinate_system: 'WGS84',
+  warnings: [],
+  days: [
+    {
+      day: 1,
+      date: '2026-05-01',
+      title: '城墙与雁塔',
+      summary: '上午登城墙，下午去大雁塔。',
+      stops: [
+        {
+          id: 'xa-s1',
+          name: '永宁门',
+          time: '09:00',
+          duration_minutes: 45,
+          description: '城墙南门，登城入口。',
+          address: '西安市碑林区',
+          location: { lng: 108.947, lat: 34.2515 },
+        },
+        {
+          id: 'xa-s2',
+          name: '大雁塔',
+          time: '14:00',
+          duration_minutes: 60,
+          description: '慈恩寺内的唐代砖塔。',
+          address: '西安市雁塔区',
+          location: { lng: 108.9642, lat: 34.2181 },
+        },
+      ],
+      legs: [
+        {
+          from_stop_id: 'xa-s1',
+          to_stop_id: 'xa-s2',
+          mode: 'walking',
+          route_type: 'navigation',
+          distance_m: 3200,
+          duration_minutes: 45,
+          geometry: [
+            { lng: 108.947, lat: 34.2515 },
+            { lng: 108.9642, lat: 34.2181 },
+          ],
+          description: '沿南大街步行。',
+        },
+      ],
+    },
+    {
+      day: 2,
+      date: null,
+      title: '回民街',
+      summary: '半天逛回民街。',
+      stops: [
+        {
+          id: 'xa-s3',
+          name: '北院门',
+          time: '10:00',
+          duration_minutes: null,
+          description: '小吃聚集的街区。',
+          address: '西安市莲湖区',
+          location: { lng: 108.94, lat: 34.263 },
+        },
+      ],
+      legs: [],
+    },
+  ],
+}
+
+/** 用真实 createTripBackup 生成合法备份文本，包成浏览器里选中的 File */
+function backupFileOf(trip: Trip, name = 'trip-backup.json'): File {
+  const backup = createTripBackup(trip, { now: new Date('2026-02-02T00:00:00.000Z') })
+  if (!backup.ok) throw new Error(`生成备份失败：${backup.reason}`)
+  return new File([backup.json], name, { type: 'application/json' })
+}
+
+/** 展开「行程备份与导入」面板 */
+async function expandTransferPanel(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '行程备份与导入' }))
+}
+
+/** 在面板里选一份备份文件（读取是异步的，随后用 findByText 等预览） */
+function pickBackupFile(trip: Trip) {
+  const input = screen.getByLabelText(/选择备份文件/) as HTMLInputElement
+  fireEvent.change(input, { target: { files: [backupFileOf(trip)] } })
 }
 
 describe('App 集成', () => {
@@ -641,5 +737,167 @@ describe('App 集成', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalled())
     expect(writeText.mock.calls[0][0]).toContain('断桥残雪')
     expect(await screen.findByText('已复制')).toBeInTheDocument()
+  })
+
+  /* ───────── 行程备份导入：App 侧接线 ───────── */
+
+  it('导入合法备份并明确打开：标题与站点切换，storage 原样不动，也不显示本机恢复时间戳', async () => {
+    const fetchMock = stubHappyFetch()
+    window.localStorage.clear()
+    const seed = saveTripToStorage(MOCK_TRIP, window.localStorage)
+    expect(seed.ok).toBe(true)
+    const storageBefore = window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)
+    expect(storageBefore).not.toBeNull()
+
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    // 先选中一个站点，验证打开导入行程后不会沿用旧选中
+    await user.click(stopRow(container, '断桥残雪'))
+    await waitFor(() => expect(container.querySelector('.stop-detail h4')?.textContent).toBe('断桥残雪'))
+
+    await expandTransferPanel(user)
+    const fetchCallsBefore = fetchMock.mock.calls.length
+
+    pickBackupFile(IMPORTED_TRIP)
+    expect(await screen.findByText('预览：西安古城两日行')).toBeInTheDocument()
+    // 预览只看不写
+    expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBe(storageBefore)
+
+    await user.click(screen.getByRole('button', { name: '打开这份行程' }))
+
+    // 标题、站点、日签都换成文件里的行程，并回到第一天
+    expect(screen.getByRole('heading', { level: 2, name: '西安古城两日行' })).toBeInTheDocument()
+    expect(screen.getByText('永宁门')).toBeInTheDocument()
+    expect(screen.getByText('大雁塔')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /城墙与雁塔/ })).toHaveAttribute('aria-selected', 'true')
+
+    // 旧选中被清空
+    expect(container.querySelector('.stop-detail')).toBeNull()
+    expect(container.querySelectorAll('.stop-dot[data-active="true"]')).toHaveLength(0)
+
+    // 不冒用「从本浏览器保存的副本恢复 · 保存于 …」的时间戳
+    expect(screen.queryByText(/从本浏览器保存的副本恢复/)).toBeNull()
+    // 信任边界：标签只是文件里写的 source 字段
+    expect(screen.getByText(/不能证明它的真实来源/)).toBeInTheDocument()
+
+    // 打开只切换视图：不写存储、不新增请求、不自动下载也不自动保存
+    expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBe(storageBefore)
+    expect(fetchMock.mock.calls.length).toBe(fetchCallsBefore)
+    expect(screen.queryByText(/已开始下载/)).toBeNull()
+    expect(screen.queryByText(/已保存《/)).toBeNull()
+  })
+
+  it('示例响应迟到不覆盖从备份文件打开的行程', async () => {
+    let resolveExample!: (response: Response) => void
+    const examplePending = new Promise<Response>((resolve) => {
+      resolveExample = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy' }))
+      if (url === '/api/trips/example') return examplePending
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    window.localStorage.clear()
+    const user = userEvent.setup()
+    render(<App />)
+
+    // 示例还在路上就能先导入并打开
+    await expandTransferPanel(user)
+    pickBackupFile(IMPORTED_TRIP)
+    expect(await screen.findByText('预览：西安古城两日行')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开这份行程' }))
+    expect(screen.getByRole('heading', { level: 2, name: '西安古城两日行' })).toBeInTheDocument()
+
+    await act(async () => {
+      resolveExample(jsonResponse({ ...MOCK_TRIP, id: 'example-late', title: '迟到的示例' }))
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('迟到的示例')).toBeNull()
+    expect(screen.getByRole('heading', { level: 2, name: '西安古城两日行' })).toBeInTheDocument()
+  })
+
+  it('等待规划时导入并打开：立刻恢复可提交，用户输入保留，迟到的规划结果被丢弃', async () => {
+    const planResolvers: Array<(response: Response) => void> = []
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy' }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') {
+        return new Promise<Response>((resolve) => {
+          planResolvers.push(resolve)
+        })
+      }
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    window.localStorage.clear()
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /正在规划/ })).toBeInTheDocument())
+
+    await expandTransferPanel(user)
+    pickBackupFile(IMPORTED_TRIP)
+    expect(await screen.findByText('预览：西安古城两日行')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开这份行程' }))
+
+    // 这次打开接管了等待：提交立刻可用，也没有留下「已停止等待」的旧说明
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+    expect(screen.queryByText(/已停止等待这次规划/)).toBeNull()
+    // 用户填的参数不因切换行程被清空
+    expect(screen.getByLabelText(/目的地/)).toHaveValue('西安')
+    expect(screen.getByRole('heading', { level: 2, name: '西安古城两日行' })).toBeInTheDocument()
+
+    // 旧规划的响应即使忽略 abort 后迟到，也不能覆盖这份行程，也不能把等待状态翻回来
+    await act(async () => {
+      planResolvers[0](jsonResponse({ ...MOCK_TRIP, id: 'trip-late', source: 'agent', title: '迟到的规划' }))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('迟到的规划')).toBeNull()
+    expect(screen.getByRole('heading', { level: 2, name: '西安古城两日行' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+  })
+
+  it('后端断开、没有行程时也能导入备份文件并打开', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))))
+    window.localStorage.clear()
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText(/连不上后端服务/)
+
+    await expandTransferPanel(user)
+    pickBackupFile(IMPORTED_TRIP)
+    expect(await screen.findByText('预览：西安古城两日行')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开这份行程' }))
+
+    expect(screen.getByRole('heading', { level: 2, name: '西安古城两日行' })).toBeInTheDocument()
+    expect(screen.getByText('永宁门')).toBeInTheDocument()
+    // 打开不写本地保存
+    expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
+    // 面板的导出区随即指向这份行程
+    expect(screen.getByRole('button', { name: '下载行程备份 (.json)' })).toBeInTheDocument()
+  })
+
+  it('打开导入的行程会回到首日，不会停在上一个行程的某一天', async () => {
+    stubHappyFetch()
+    window.localStorage.clear()
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+
+    await user.click(screen.getByRole('tab', { name: /龙井问茶/ }))
+    expect(screen.getByRole('tab', { name: /龙井问茶/ })).toHaveAttribute('aria-selected', 'true')
+
+    await expandTransferPanel(user)
+    pickBackupFile(IMPORTED_TRIP)
+    expect(await screen.findByText('预览：西安古城两日行')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开这份行程' }))
+
+    expect(screen.getByRole('tab', { name: /城墙与雁塔/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByText('龙井村')).toBeNull()
   })
 })

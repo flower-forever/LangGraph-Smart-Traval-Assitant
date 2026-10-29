@@ -1,0 +1,287 @@
+/* 行程备份与导入面板：导出 / 导入 JSON、预览、同 ID 替换确认。
+   颜色一律取 tokens.css 的变量，不在这里写死色值；触达目标按 44px 处理。 */
+
+.trip-transfer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border: var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper-2);
+}
+
+.trip-transfer-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.trip-transfer-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-ink);
+}
+
+.trip-transfer-lead {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.75;
+}
+
+.trip-transfer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--rule);
+}
+
+.trip-transfer-subheading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.trip-transfer-meta {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+.trip-transfer-meta strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.trip-transfer-filename {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.trip-transfer-filename code,
+.trip-transfer-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink);
+  word-break: break-all;
+}
+
+.trip-transfer-hint {
+  margin: 0;
+  max-width: 76ch;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.75;
+}
+
+.trip-transfer-file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* 原生文件选择控件直接可见，保证键盘和读屏都能到达，不藏成 display:none */
+.trip-transfer-input {
+  width: 100%;
+  max-width: 520px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.trip-transfer-input:focus-visible {
+  outline: 2px solid var(--color-accent-ink);
+  outline-offset: 2px;
+}
+
+.trip-transfer-input::file-selector-button {
+  margin-right: var(--space-3);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.trip-transfer-status {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.trip-transfer-live:empty {
+  display: none;
+}
+
+.trip-transfer-notice {
+  margin: 0;
+  max-width: 76ch;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-line-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+.trip-transfer-notice[data-tone="ok"] {
+  border-left-color: var(--color-ok);
+}
+
+.trip-transfer-notice[data-tone="warn"] {
+  border-left-color: var(--color-warn-ink);
+  background: var(--color-warn-bg);
+}
+
+.trip-transfer-notice[data-tone="error"] {
+  border-left-color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
+}
+
+.trip-transfer-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+}
+
+.trip-transfer-preview-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.trip-transfer-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.trip-transfer-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.trip-transfer-facts dt {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+}
+
+.trip-transfer-facts dd {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.trip-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.trip-transfer-actions .btn {
+  min-height: 44px;
+}
+
+.trip-transfer-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-accent-ink);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+}
+
+.trip-transfer-confirm-text {
+  margin: 0;
+  max-width: 76ch;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  line-height: 1.75;
+}
+
+.trip-transfer-confirm-text strong {
+  color: var(--color-accent-ink);
+  font-weight: 700;
+}
+
+.trip-transfer-privacy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-3);
+}
+
+.trip-transfer-privacy-title {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.trip-transfer-privacy-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: 1.1em;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .trip-transfer {
+    padding: var(--space-4);
+    gap: var(--space-4);
+  }
+
+  .trip-transfer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .trip-transfer-actions .btn {
+    width: 100%;
+  }
+
+  .trip-transfer-input {
+    max-width: none;
+  }
+
+  .trip-transfer-facts {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import './app.css'
 import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryList from './components/ItineraryList'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
+import TripTransferPanel from './components/TripTransferPanel'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { formatDateTime } from './lib/format'
@@ -137,6 +138,15 @@ export default function App() {
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
   const [restoredAt, setRestoredAt] = useState<number | null>(null)
+  /**
+   * 当前行程是不是从用户选择的备份文件打开进来的。
+   * 只用来加一句来源说明：文件里的 source 字段不能证明真实来源，
+   * 也不能拿它当「本地保存恢复」来展示时间戳。
+   */
+  const [openedFromFile, setOpenedFromFile] = useState(false)
+  /** 备份 / 导入面板是否展开；默认收起，展开后才挂载面板 */
+  const [transferOpen, setTransferOpen] = useState(false)
+  const transferBodyId = useId()
   const abortRef = useRef<AbortController | null>(null)
   const exampleAbortRef = useRef<AbortController | null>(null)
   /** 行程归属序号：恢复 / 规划成功都会 +1，迟到的示例响应据此丢弃 */
@@ -198,6 +208,7 @@ export default function App() {
         if (cancelled || sequence !== loadSeqRef.current) return
         setTrip(t)
         setPhase('ready')
+        setOpenedFromFile(false)
         // 能拿到业务数据本身就说明后端在线；它不证明规划可用，所以 planner 仍以 health 为准
         businessProofRef.current += 1
         backendConclusionSeqRef.current += 1
@@ -291,6 +302,7 @@ export default function App() {
       setTrip(t)
       setPhase('ready')
       setRestoredAt(null)
+      setOpenedFromFile(false)
       setActiveDay(t.days[0]?.day ?? 1)
       setActiveStopId(null)
       // 真正拿到规划结果，比 health 更有说服力：此时规划确定可用，迟到的探活不能推翻
@@ -349,8 +361,36 @@ export default function App() {
     setPhase('ready')
     setError(null)
     setRestoredAt(savedAt)
+    setOpenedFromFile(false)
     setActiveStopId(null)
     setActiveDay(restored.days[0]?.day ?? 1)
+    scrollToItinerary()
+  }, [scrollToItinerary])
+
+  /**
+   * 打开从备份文件导入的行程（TripTransferPanel 的「打开这份行程」）。
+   *
+   * - 只切换当前视图：不写 localStorage、不下载、不请求后端；需要保存走面板里显式的「保存到本地」；
+   * - 作废在飞的示例 / 规划请求：序号 +1 再 abort，即使对方忽略 abort，迟到的响应也覆盖不了这份行程；
+   * - 不设 restoredAt——那份时间戳只属于「本浏览器保存的副本」，不能拿来给文件里的行程用；
+   * - 回到第一天并清空选中站点，避免停在上一个行程的某天 / 某个站点上。
+   */
+  const handleOpenImportedTrip = useCallback((imported: Trip) => {
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
+    // 等待中的规划被这次打开接管：恢复可提交状态，也不再显示「已停止等待」的旧说明
+    setPlanLoading(false)
+    setPlanCancelled(false)
+    setTrip(imported)
+    setPhase('ready')
+    setRestoredAt(null)
+    setOpenedFromFile(true)
+    setActiveStopId(null)
+    setActiveDay(imported.days[0]?.day ?? 1)
     scrollToItinerary()
   }, [scrollToItinerary])
 
@@ -507,6 +547,17 @@ export default function App() {
                   从本浏览器保存的副本恢复 · 保存于 {formatDateTime(restoredAt)}。这份副本不会同步到其他设备。
                 </p>
               )}
+              {openedFromFile && (
+                /*
+                 * 来源说明：source 是文件里写的内容，标签本身证明不了真实来源。
+                 * 样式沿用 .trip-restored-note（本轮只改 App.tsx，不动 app.css）。
+                 */
+                <p className="trip-restored-note trip-imported-note" data-note="imported-file">
+                  这份行程来自你选择的备份文件：页面没有向服务器核对过内容，也没有写入本浏览器的本地保存。
+                  上面的「示例行程 / AI 规划」标签取自文件里的 source 字段，只代表文件自己这么写，不能证明它的真实来源。
+                  想把它留在这台电脑上，请在下面的「行程备份与导入」里点「保存到本地」。
+                </p>
+              )}
             </header>
 
             <SavedTripsPanel trip={trip} onRestore={handleRestoreSavedTrip} />
@@ -556,6 +607,29 @@ export default function App() {
             </div>
           </section>
         )}
+
+        {/*
+          备份 / 导入的入口：默认收起，点一次展开。没有行程时也能进来导入，
+          导出区自己会说明当前没有可导出的行程。展开后才挂载面板——面板的导出区会
+          把当前行程标题再显示一遍，收起时页面里只保留行程标题本身。
+        */}
+        <div className="trip-transfer-slot">
+          <button
+            type="button"
+            className="btn btn-ghost trip-transfer-toggle"
+            onClick={() => setTransferOpen((open) => !open)}
+            aria-expanded={transferOpen}
+            aria-controls={transferBodyId}
+            title="导入或导出本机 JSON 备份；没有行程时也可以先导入"
+          >
+            {transferOpen ? '收进行程备份与导入' : '行程备份与导入'}
+          </button>
+          <div id={transferBodyId}>
+            {transferOpen && (
+              <TripTransferPanel trip={trip} onOpen={handleOpenImportedTrip} />
+            )}
+          </div>
+        </div>
       </main>
 
       <footer className="app-footer">

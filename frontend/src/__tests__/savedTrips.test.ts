@@ -11,6 +11,7 @@ import {
   getLocalStorage,
   loadSavedTrips,
   saveTripToStorage,
+  savedTripRecordBytes,
   undoSavedTripDeletion,
   utf8ByteLength,
   type SavedTrip,
@@ -194,6 +195,26 @@ describe('savedTrips 存取', () => {
     expect(loaded.trips[0].trip).toEqual(MOCK_TRIP)
     expect(loaded.trips[0].trip.source).toBe('example')
     expect(loaded.trips[0].trip.warnings).toEqual(MOCK_TRIP.warnings)
+  })
+
+  it('单份容量口径就是真正写下的记录（id + savedAt + trip），不只看 trip', () => {
+    const storage = createMemoryStorage()
+    const result = saveTripToStorage(MOCK_TRIP, storage)
+    expect(result.ok).toBe(true)
+
+    const raw = storage.data.get(SAVED_TRIPS_STORAGE_KEY)
+    expect(raw).toBeTruthy()
+    const record = (JSON.parse(raw as string) as { trips: unknown[] }).trips[0]
+
+    // 与写入的记录逐字节一致：备份 / 导入也用这个数字判容量
+    expect(savedTripRecordBytes(MOCK_TRIP)).toBe(utf8ByteLength(JSON.stringify(record)))
+    expect(savedTripRecordBytes(MOCK_TRIP)).toBe(
+      utf8ByteLength(JSON.stringify({ id: MOCK_TRIP.id, savedAt: now, trip: MOCK_TRIP })),
+    )
+    // 元数据（id 与 savedAt 的键值）确实被算进去了
+    expect(savedTripRecordBytes(MOCK_TRIP)).toBeGreaterThan(
+      utf8ByteLength(JSON.stringify(MOCK_TRIP)),
+    )
   })
 
   it('重复保存同一个 trip.id 只更新时间，不产生重复记录；内容变化时标记 changed', () => {
