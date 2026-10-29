@@ -12,7 +12,7 @@
   --color-ink: oklch(24% 0.018 150);           /* 正文墨色（偏墨绿黑） */
   --color-ink-2: oklch(38% 0.02 150);          /* 次级文字 */
   --color-muted: oklch(50% 0.016 150);         /* 辅助文字 */
-  --color-faint: oklch(62% 0.012 150);         /* 弱化说明 */
+  --color-faint: oklch(51.5% 0.012 150);       /* 弱化说明；paper 系底色上文本 ≥4.5:1，且明显深于禁用态观感 */
   --color-line: oklch(87% 0.014 85);           /* 分隔线（淡茶） */
   --color-line-strong: oklch(78% 0.018 85);
   --color-accent: oklch(52% 0.14 30);          /* 朱砂 */

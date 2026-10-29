@@ -1,6 +1,6 @@
 /* Hallmark · macrostructure: Split Waypoint Ledger · tone: roadbook-editorial（旅行手记）
  * theme: custom（vibe: 宣纸路书 朱砂手账）
- * paper: oklch(96.5% 0.012 15) · accent: oklch(52% 0.14 30) 朱砂
+ * paper: oklch(96.5% 0.012 85) · accent: oklch(52% 0.14 30) 朱砂
  * display: 楷体 · body: 苹方/雅黑 · mono: JetBrains Mono/Consolas
  */
 @import "../tokens.css";
@@ -386,9 +386,9 @@ textarea.field-input {
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 
-.day-tab:hover:not([aria-pressed="true"]) { background: var(--color-paper-3); border-color: var(--color-ink-2); }
+.day-tab:hover:not([aria-selected="true"]) { background: var(--color-paper-3); border-color: var(--color-ink-2); }
 
-.day-tab[aria-pressed="true"] {
+.day-tab[aria-selected="true"] {
   border-color: var(--color-accent);
   background: var(--color-accent-soft);
 }
@@ -399,7 +399,7 @@ textarea.field-input {
   color: var(--color-muted);
 }
 
-.day-tab[aria-pressed="true"] .d-num { color: var(--color-accent-ink); }
+.day-tab[aria-selected="true"] .d-num { color: var(--color-accent-ink); }
 
 .day-tab .d-title {
   font-family: var(--font-display);
@@ -728,6 +728,9 @@ textarea.field-input {
   padding: var(--space-6);
   color: var(--color-muted);
   font-size: var(--text-sm);
+  /* 无背景的提示层不能接管指针事件：全幅覆盖一旦拦截，marker 点击、拖拽、
+     缩放全被锁死，文案里的「缩放地图会重新请求瓦片」也就无从谈起 */
+  pointer-events: none;
 }
 
 .map-status .big {
@@ -918,12 +921,42 @@ textarea.field-input {
   margin-top: 4px;
 }
 
-.leaflet-popup-content a.pop-more {
-  display: inline-block;
-  margin-top: 6px;
+/* 弹窗操作行：链接与按钮共用一套「朱砂小签」观感。选择器不带标签限定，
+   button.pop-more 才能一并命中——它原来只被针对 a 的规则覆盖，露出原生灰底小按钮 */
+.leaflet-popup-content .pop-more {
+  display: inline-flex;
+  align-items: center;
+  margin: var(--space-2) var(--space-2) 0 0;
+  padding: var(--space-1) var(--space-2);
+  min-height: 28px; /* 触达 ≥24px（WCAG 2.5.8） */
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
   color: var(--color-accent-ink);
+  font-family: var(--font-body);
   font-size: var(--text-xs);
-  text-decoration: underline;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+  cursor: pointer;
+  vertical-align: top;
+}
+
+/* 显式重置按钮原生样式：appearance 必须点名关闭，否则部分平台仍会画系统控件 */
+.leaflet-popup-content button.pop-more {
+  appearance: none;
+  padding: var(--space-1) var(--space-2);
+}
+
+.leaflet-popup-content a.pop-more:hover,
+.leaflet-popup-content button.pop-more:hover {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-strong);
+}
+
+.leaflet-popup-content a.pop-more:active,
+.leaflet-popup-content button.pop-more:active {
+  transform: translateY(1px);
 }
 
 /* 站点圆点 */
