@@ -21,6 +21,7 @@ import asyncio
 import difflib
 import hashlib
 import json
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -30,6 +31,38 @@ from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# ==================== HTTP 日志隐私 ====================
+
+# 高德 Web 服务的密钥只能走 query 参数（接口约定），没法像 Bearer 那样放进 Header。
+# httpx 0.28 每收到一个响应（成功、4xx/5xx 都算）就在 "httpx" logger 上打一条 INFO：
+#
+#   HTTP Request: GET https://restapi.amap.com/v3/geocode/geo?...&key=<密钥> "HTTP/1.1 200 OK"
+#
+# 谁把 root 配成 INFO，密钥就跟着进 stderr 和日志文件。FastMCP 1.30 构造时就是
+# INFO + RichHandler(stderr)；用户自己写 logging.basicConfig(level=INFO) 同理。
+#
+# 这里把 "httpx" logger 抬到 WARNING。级别检查发生在 LogRecord 创建之前，比给
+# handler 挂 logging.Filter 可靠：filter 不会继承给子 logger（httpx._client 之类
+# 照样能绕过去），level 会继承；输出也不经过 handler 包装或 Rich 折行，没有绕路。
+# 只抬不降：外部已经设成 WARNING/ERROR 就原样保留，重复调用无副作用。
+
+_HTTPX_LOGGER_NAME = "httpx"
+_HTTPX_SAFE_LEVEL = logging.WARNING
+
+
+def harden_httpx_logging() -> None:
+    """让 httpx 的 INFO/DEBUG 日志（带完整请求 URL）进不了日志，幂等。"""
+
+    httpx_logger = logging.getLogger(_HTTPX_LOGGER_NAME)
+    level = httpx_logger.level
+    if level != logging.NOTSET and level >= _HTTPX_SAFE_LEVEL:
+        return
+    httpx_logger.setLevel(_HTTPX_SAFE_LEVEL)
+
+
+# 导入即加固：本模块的调用方通常在这里之后才会发起地图请求。
+harden_httpx_logging()
 
 # ==================== 契约常量 ====================
 
@@ -1190,6 +1223,8 @@ class AMapClient:
         self.timeout = timeout
         self._client = client
         self._owns_client = client is None
+        # 延迟到运行期才配置日志的进程（例如先 import 再 basicConfig）也要覆盖。
+        harden_httpx_logging()
 
     @property
     def configured(self) -> bool:
@@ -1206,6 +1241,8 @@ class AMapClient:
             self._client = None
 
     async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        # 有人运行期又把 httpx 调回 INFO 时，下一次请求前重新压回去。
+        harden_httpx_logging()
         if not self.configured:
             raise AMapError("未配置 AMAP_API_KEY", code="missing_key")
         if self._client is None:
