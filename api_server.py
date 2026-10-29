@@ -12,9 +12,16 @@
   不影响已经完成的模型调用。
 - 默认只监听 127.0.0.1（本机预览且没有认证）；显式设置 API_HOST（例如 0.0.0.0）
   才会对外监听，启动日志与 /health 的 warnings 会提示该风险。
+- CORS 只信任显式来源（默认本机前端 5173/5181/5182），不使用 "*" + credentials。
+  带 Origin 的写请求（POST/PUT/PATCH/DELETE）在进入路由前还会经过来源守卫，
+  避免“CORS 只阻止浏览器读取响应，副作用却已经发生”。可用 CORS_ORIGINS
+  （逗号分隔的绝对 http(s) origin）覆盖；配置为空或非法时 fail-closed。
+- /chat 的模型调用使用 CHAT_TIMEOUT（默认 120 秒）单独限时，消息长度限制为
+  1..4000 字符；超时返回 504，不吞掉外层取消。
 """
 import asyncio
 import inspect
+import ipaddress
 import json
 import math
 import os
@@ -24,11 +31,14 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from starlette.datastructures import Headers
+from starlette.responses import JSONResponse
 
 from travel_itinerary import (
     AMapClient,
@@ -88,6 +98,33 @@ except Exception as exc:  # pragma: no cover - 本机常见缺少该可选依赖
 # 默认值留出足够余量覆盖多站点并发请求，同时远小于 TRIP_PLAN_TIMEOUT。
 DEFAULT_MAP_ENRICH_TIMEOUT = 40.0
 
+# /chat 的模型调用单独限时，避免请求无限挂起。
+DEFAULT_CHAT_TIMEOUT = 120.0
+
+# CORS：只使用显式 origin，绝不再用 "*" + credentials。
+# 默认覆盖本机前端开发端口 5173，以及当前/后续预览使用的 5181、5182；
+# 127.0.0.1 与 localhost 视为等价来源分别列出。其它端口用 CORS_ORIGINS 覆盖。
+DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:5181",
+    "http://localhost:5181",
+    "http://127.0.0.1:5182",
+    "http://localhost:5182",
+)
+CORS_ORIGINS_ENV = "CORS_ORIGINS"
+CORS_CONFIG_DEFAULT = "default"
+CORS_CONFIG_CUSTOM = "custom"
+CORS_CONFIG_FAIL_CLOSED = "fail_closed"
+
+LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
+MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# 常规主机名（RD 里常见下划线，一并允许）；IPv6 走 ipaddress 校验。
+_ORIGIN_HOST_RE = re.compile(
+    r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
+)
+
 
 def _positive_finite_timeout(name: str, default: float) -> float:
     """读取正数超时配置；缺失、非法、非有限或非正数时回退默认值。"""
@@ -102,6 +139,186 @@ def _positive_finite_timeout(name: str, default: float) -> float:
     if not math.isfinite(value) or value <= 0:
         return default
     return value
+
+
+def _normalize_origin(raw: Any) -> Optional[str]:
+    """把 origin 规范化为 ``scheme://host[:port]``，不合法时返回 None。
+
+    只接受绝对 http(s) origin：拒绝通配符、用户信息、路径、查询、片段、
+    非法端口和非常规主机名。返回值是重新拼装的，不直接回显输入。
+    """
+
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text or len(text) > 2048:
+        return None
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text):
+        return None
+    if "*" in text:
+        return None
+
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return None
+
+    scheme = (parts.scheme or "").lower()
+    if scheme not in {"http", "https"}:
+        return None
+    if not parts.netloc or "@" in parts.netloc:
+        return None
+    if parts.username is not None or parts.password is not None:
+        return None
+    if parts.path not in {"", "/"} or parts.query or parts.fragment:
+        return None
+
+    try:
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+    if port is not None and not 1 <= port <= 65535:
+        return None
+    if "%" in hostname:
+        return None
+
+    if ":" in hostname:
+        try:
+            ipaddress.IPv6Address(hostname)
+        except ValueError:
+            return None
+        host_for_url = f"[{hostname}]"
+    else:
+        if not _ORIGIN_HOST_RE.fullmatch(hostname):
+            return None
+        if "." in hostname and re.fullmatch(r"[0-9.]+", hostname):
+            try:
+                ipaddress.IPv4Address(hostname)
+            except ValueError:
+                return None
+        host_for_url = hostname
+
+    default_port = 443 if scheme == "https" else 80
+    if port == default_port:
+        port = None
+    netloc = host_for_url if port is None else f"{host_for_url}:{port}"
+    return f"{scheme}://{netloc}"
+
+
+def _origin_rejection_reason(raw: str) -> str:
+    """给出固定的拒绝原因，便于排障且不回显原始配置值。"""
+
+    text = raw.strip()
+    if not text:
+        return "为空"
+    if "*" in text:
+        return "不允许通配符"
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text):
+        return "包含空白或控制字符"
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return "URL 无法解析"
+    scheme = (parts.scheme or "").lower()
+    if scheme not in {"http", "https"}:
+        return "不是 http(s) 绝对地址"
+    if not parts.netloc:
+        return "缺少主机名"
+    if (
+        "@" in parts.netloc
+        or parts.username is not None
+        or parts.password is not None
+    ):
+        return "不允许用户信息"
+    if parts.path not in {"", "/"}:
+        return "不允许路径"
+    if parts.query or parts.fragment:
+        return "不允许查询或片段"
+    try:
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError:
+        return "主机或端口无效"
+    if not hostname:
+        return "缺少主机名"
+    if port is not None and not 1 <= port <= 65535:
+        return "端口无效"
+    if "%" in hostname:
+        return "主机名无效"
+    if ":" in hostname:
+        try:
+            ipaddress.IPv6Address(hostname)
+        except ValueError:
+            return "IPv6 主机无效"
+    elif not _ORIGIN_HOST_RE.fullmatch(hostname):
+        return "主机名无效"
+    elif "." in hostname and re.fullmatch(r"[0-9.]+", hostname):
+        try:
+            ipaddress.IPv4Address(hostname)
+        except ValueError:
+            return "IPv4 主机无效"
+    return "格式无效"
+
+
+def _resolve_cors_origins(raw: Optional[str]) -> tuple[list[str], str, list[str]]:
+    """解析 CORS_ORIGINS，返回 ``(origins, state, warnings)``。
+
+    - 未设置（None）：使用本机前端默认来源。
+    - 显式设置：逗号分隔的绝对 http(s) origin。任意一项为空或非法时
+      整份配置 fail-closed（不信任任何跨域浏览器来源），避免“部分生效”
+      让运维误判实际放行的范围；修正后重启生效。
+    - 空值：同样 fail-closed。
+    警告里只有序号和固定原因，不回显原始配置值。
+    """
+
+    if raw is None:
+        return list(DEFAULT_CORS_ORIGINS), CORS_CONFIG_DEFAULT, []
+
+    if not raw.strip():
+        warning = (
+            f"{CORS_ORIGINS_ENV} 为空，已按 fail-closed 处理：不信任任何跨域"
+            " 浏览器来源（127.0.0.1/localhost 同源请求不受影响）；"
+            "修正后重启服务生效。"
+        )
+        return [], CORS_CONFIG_FAIL_CLOSED, [warning]
+
+    origins: list[str] = []
+    problems: list[str] = []
+    for index, entry in enumerate(raw.split(","), start=1):
+        text = entry.strip()
+        if not text:
+            problems.append(f"第 {index} 项为空")
+            continue
+        origin = _normalize_origin(text)
+        if origin is None:
+            problems.append(f"第 {index} 项{_origin_rejection_reason(text)}")
+            continue
+        if origin not in origins:
+            origins.append(origin)
+
+    if problems:
+        reason_text = "；".join(problems[:3])
+        if len(problems) > 3:
+            reason_text += f"；另有 {len(problems) - 3} 项问题"
+        warning = (
+            f"{CORS_ORIGINS_ENV} 配置不合法（{reason_text}），已按 fail-closed "
+            "处理：整份配置不生效，不信任任何跨域浏览器来源"
+            "（127.0.0.1/localhost 同源请求不受影响）；"
+            "修正后重启服务生效，未回显原始配置值。"
+        )
+        return [], CORS_CONFIG_FAIL_CLOSED, [warning]
+
+    if not origins:  # 双重保险：正常不会走到这里。
+        warning = (
+            f"{CORS_ORIGINS_ENV} 没有可用的 origin，已按 fail-closed 处理："
+            "不信任任何跨域浏览器来源。"
+        )
+        return [], CORS_CONFIG_FAIL_CLOSED, [warning]
+
+    return origins, CORS_CONFIG_CUSTOM, []
 
 
 class Configuration:
@@ -136,6 +353,20 @@ class Configuration:
         self.map_enrich_timeout = _positive_finite_timeout(
             "MAP_ENRICH_TIMEOUT", DEFAULT_MAP_ENRICH_TIMEOUT
         )
+        self.chat_timeout = _positive_finite_timeout(
+            "CHAT_TIMEOUT", DEFAULT_CHAT_TIMEOUT
+        )
+        (
+            self.cors_origins,
+            self.cors_config_state,
+            self.cors_warnings,
+        ) = _resolve_cors_origins(os.getenv(CORS_ORIGINS_ENV))
+
+    def allows_origin(self, origin: Any) -> bool:
+        """判断浏览器 Origin 是否在显式白名单内（不做通配符或前缀匹配）。"""
+
+        normalized = _normalize_origin(origin)
+        return normalized is not None and normalized in self.cors_origins
 
     @staticmethod
     def load_servers() -> dict:
@@ -175,8 +406,13 @@ PLANNER_MODE_APPENDIX = """
 
 
 class ChatRequest(BaseModel):
-    """聊天请求"""
-    message: str
+    """聊天请求
+
+    - message 限制 1..4000 字符，避免空消息和超长输入拖垮模型调用。
+    - thread_id 保持原有默认值 "default"，不新增约束，兼容旧调用方。
+    """
+
+    message: str = Field(..., min_length=1, max_length=4000)
     thread_id: str = "default"
 
 
@@ -234,13 +470,141 @@ def _warn(message: str) -> None:
     _print_safe(f"⚠️  {text}")
 
 
+# 常见保密字段名（大小写不敏感）；长名在前，避免 access_token 只匹配到 token。
+# appid / appkey 是高德等上游的常用风控字段，与 api_key 放在一起，先于更短的名字。
+_SECRET_FIELD_NAMES = (
+    r"api[_-]?key",
+    r"app[_-]?key",
+    r"app[_-]?id",
+    r"access[_-]?token",
+    r"auth[_-]?token",
+    r"refresh[_-]?token",
+    r"client[_-]?secret",
+    r"secret[_-]?key",
+    r"password",
+    r"passwd",
+    r"secret",
+    r"token",
+)
+
+# 键值对形态的脱敏规则，同时覆盖：
+# - JSON / dict：{"apiKey": "..."}、{'api_key': '...'}（键和值带引号，值可含空格）；
+# - 表单 / 日志：password=...、token: ...；
+# - URL 查询串：?api_key=...&model=qwen（到 & 或空白为止）；
+# - appid / appkey 系列字段（含 app_id、app_key、app-id、APP-KEY 等写法与大小写）。
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)"
+    r"(?P<key_open>[\"']?)"
+    rf"(?P<key>{'|'.join(_SECRET_FIELD_NAMES)})"
+    r"(?P<key_close>[\"']?)"
+    r"(?P<sep>\s*[=:]\s*)"
+    r"(?P<value>"
+    r"\"(?:[^\"\\]|\\.)*\""
+    r"|'(?:[^'\\]|\\.)*'"
+    r"|[\"'][^\s&,;]*"
+    r"|[^\s\"'&,;<>(){}\[\]]+"
+    r")"
+)
+
+# 独立的 key 字段：URL / JSON / 单引号参数直接用 key=<值>、"key":"<值>"。
+# key 的左侧用词边界，避免把 monkey=banana 这类单词内部命中一并抹掉。
+_GENERIC_KEY_RE = re.compile(
+    r"(?i)"
+    r"(?P<key_open>[\"']?)"
+    r"(?<![A-Za-z0-9_-])"
+    r"(?P<key>key)"
+    r"(?P<key_close>[\"']?)"
+    r"(?P<sep>\s*[:=]\s*)"
+    r"(?P<value>"
+    r"\"(?:[^\"\\]|\\.)*\""
+    r"|'(?:[^'\\]|\\.)*'"
+    r"|[\"'][^\s&,;]*"
+    r"|[^\"'&,;<>(){}\[\]]+"
+    r")"
+)
+
+# Authorization 头：Basic 及任意自定义方案都完整遮蔽（scheme 与凭据一起抹掉），
+# 值可以是带空格/标点的引号串，也可以是裸的 scheme+credential 形式；字段名保留。
+# 分隔符可以是 [=:] 也可以只是空格（Authorization Basic dXNlcj... 这类日志也覆盖），
+# 但至少要有一个分隔字符，KeyError: 'Authorization' 这类普通文本不受影响。
+_AUTHORIZATION_RE = re.compile(
+    r"(?i)"
+    r"(?P<key_open>[\"']?)"
+    r"(?P<key>authorization)"
+    r"(?P<key_close>[\"']?)"
+    r"(?P<sep>\s*[:=]\s*|\s+)"
+    r"(?P<value>"
+    r"\"(?:[^\"\\]|\\.)*\""
+    r"|'(?:[^'\\]|\\.)*'"
+    r"|[A-Za-z][\w\-.]*\s+[^&\s,;<>(){}\[\]\"']+"
+    r"|[^&\s\"'&,;]+"
+    r")"
+)
+
+# 裸 Bearer 兜底：不依赖 Authorization 前缀；token 不再要求至少 8 字符，
+# 带引号、冒号写法也一并遮蔽。词边界防止 nonbearer 这类单词内部命中。
+_BEARER_RE = re.compile(
+    r"(?i)"
+    r"(?P<pre>(?<![A-Za-z0-9_])bearer\s*[:=]?\s*)"
+    r"(?P<value>"
+    r"\"(?:[^\"\\]|\\.)*\""
+    r"|'(?:[^'\\]|\\.)*'"
+    r"|[A-Za-z0-9._~/=-]+"
+    r")"
+)
+
+
+def _mask_secret_assignment(match: re.Match) -> str:
+    """保留字段名和引号形态，只替换值，让错误信息仍能定位到字段。"""
+
+    value = match.group("value")
+    quote = value[:1] if value[:1] in {'"', "'"} else ""
+    if quote and len(value) >= 2 and value.endswith(quote):
+        masked = f"{quote}***{quote}"
+    elif quote:
+        masked = f"{quote}***"
+    else:
+        masked = "***"
+    return (
+        f"{match.group('key_open')}{match.group('key')}"
+        f"{match.group('key_close')}{match.group('sep')}{masked}"
+    )
+
+
+def _mask_bearer_token(match: re.Match) -> str:
+    """遮蔽裸 Bearer token，保留 ``Bearer`` 字样和引号形态。"""
+
+    value = match.group("value")
+    quote = value[:1] if value[:1] in {'"', "'"} else ""
+    if quote and len(value) >= 2 and value.endswith(quote):
+        masked = f"{quote}***{quote}"
+    elif quote:
+        masked = f"{quote}***"
+    else:
+        masked = "***"
+    return f"{match.group('pre')}{masked}"
+
+
 def _safe_error(exc: BaseException) -> str:
-    """把异常变成可读文本，并抹掉可能带出的密钥。"""
+    """把异常变成可读文本，并抹掉可能带出的密钥。
+
+    除了已知的配置密钥，这里也会遮蔽常见的 ``token=`` / ``Bearer`` 形式，
+    以及 JSON/dict 里 ``"apiKey": "..."`` 这类带引号的键值对；字段名和其它
+    诊断信息保持原样，避免把上游错误的原文直接回显给调用方。
+
+    追加覆盖：appid / appkey 系列字段、独立的 ``key`` 字段（词边界限定）、
+    Authorization 值（Basic 与任意方案都整体遮蔽）以及短于 8 字符的 Bearer
+    token；带空格/标点的引号值同样不掉片段。
+    """
+
     text = str(exc) or type(exc).__name__
     for secret in (cfg.api_key, cfg.amap_api_key):
         if secret:
             text = text.replace(secret, "***")
-    text = re.sub(r"(?i)(key=)[^&\s]+", r"\1***", text)
+    text = _AUTHORIZATION_RE.sub(_mask_secret_assignment, text)
+    text = _BEARER_RE.sub(_mask_bearer_token, text)
+    text = _SECRET_ASSIGNMENT_RE.sub(_mask_secret_assignment, text)
+    text = _GENERIC_KEY_RE.sub(_mask_secret_assignment, text)
     text = re.sub(r"\s+", " ", text).strip()
     return (text or type(exc).__name__)[:300]
 
@@ -369,6 +733,12 @@ async def lifespan(app: FastAPI):
     agent = None
     planner_agent = None
     available_tools = []
+
+    # CORS 配置有问题时只降级为 fail-closed，并在 /health 里给出可读原因，
+    # 不阻止服务启动，也不回显原始配置值。
+    for cors_warning in cfg.cors_warnings:
+        _warn(cors_warning)
+
     planner_unavailable_reason = (
         "结构化行程规划 Agent 尚未初始化：请配置 DASHSCOPE_API_KEY 并检查启动日志；"
         "示例行程仍可通过 GET /api/trips/example 浏览。"
@@ -376,6 +746,15 @@ async def lifespan(app: FastAPI):
     prompt = FALLBACK_PROMPT
 
     _print_safe("🚀 正在启动智能出行助手...")
+
+    cors_state_label = {
+        CORS_CONFIG_DEFAULT: "默认本机前端",
+        CORS_CONFIG_CUSTOM: "CORS_ORIGINS 自定义",
+        CORS_CONFIG_FAIL_CLOSED: "fail-closed，仅同源回环请求",
+    }.get(cfg.cors_config_state, cfg.cors_config_state)
+    _print_safe(f"🌐 CORS 允许来源 {len(cfg.cors_origins)} 个（{cors_state_label}）")
+    if cfg.cors_origins:
+        _print_safe("   " + ", ".join(cfg.cors_origins))
 
     if cfg.host not in {"127.0.0.1", "localhost", "::1"}:
         _warn(
@@ -481,6 +860,89 @@ async def lifespan(app: FastAPI):
     _print_safe("👋 服务已关闭")
 
 
+# ==================== 浏览器来源保护 ====================
+
+
+class DynamicCORSMiddleware(CORSMiddleware):
+    """在运行时读取 Configuration 的 CORS 白名单。
+
+    Starlette 的 CORSMiddleware 在构造时固化 allow_origins；这里改成每次请求
+    都查当前配置，让 lifespan 刷新和测试覆盖共用同一份来源列表。
+    """
+
+    def is_allowed_origin(self, origin: str) -> bool:
+        return cfg.allows_origin(origin)
+
+
+def _is_loopback_same_origin(scope: Any, headers: Headers, origin: str) -> bool:
+    """判断是否为回环地址上的同源请求（用于 /docs 这类同源调用）。
+
+    只认 127.0.0.1、localhost、::1，并且要求 Origin 与请求的 Host 完全一致。
+    不把任意 Host 当同源，避免把 DNS rebinding 请求一并放行。
+    """
+
+    normalized = _normalize_origin(origin)
+    if normalized is None:
+        return False
+    if urlsplit(normalized).hostname not in LOOPBACK_HOSTNAMES:
+        return False
+
+    scheme = str(scope.get("scheme") or "http").lower()
+    if scheme not in {"http", "https"}:
+        return False
+    host_header = headers.get("host") or ""
+    candidate = _normalize_origin(f"{scheme}://{host_header}")
+    return candidate is not None and candidate == normalized
+
+
+class BrowserOriginGuardMiddleware:
+    """在路由执行前拒绝不允许的浏览器来源写请求。
+
+    CORS 规范只限制浏览器读取响应：一个跨域 POST/DELETE 即使响应不可读，
+    路由仍可能已经执行（消耗模型额度、删除会话）。这里对携带 Origin 的
+    POST/PUT/PATCH/DELETE 做前置检查；无 Origin 的 CLI/服务端调用保持兼容。
+
+    这里只处理跨域来源，不解决“服务没有认证”“本机其它进程直接调用”
+    “DNS rebinding 变体”等更底层的问题。
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method", "")).upper()
+        if method not in MUTATING_HTTP_METHODS:
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        origins = headers.getlist("origin")
+        if not origins:
+            # 非浏览器客户端（curl/httpx/现有测试）通常不带 Origin。
+            await self.app(scope, receive, send)
+            return
+
+        origin = origins[0]
+        if len(origins) == 1 and (
+            cfg.allows_origin(origin)
+            or _is_loopback_same_origin(scope, headers, origin)
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        # 响应里不回显 Origin，也不设置 CORS 头；请求在进入路由前结束。
+        response = JSONResponse(
+            {"detail": "该浏览器来源不被允许，请求未执行。"},
+            status_code=403,
+            headers={"Vary": "Origin", "Cache-Control": "no-store"},
+        )
+        await response(scope, receive, send)
+
+
 # ==================== FastAPI 应用 ====================
 
 app = FastAPI(
@@ -490,14 +952,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 添加 CORS 中间件
+# 只信任显式 origin；allow_credentials=True 时绝不能再配 allow_origins=["*"]。
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
+    DynamicCORSMiddleware,
+    allow_origins=list(DEFAULT_CORS_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 后添加的中间件位于外层：写请求先经过来源守卫，再进入 CORS/路由。
+app.add_middleware(BrowserOriginGuardMiddleware)
 
 
 # ==================== API 路由 ====================
@@ -545,7 +1009,15 @@ async def api_health_check():
     return _health_payload()
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post(
+    "/chat",
+    response_model=ChatResponse,
+    responses={
+        422: {"description": "消息为空或超过 4000 字符"},
+        503: {"description": "Agent 或消息依赖未初始化"},
+        504: {"description": "聊天响应超时"},
+    },
+)
 async def chat_endpoint(request: ChatRequest):
     """
     聊天接口
@@ -565,9 +1037,12 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=503, detail="消息依赖不可用，无法处理聊天请求。")
 
     try:
-        result = await agent.ainvoke(
-            {"messages": [HumanMessage(content=request.message)]},
-            {"configurable": {"thread_id": request.thread_id}},
+        result = await asyncio.wait_for(
+            agent.ainvoke(
+                {"messages": [HumanMessage(content=request.message)]},
+                {"configurable": {"thread_id": request.thread_id}},
+            ),
+            timeout=cfg.chat_timeout,
         )
 
         ai_message = result["messages"][-1]
@@ -575,6 +1050,13 @@ async def chat_endpoint(request: ChatRequest):
 
         return ChatResponse(content=content, thread_id=request.thread_id)
 
+    except asyncio.TimeoutError as exc:
+        # wait_for 会取消内部任务；外层取消（CancelledError）不在 Exception
+        # 分支里，继续向上传播，不会被误报成 504。
+        raise HTTPException(
+            status_code=504,
+            detail=f"聊天响应超时（>{cfg.chat_timeout:g} 秒），请稍后重试。",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:

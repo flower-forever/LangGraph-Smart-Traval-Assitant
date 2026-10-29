@@ -3,14 +3,18 @@
 提供全球天气查询功能，使用 OpenWeatherMap API
 """
 import os
+import re
 import httpx
 from typing import Optional
 from datetime import datetime
+from urllib.parse import quote, unquote_plus
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
-# 加载环境变量
-load_dotenv()
+# 加载环境变量。测试环境（PYTHON_DOTENV_DISABLED=1）不读取真实 .env，
+# 保证测试进程不加载用户凭据；正常运行未设置该变量时行为不变。
+if not os.environ.get("PYTHON_DOTENV_DISABLED"):
+    load_dotenv()
 
 # 初始化 MCP 服务器
 mcp = FastMCP("WeatherServer")
@@ -18,6 +22,180 @@ mcp = FastMCP("WeatherServer")
 # OpenWeatherMap API 配置
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
 OPENWEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5"
+
+# ==================== 凭据信息安全 ====================
+# 红线：任何异常原文都可能携带带 appid= 的完整 URL 或密钥（httpx 异常、
+# 代理配置、SSL 握手错误、raise_for_status 的 HTTPStatusError 等），不得进入工具返回或日志。
+# 对外异常一律走固定中文描述（_fetch_error / _forecast_error），绝不返回 str(e)；
+# redact_secrets 用于对确需保留的动态诊断文本做兜底脱敏（见 format_weather 的 error 透传）。
+# 本文件与 amap_server.py 各自保留一份相同实现：两个 server 是独立 stdio 进程，
+# 不共享模块，属于冗余而非疏漏。
+#
+# 脱敏规则（对名称大小写不敏感，覆盖 URL 编码形式）：
+# - 第一层：当前配置的真实密钥取值（原样与整体 URL 编码两种形态）在原文层与
+#   解码层都要整体抹除。这一步必须先于字段级掩码执行：字段掩码的取值匹配会在
+#   #、&、空白、引号等分隔字符处截断，先掩参数名会把含特殊字符的密钥切成两半，
+#   残余的后半段再按完整密钥查找永远匹配不上（appid=abc#TAIL99 同理）；
+# - 第二层：key / appid / app_id / token / access_token / secret 等敏感参数的取值，
+#   以 key=XXX、appid:XXX、"appid":"XXX" 等形态替换为 [REDACTED]；
+# - 再做有界的 URL 解码（appid%3Dxxx、appid%253Dxxx 等编码形态同样命中）；
+# - 短密钥（长度 < _MIN_BARE_REDACT_LEN）不参与裸值兜底：短串在普通文本里
+#   极易撞上造成误伤。这类配置下动态诊断文本一律不外发，由 format_weather 的
+#   error 透传换成固定通用错误文案，既不泄漏也不误伤；
+# - 异常类型名只回显可信白名单内的名字（_TRUSTED_EXC_TYPE_NAMES），白名单之外
+#   一律省略，避免类名被改造/构造后成为泄密侧道。
+
+_SENSITIVE_PARAM_RE = re.compile(
+    r"(?i)(?<![\w\-])"
+    r"(?P<name>"
+    r"access[_\\-]?token|refresh[_\\-]?token|client[_\\-]?secret|application[_\\-]?key|"
+    r"auth[_\\-]?key|auth[_\\-]?token|api[_\\-]?key|api[_\\-]?secret|app[_\\-]?secret|"
+    r"app[_\\-]?id|auth|signature|credentials|credential|"
+    r"password|passwd|pass|pwd|secret|token|key"
+    r")"
+    r"(?P<sep>[\"']?\s*[=:]\s*[\"']?)"
+    r"(?P<value>[^\s&#;\"']*)"
+)
+
+
+def _deep_unquote(text: str, rounds: int = 3) -> str:
+    """有界 URL 解码：覆盖 appid%3Dxxx 与 appid%253Dxxx 等编码形态，不会无限循环。"""
+    current = text
+    for _ in range(rounds):
+        try:
+            decoded = unquote_plus(current)
+        except Exception:
+            return current
+        if decoded == current:
+            break
+        current = decoded
+    return current
+
+
+def _mask_param_value(match: re.Match) -> str:
+    """保留参数名与分隔符，只替换取值，排查时可看出是哪个参数带了问题数据。"""
+    return f"{match.group('name')}{match.group('sep')}[REDACTED]"
+
+
+_MIN_BARE_REDACT_LEN = 8
+_SHORT_KEY_ERROR_INFO = "网络异常或服务暂不可用，请稍后重试"
+
+
+def _secret_values() -> tuple[str, ...]:
+    """本进程配置的真实密钥取值，用于裸值兜底（参数名之外的泄露）。"""
+    return (OPENWEATHER_API_KEY,)
+
+
+def _has_short_key() -> bool:
+    """是否配置了非空且长度低于 _MIN_BARE_REDACT_LEN 的密钥。
+
+    短密钥的裸值形态与普通文本几乎无法区分（给它做裸值替换会把普通文案一起
+    毁掉），此时动态诊断文本一律不外发，由诊断出口换固定通用错误，
+    机制上保证不泄漏也不误伤。
+    """
+    return any(
+        isinstance(secret, str) and 0 < len(secret) < _MIN_BARE_REDACT_LEN
+        for secret in _secret_values()
+    )
+
+
+def _secret_text_forms(secret: str) -> list[str]:
+    """密钥可能落进文本的形态：原样与整体 URL 编码。"""
+    forms = [secret]
+    try:
+        encoded = quote(secret, safe="")
+        if encoded != secret and encoded:
+            forms.append(encoded)
+    except Exception:
+        pass
+    return forms
+
+
+def _apply_once(s: str) -> str:
+    """单层处理：先整体抹除配置密钥裸值（原样/编码形态），再做字段级掩码。
+
+    顺序不可颠倒：字段掩码的取值匹配会在 #、&、空白、引号等分隔字符处截断，
+    先掩参数名会把含特殊字符的密钥切成两半，残余的后半段再按完整密钥查找
+    永远匹配不上。先做裸值替换，两步各自命中同一密钥的不同形态，
+    结果都收敛为 [REDACTED]。
+    """
+    masked = s
+    for secret in _secret_values():
+        if isinstance(secret, str) and len(secret) >= _MIN_BARE_REDACT_LEN:
+            for form in _secret_text_forms(secret):
+                if form:
+                    masked = re.sub(re.escape(form), "[REDACTED]", masked, flags=re.IGNORECASE)
+    return _SENSITIVE_PARAM_RE.sub(_mask_param_value, masked)
+
+
+def redact_secrets(text: object) -> str:
+    """对任意文本脱敏凭据取值（大小写不敏感，覆盖原样与 URL 编码形态），永不抛异常。
+
+    极端情况下脱敏本身失败时，宁可整体吞掉内容也决不让密钥裸奔。
+    """
+    try:
+        if not isinstance(text, str):
+            text = str(text)
+    except Exception:
+        return "[REDACTED]"
+    if not text:
+        return text
+    try:
+        masked = _apply_once(text)          # 原文层：裸值密钥（原样/编码）+ 字段级掩码
+        decoded = _deep_unquote(masked)
+        masked = _apply_once(decoded)       # 解码层：appid%3Dxxx 形态 + 解码后现形的裸值
+        return masked
+    except Exception:
+        return "[REDACTED]"
+
+
+# 异常类型名可信白名单：类型名只回显 httpx / 标准库中实际会出现的名字；
+# 白名单之外一律不注明——异常类可以被替换或构造，类名不能成为泄密侧道。
+_TRUSTED_EXC_TYPE_NAMES = frozenset({
+    "HTTPError", "RequestError", "TransportError", "TimeoutException",
+    "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+    "NetworkError", "ConnectError", "ReadError", "WriteError", "CloseError",
+    "ProtocolError", "LocalProtocolError", "RemoteProtocolError", "ProxyError",
+    "UnsupportedProtocol", "DecodingError", "TooManyRedirects",
+    "HTTPStatusError", "InvalidURL", "CookieConflict", "StreamError",
+    "JSONDecodeError", "ValueError", "TypeError", "KeyError", "AttributeError",
+    "OSError", "ConnectionError", "TimeoutError", "UnicodeDecodeError",
+    "SSLError", "RuntimeError",
+})
+
+
+def _trusted_exc_type_name(exc: BaseException) -> str:
+    """白名单之外的异常类名返回空串，返回文案据此省略类型标注。"""
+    name = type(exc).__name__
+    return name if name in _TRUSTED_EXC_TYPE_NAMES else ""
+
+
+def _fetch_error(exc: BaseException) -> str:
+    """天气请求异常的对外安全描述：固定中文文案，不带回任何异常原文。
+
+    原因：httpx 系列异常与 JSON 解析异常的文本可能包含完整请求 URL（appid=）
+    或响应内容片段，属于真实网络异常的典型泄露路径。类型名仅当命中可信
+    白名单时回显，未知类名直接省略。
+    """
+    message = "请求失败: 网络异常或服务暂不可用，请稍后重试"
+    name = _trusted_exc_type_name(exc)
+    if name:
+        message += f"（异常类型: {name}）"
+    return message
+
+
+def _forecast_error(exc: BaseException) -> str:
+    """天气预报异常的对外安全描述：固定中文文案，不带回任何异常原文。
+
+    特别提示：raise_for_status 抛出的 HTTPStatusError 原文自带完整请求 URL（含 appid），
+    旧代码泛捕获分支正是最大的泄露源，这里只返回固定文案。类型名仅当命中
+    可信白名单时回显，未知类名直接省略。
+    """
+    message = "❌ 获取预报失败: 网络异常或服务暂不可用，请稍后重试"
+    name = _trusted_exc_type_name(exc)
+    if name:
+        message += f"（异常类型: {name}）"
+    return message
 
 
 async def fetch_weather(city: str) -> dict:
@@ -45,7 +223,7 @@ async def fetch_weather(city: str) -> dict:
         except httpx.HTTPStatusError as e:
             return {"error": f"API 错误: {e.response.status_code}"}
         except Exception as e:
-            return {"error": f"请求失败: {str(e)}"}
+            return {"error": _fetch_error(e)}
 
 
 def format_weather(data: dict) -> str:
@@ -55,7 +233,10 @@ def format_weather(data: dict) -> str:
     :return: 格式化后的天气信息
     """
     if "error" in data:
-        return f"❌ {data['error']}"
+        if _has_short_key():
+            # 短密钥场景：动态诊断文本一律不外发，统一以固定通用错误替代。
+            return f"❌ {_SHORT_KEY_ERROR_INFO}"
+        return f"❌ {redact_secrets(data['error'])}"
     
     try:
         city_name = data.get("name", "未知城市")
@@ -92,7 +273,10 @@ def format_weather(data: dict) -> str:
         return result.strip()
     
     except Exception as e:
-        return f"❌ 数据解析错误: {str(e)}"
+        name = _trusted_exc_type_name(e)
+        if name:
+            return f"❌ 天气数据解析失败，请稍后重试（异常类型: {name}）"
+        return "❌ 天气数据解析失败，请稍后重试"
 
 
 # 城市名称中英文映射
@@ -186,7 +370,7 @@ async def get_weather_forecast(city: str, days: int = 3) -> str:
             return result
             
         except Exception as e:
-            return f"❌ 获取预报失败: {str(e)}"
+            return _forecast_error(e)
 
 
 @mcp.tool()

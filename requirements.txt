@@ -22,7 +22,9 @@ uvicorn>=0.30.0
 pydantic>=2.0.0
 
 # 环境变量管理
-python-dotenv>=1.0.0
+# 测试用 PYTHON_DOTENV_DISABLED=1 确保不读取真实 .env；该开关在已安装并验证过的
+# 1.2.4 上可用，下限相应提高到 1.2.4（旧版本不保证支持）。
+python-dotenv>=1.2.4
 
 # HTTP 请求（用于天气 API 等）
 httpx>=0.27.0
