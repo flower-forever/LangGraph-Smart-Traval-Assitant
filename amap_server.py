@@ -6,6 +6,7 @@
 import os
 import sys
 import io
+import logging
 import re
 import httpx
 from urllib.parse import quote, unquote_plus
@@ -202,6 +203,33 @@ def _api_error_reply(prefix: str, info: object) -> str:
 
 # 创建 MCP 服务器
 mcp = FastMCP("amap-server")
+
+# ==================== HTTP 日志隐私 ====================
+# 高德 Web 服务的密钥只能走 query 参数，httpx 0.28 每收到一个响应（成功、4xx/5xx 都算）
+# 就在 "httpx" logger 上打一条 INFO，内容是带 key=<密钥> 的完整请求 URL：
+#
+#   HTTP Request: GET https://restapi.amap.com/v3/place/text?...&key=<密钥> "HTTP/1.1 200 OK"
+#
+# FastMCP 1.30 构造时会调用 configure_logging(...)，把 root 配成 INFO + RichHandler(stderr)，
+# 密钥因此进 stderr 和日志文件。加固必须写在这行之后：写在前面的会被它改回 INFO。
+# 只抬不降：外部已设成 WARNING/ERROR 就原样保留，重复调用无副作用。
+# 级别检查发生在 LogRecord 创建之前，比给 handler 挂 logging.Filter 可靠：
+# filter 不会继承给 httpx._client 这类子 logger，level 会继承。
+_HTTPX_LOGGER_NAME = "httpx"
+_HTTPX_SAFE_LEVEL = logging.WARNING
+
+
+def harden_httpx_logging() -> None:
+    """让 httpx 的 INFO/DEBUG 日志（带完整请求 URL）进不了日志，幂等。"""
+
+    httpx_logger = logging.getLogger(_HTTPX_LOGGER_NAME)
+    level = httpx_logger.level
+    if level != logging.NOTSET and level >= _HTTPX_SAFE_LEVEL:
+        return
+    httpx_logger.setLevel(_HTTPX_SAFE_LEVEL)
+
+
+harden_httpx_logging()
 
 
 def check_api_key() -> str | None:

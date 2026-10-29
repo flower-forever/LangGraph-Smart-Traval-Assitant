@@ -22,7 +22,9 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -693,3 +695,145 @@ def test_load_dotenv_gate_honored_by_servers(tmp_path):
     assert ungated.returncode == 0 and "SENTINEL True" in ungated.stdout, (
         ungated.returncode, ungated.stdout, ungated.stderr,
     )
+
+
+# --------------------------------------------------------------------------- #
+# HTTP 日志隐私：FastMCP(root=INFO) 下 httpx 的请求 URL 不能进 stderr
+# --------------------------------------------------------------------------- #
+
+# 在全新解释器里跑，才能让 FastMCP 自己配置 root（mcp 1.30 的 FastMCP.__init__
+# 会调 configure_logging，把 root 配成 INFO + RichHandler(stderr)）。两个 server
+# 导入时各自把 "httpx" logger 抬到 WARNING；子进程结束后父进程检查真实 stderr。
+#
+# 控制组通过 MCP_LOG_PROBE_FORCE_HTTPX_INFO=1 把 httpx 抬回 NOTSET，复现修复前的
+# 泄漏：root=INFO 时 httpx 的 INFO 记录（带 key= / appid= 的完整 URL）会经
+# RichHandler 写进 stderr。控制组不泄漏就说明本测试的前提变了。
+_MCP_HTTPX_LOG_PROBE = r'''
+import asyncio, json, logging, os, sys
+
+sys.path.insert(0, os.environ["MCP_PROBE_ROOT"])
+import httpx
+
+import amap_server
+import weather_server
+
+root_level = logging.getLogger().level
+httpx_level = logging.getLogger("httpx").level
+
+if os.environ.get("MCP_LOG_PROBE_FORCE_HTTPX_INFO") == "1":
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+
+_AMAP_PAYLOAD = {
+    "status": "1",
+    "info": "OK",
+    "pois": [{"name": "故宫", "address": "景山前街4号", "type": "风景名胜", "tel": ""}],
+}
+_OWM_PAYLOAD = {
+    "name": "Beijing",
+    "sys": {"country": "CN"},
+    "weather": [{"main": "Clear", "description": "晴"}],
+    "main": {"temp": 20, "feels_like": 19, "humidity": 40},
+    "wind": {"speed": 2},
+}
+
+
+def _handler(request):
+    if "amap" in request.url.host:
+        return httpx.Response(200, json=_AMAP_PAYLOAD)
+    return httpx.Response(200, json=_OWM_PAYLOAD)
+
+
+class _MockAsyncClient(httpx.AsyncClient):
+    """把 server 里裸建的 AsyncClient 接到 MockTransport，全程不出网。"""
+
+    def __init__(self, *args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(_handler)
+        super().__init__(*args, **kwargs)
+
+
+httpx.AsyncClient = _MockAsyncClient
+asyncio.run(amap_server.search_poi("故宫"))
+asyncio.run(weather_server.query_weather("北京"))
+print(json.dumps({"root_level": root_level, "httpx_level": httpx_level}))
+sys.stdout.flush()
+'''
+
+
+def _run_httpx_log_probe(force_info: bool):
+    """在干净子进程里导入两个 server、各调一个工具，返回 CompletedProcess。
+
+    PYTHON_DOTENV_DISABLED=1 让顶部的 load_dotenv() 短路，不读用户 .env；
+    假密钥走环境变量注入，与任何真实凭据无关。
+    """
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "PYTHON_DOTENV_DISABLED",
+            "MCP_PROBE_ROOT",
+            "MCP_LOG_PROBE_FORCE_HTTPX_INFO",
+        }
+    }
+    env["PYTHON_DOTENV_DISABLED"] = "1"
+    env["AMAP_API_KEY"] = FAKE_AMAP_KEY
+    env["OPENWEATHER_API_KEY"] = FAKE_OPENWEATHER_KEY
+    env["MCP_PROBE_ROOT"] = str(ROOT)
+    if force_info:
+        env["MCP_LOG_PROBE_FORCE_HTTPX_INFO"] = "1"
+    return subprocess.run(
+        [sys.executable, "-c", _MCP_HTTPX_LOG_PROBE],
+        env=env,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+        check=False,
+    )
+
+
+# RichHandler 会把长 URL 折行，整串密钥可能被切成两行；比对前先去掉所有空白，
+# 让折行处重新接起来，避免用“前缀恰好没被折断”这种偶然条件判断泄漏。
+def _compact_log_text(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+@pytest.mark.skipif(
+    not _server_import_available(),
+    reason="当前解释器无法 import mcp 1.x，跳过 httpx 日志隐私子进程测试",
+)
+def test_mcp_servers_never_log_httpx_info_with_secrets():
+    """构造 FastMCP 后调用工具，httpx 的 INFO 请求 URL（带 key= / appid=）不能进 stderr。"""
+
+    control = _run_httpx_log_probe(force_info=True)
+    assert control.returncode == 0, (
+        control.returncode,
+        control.stdout,
+        control.stderr,
+    )
+    control_text = _compact_log_text(control.stderr)
+    for secret in (FAKE_AMAP_KEY, FAKE_OPENWEATHER_KEY):
+        assert secret in control_text, (
+            "控制组没有复现泄漏，本测试前提已变（httpx 不再在 INFO 输出请求 URL？）",
+            control.stderr,
+        )
+
+    hardened = _run_httpx_log_probe(force_info=False)
+    assert hardened.returncode == 0, (
+        hardened.returncode,
+        hardened.stdout,
+        hardened.stderr,
+    )
+    state_lines = [line for line in hardened.stdout.splitlines() if line.startswith("{")]
+    assert state_lines, hardened.stdout
+    state = json.loads(state_lines[-1])
+    assert state["httpx_level"] >= logging.WARNING, state
+    hardened_text = _compact_log_text(hardened.stderr)
+    for secret in (FAKE_AMAP_KEY, FAKE_OPENWEATHER_KEY):
+        assert secret not in hardened_text, (
+            f"stderr 里出现假密钥（root_level={state['root_level']}）",
+            hardened.stderr,
+        )

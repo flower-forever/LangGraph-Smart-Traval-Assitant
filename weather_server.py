@@ -4,6 +4,7 @@
 """
 import os
 import re
+import logging
 import httpx
 from typing import Optional
 from datetime import datetime
@@ -18,6 +19,33 @@ if not os.environ.get("PYTHON_DOTENV_DISABLED"):
 
 # 初始化 MCP 服务器
 mcp = FastMCP("WeatherServer")
+
+# ==================== HTTP 日志隐私 ====================
+# OpenWeatherMap 的密钥只能走 query 参数（appid=），httpx 0.28 每收到一个响应
+# 就在 "httpx" logger 上打一条 INFO，内容是带 appid=<密钥> 的完整请求 URL：
+#
+#   HTTP Request: GET https://api.openweathermap.org/data/2.5/weather?...&appid=<密钥> "HTTP/1.1 200 OK"
+#
+# FastMCP 1.30 构造时会调用 configure_logging(...)，把 root 配成 INFO + RichHandler(stderr)，
+# 密钥因此进 stderr 和日志文件。加固必须写在这行之后：写在前面的会被它改回 INFO。
+# 只抬不降：外部已设成 WARNING/ERROR 就原样保留，重复调用无副作用。
+# 级别检查发生在 LogRecord 创建之前，比给 handler 挂 logging.Filter 可靠：
+# filter 不会继承给 httpx._client 这类子 logger，level 会继承。
+_HTTPX_LOGGER_NAME = "httpx"
+_HTTPX_SAFE_LEVEL = logging.WARNING
+
+
+def harden_httpx_logging() -> None:
+    """让 httpx 的 INFO/DEBUG 日志（带完整请求 URL）进不了日志，幂等。"""
+
+    httpx_logger = logging.getLogger(_HTTPX_LOGGER_NAME)
+    level = httpx_logger.level
+    if level != logging.NOTSET and level >= _HTTPX_SAFE_LEVEL:
+        return
+    httpx_logger.setLevel(_HTTPX_SAFE_LEVEL)
+
+
+harden_httpx_logging()
 
 # OpenWeatherMap API 配置
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
