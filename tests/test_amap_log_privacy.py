@@ -287,6 +287,11 @@ def test_http_500_path_keeps_key_out_of_logs():
 
 
 def test_transport_error_path_keeps_key_out_of_logs():
+    """传输异常路径（根本没拿到响应）也要确认没有密钥漏出。
+
+    注意：这条路径 httpx 本来就不打 INFO（它在收到响应后才记录 URL），所以即使
+    不加固也测得过；它是防回归的补充，真正的覆盖在成功 / 500 两个 case 上。
+    """
     fragments = sensitive_fragments(PLAIN_KEY)
 
     def handler(request: httpx.Request) -> httpx.Response:
