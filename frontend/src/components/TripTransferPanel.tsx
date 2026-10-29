@@ -155,6 +155,12 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   /** 上一次渲染时是否显示着内联确认：用它判断确认块是什么时候被关掉的 */
   const hadPendingRef = useRef(false)
+  /**
+   * 刚刚点了「放弃预览」。
+   * 放弃预览会把整个预览区连同里面的按钮一起卸载，被聚焦的按钮消失后焦点会掉到 body，
+   * 这里记一笔，提交后统一交回文件选择框。
+   */
+  const discardFocusRef = useRef(false)
 
   useEffect(() => {
     aliveRef.current = true
@@ -163,15 +169,28 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
     }
   }, [])
 
+  /**
+   * 焦点回位。不声明依赖：放弃预览在没有待确认（pending 一直是 null）时也要触发，
+   * 只监听 pending 的 effect 在那条路径上根本不会重跑。
+   * 只在提交后同步聚焦，不用定时器；组件卸载后 effect 不会再执行，晚到的异步读取也碰不到焦点。
+   */
   useEffect(() => {
     const hadPending = hadPendingRef.current
     hadPendingRef.current = pending !== null
+
+    if (discardFocusRef.current) {
+      discardFocusRef.current = false
+      // 放弃预览：预览区（含触发它的按钮）已经卸载，交回文件选择框
+      fileInputRef.current?.focus()
+      return
+    }
+
     if (!hadPending || pending !== null) return
-    // 确认块关闭后焦点会掉到 body：交回触发它的「保存到本地」；
-    // 如果预览也一起关掉了（放弃预览），交回文件选择框
+    // 确认块关闭（取消或确认替换）后焦点会掉到 body：交回触发它的「保存到本地」；
+    // 如果预览也一起关掉了，交回文件选择框
     const target = saveButtonRef.current ?? fileInputRef.current
     target?.focus()
-  }, [pending])
+  })
 
   const resolveStorage = (): StorageLike | null =>
     storage === undefined ? getLocalStorage() : storage
@@ -225,6 +244,8 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
   }
 
   const handleDiscard = () => {
+    // 无论有没有待确认的替换，放弃预览都会把触发它的按钮一起卸载：标记一次焦点回位
+    discardFocusRef.current = true
     clearPreviewState()
     setFileNotice(null)
   }

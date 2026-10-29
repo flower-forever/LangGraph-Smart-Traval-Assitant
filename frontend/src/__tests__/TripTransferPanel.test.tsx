@@ -606,6 +606,7 @@ describe('TripTransferPanel：同 ID 覆盖确认与焦点', () => {
   it('放弃预览后焦点回到文件选择框，待确认状态一并清掉', async () => {
     const user = userEvent.setup()
     expect(saveTripToStorage({ ...MOCK_TRIP, title: '本地旧副本' }).ok).toBe(true)
+    const rawBefore = readRawStorage()
 
     const incoming: Trip = { ...MOCK_TRIP, title: '文件里的新副本' }
     render(<TripTransferPanel trip={null} />)
@@ -623,7 +624,100 @@ describe('TripTransferPanel：同 ID 覆盖确认与焦点', () => {
     await waitFor(() => expect(fileInput()).toHaveFocus())
     expect(within(panel()).queryByRole('alert')).toBeNull()
     expect(within(panel()).queryByRole('heading', { name: /预览/ })).toBeNull()
-    expect(readRawStorage()).not.toBeNull()
+    // 放弃预览不碰存储：本地副本逐字节还是原来那份
+    expect(readRawStorage()).toBe(rawBefore)
+  })
+
+  it('还没有待确认时点「放弃预览」，焦点回到文件选择框且不写本地存储', async () => {
+    const user = userEvent.setup()
+    const incoming: Trip = { ...MOCK_TRIP, id: 'trip-focus-plain', title: '没有冲突的新副本' }
+    render(<TripTransferPanel trip={null} />)
+
+    selectFile(jsonFile(backupTextOf(incoming)))
+    await waitFor(() =>
+      expect(within(panel()).getByRole('heading', { name: /预览：没有冲突的新副本/ })).toBeInTheDocument(),
+    )
+    expect(readRawStorage()).toBeNull()
+
+    // 普通预览分支：pending 一直是 null，放弃时预览区连同按钮一起卸载，
+    // 焦点会掉到 body，必须交回文件选择框（README 的口径）
+    await user.click(within(panel()).getByRole('button', { name: '放弃预览' }))
+
+    await waitFor(() => expect(fileInput()).toHaveFocus())
+    expect(within(panel()).queryByRole('heading', { name: /预览/ })).toBeNull()
+    expect(within(panel()).queryByRole('button', { name: '保存到本地' })).toBeNull()
+    expect(readRawStorage()).toBeNull()
+  })
+
+  it('键盘 Tab 到「放弃预览」并回车，焦点同样回到文件选择框', async () => {
+    const user = userEvent.setup()
+    const incoming: Trip = { ...MOCK_TRIP, id: 'trip-focus-keyboard', title: '键盘放弃的副本' }
+    render(<TripTransferPanel trip={null} />)
+
+    selectFile(jsonFile(backupTextOf(incoming)))
+    await waitFor(() =>
+      expect(within(panel()).getByRole('heading', { name: /预览：键盘放弃的副本/ })).toBeInTheDocument(),
+    )
+
+    // 真实键盘路径：从「保存到本地」往后一格就是「放弃预览」，回车触发 click
+    within(panel()).getByRole('button', { name: '保存到本地' }).focus()
+    await user.tab()
+    expect(within(panel()).getByRole('button', { name: '放弃预览' })).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(fileInput()).toHaveFocus())
+    expect(within(panel()).queryByRole('heading', { name: /预览/ })).toBeNull()
+    expect(readRawStorage()).toBeNull()
+  })
+
+  it('放弃预览后重新选择文件：异步读取不写存储，也不抢走文件选择框的焦点', async () => {
+    let resolveSlow: (text: string) => void = () => {}
+    const slowText = new Promise<string>((resolve) => {
+      resolveSlow = resolve
+    })
+    const slowFile = { name: 'slow.json', size: 100, text: () => slowText }
+
+    const user = userEvent.setup()
+    render(<TripTransferPanel trip={null} />)
+
+    selectFile(jsonFile(backupTextOf({ ...MOCK_TRIP, id: 'trip-first', title: '第一份副本' })))
+    await waitFor(() => expect(within(panel()).getByRole('heading', { name: /预览：第一份副本/ })).toBeInTheDocument())
+
+    await user.click(within(panel()).getByRole('button', { name: '放弃预览' }))
+    await waitFor(() => expect(fileInput()).toHaveFocus())
+    expect(readRawStorage()).toBeNull()
+
+    // 重新选择：读取还没回来时焦点留在文件选择框
+    selectFile(slowFile)
+    expect(within(panel()).getByText('正在读取文件…')).toBeInTheDocument()
+    expect(fileInput()).toHaveFocus()
+
+    // 读取晚到：只出预览，不写存储，也不去挪焦点
+    resolveSlow(backupTextOf({ ...MOCK_TRIP, id: 'trip-second', title: '第二份副本' }))
+    await waitFor(() => expect(within(panel()).getByRole('heading', { name: /预览：第二份副本/ })).toBeInTheDocument())
+
+    expect(fileInput()).toHaveFocus()
+    expect(readRawStorage()).toBeNull()
+  })
+
+  it('读取还没结束就卸载组件，晚到的结果不写存储也不会去聚焦', async () => {
+    let resolveSlow: (text: string) => void = () => {}
+    const slowText = new Promise<string>((resolve) => {
+      resolveSlow = resolve
+    })
+    const slowFile = { name: 'slow.json', size: 100, text: () => slowText }
+
+    const { unmount } = render(<TripTransferPanel trip={null} />)
+    selectFile(slowFile)
+    expect(within(panel()).getByText('正在读取文件…')).toBeInTheDocument()
+
+    unmount()
+    resolveSlow(backupTextOf(MOCK_TRIP))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(readRawStorage()).toBeNull()
+    expect(document.activeElement).toBe(document.body)
   })
 
   it('确认框打开时重新选择文件，旧确认不会残留', async () => {
