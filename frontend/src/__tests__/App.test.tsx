@@ -2,7 +2,7 @@
  * App 集成测试：mock fetch，渲染真实 TripMap（真实 Leaflet + jsdom）。
  * 地图不做组件 mock——marker / popup 的选中联动必须走真实 Leaflet 事件才覆盖得到。
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -226,6 +226,104 @@ describe('App 集成', () => {
     await waitFor(() => expect(screen.getByText(/数据格式不符合约定/)).toBeInTheDocument())
     expect(screen.getByText('路书')).toBeInTheDocument()
     expect(screen.queryByText('杭州三日漫步路书')).toBeNull()
+  })
+
+  it('停止等待会立刻恢复提交，旧请求忽略 abort 迟到也不能覆盖新结果', async () => {
+    const planResolvers: Array<(response: Response) => void> = []
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy' }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') {
+        return new Promise<Response>((resolve) => {
+          planResolvers.push(resolve)
+        })
+      }
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('杭州三日漫步路书')).toBeInTheDocument())
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /正在规划/ })).toBeInTheDocument())
+    expect(screen.getByRole('note').textContent).toContain('不能保证服务端立刻停止处理与计费')
+
+    await user.click(screen.getByRole('button', { name: '停止等待' }))
+    // 立即恢复可提交，并明确说明只取消本页等待
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+    const cancelStatus = screen.getByText(/已停止等待这次规划/)
+    expect(cancelStatus.textContent).toContain('不能保证后端或上游模型立即停止处理')
+
+    // 立刻重试：第二次请求发出并进入等待
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /正在规划/ })).toBeInTheDocument())
+    expect(planResolvers).toHaveLength(2)
+
+    // 旧请求模拟忽略 abort 后迟到 resolve：不能覆盖页面，也不能结束新的等待
+    await act(async () => {
+      planResolvers[0](jsonResponse({ ...MOCK_TRIP, id: 'trip-old', source: 'agent', title: '旧响应' }))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('旧响应')).toBeNull()
+    expect(screen.getByRole('button', { name: /正在规划/ })).toBeInTheDocument()
+
+    await act(async () => {
+      planResolvers[1](jsonResponse({ ...MOCK_TRIP, id: 'trip-new', source: 'agent', title: '新响应' }))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByText('新响应')).toBeInTheDocument())
+    expect(screen.queryByText('旧响应')).toBeNull()
+  })
+
+  it('规划成功后，仍在加载的示例响应迟到也不会覆盖新行程', async () => {
+    let resolveExample!: (response: Response) => void
+    const examplePending = new Promise<Response>((resolve) => {
+      resolveExample = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy' }))
+      if (url === '/api/trips/example') return examplePending
+      if (url === '/api/trips/plan') {
+        return Promise.resolve(jsonResponse({ ...MOCK_TRIP, id: 'trip-planned', source: 'agent', title: '规划结果' }))
+      }
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+
+    // 示例仍在路上时也能直接规划
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await waitFor(() => expect(screen.getByText('规划结果')).toBeInTheDocument())
+
+    await act(async () => {
+      resolveExample(jsonResponse({ ...MOCK_TRIP, id: 'example-late', title: '迟到的示例' }))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('迟到的示例')).toBeNull()
+    expect(screen.getByText('规划结果')).toBeInTheDocument()
+    expect(screen.getByText('AI 规划')).toBeInTheDocument()
+  })
+
+  it('清空天数输入不会写入 NaN 或触发 React NaN 警告，并给出本地校验', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetchMock = stubHappyFetch()
+    const user = userEvent.setup()
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('杭州三日漫步路书')).toBeInTheDocument())
+
+    const daysInput = screen.getByLabelText('天数') as HTMLInputElement
+    await user.clear(daysInput)
+    expect(daysInput.value).toBe('')
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+
+    expect(await screen.findByText('天数需在 1 到 7 之间')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/trips/plan')).toHaveLength(0)
+    const nanWarnings = errorSpy.mock.calls.filter((args) => String(args[0]).includes('NaN'))
+    expect(nanWarnings).toHaveLength(0)
   })
 
   it('复制按钮真实写入剪贴板', async () => {

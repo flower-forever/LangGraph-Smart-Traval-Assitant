@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './app.css'
+import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryList from './components/ItineraryList'
+import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import { ApiError, fetchExampleTrip, planTrip, probeBackend } from './lib/api'
+import { formatDateTime } from './lib/format'
 import type { PlanRequest, Trip } from './lib/api'
 
 type LoadPhase = 'initial' | 'loading' | 'ready' | 'failed'
@@ -50,31 +53,43 @@ export default function App() {
   const [trip, setTrip] = useState<Trip | null>(null)
   const [error, setError] = useState<{ title: string; detail: string } | null>(null)
   const [planLoading, setPlanLoading] = useState(false)
+  const [planCancelled, setPlanCancelled] = useState(false)
   const [backend, setBackend] = useState<BackendState>({ checked: false, ok: false })
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
+  const [restoredAt, setRestoredAt] = useState<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const exampleAbortRef = useRef<AbortController | null>(null)
+  /** 行程归属序号：恢复 / 规划成功都会 +1，迟到的示例响应据此丢弃 */
+  const loadSeqRef = useRef(0)
+  const planSeqRef = useRef(0)
   const itineraryTopRef = useRef<HTMLDivElement | null>(null)
+  const tripTitleRef = useRef<HTMLHeadingElement | null>(null)
 
   // 首次进入：拉示例行程 + 探活
   useEffect(() => {
     let cancelled = false
-    const controller = new AbortController()
-    probeBackend({ signal: controller.signal }).then((ok) => {
+    const probeController = new AbortController()
+    const exampleController = new AbortController()
+    const sequence = loadSeqRef.current
+    exampleAbortRef.current = exampleController
+    probeBackend({ signal: probeController.signal }).then((ok) => {
       if (cancelled) return
       // 业务请求如果已经成功，就保留在线结论（探活可能被代理或超时误判）
       setBackend((prev) => (prev.ok ? prev : { checked: true, ok }))
     })
-    fetchExampleTrip({ signal: controller.signal })
+    fetchExampleTrip({ signal: exampleController.signal })
       .then((t) => {
-        if (cancelled) return
+        if (cancelled || sequence !== loadSeqRef.current) return
         setTrip(t)
         setPhase('ready')
         // 能拿到业务数据本身就说明后端在线
         setBackend({ checked: true, ok: true })
       })
       .catch((err) => {
-        if (cancelled) return
+        if (cancelled || sequence !== loadSeqRef.current) return
+        // 用户已经在加载途中恢复本地副本：旧请求即使忽略 abort 也不能改页面
+        if (err instanceof ApiError && err.kind === 'abort') return
         setPhase('failed')
         setError(errorText(err))
         if (err instanceof ApiError && err.kind === 'network') {
@@ -83,7 +98,9 @@ export default function App() {
       })
     return () => {
       cancelled = true
-      controller.abort()
+      probeController.abort()
+      exampleController.abort()
+      if (exampleAbortRef.current === exampleController) exampleAbortRef.current = null
     }
   }, [])
 
@@ -123,37 +140,91 @@ export default function App() {
     [trip, activeDay],
   )
 
+  const scrollToItinerary = useCallback(() => {
+    // 滚动到行程区（不用 scrollIntoView，避免嵌入环境的滚动干扰）；
+    // 同时把焦点放到行程标题，键盘用户从「恢复」按钮切回来后不会掉到 body。
+    requestAnimationFrame(() => {
+      const el = itineraryTopRef.current
+      if (el) {
+        const top = el.getBoundingClientRect().top + window.scrollY
+        window.scrollTo({ top: Math.max(0, top - 8), behavior: 'smooth' })
+      }
+      tripTitleRef.current?.focus({ preventScroll: true })
+    })
+  }, [])
+
   const handlePlan = useCallback(async (payload: PlanRequest) => {
-    // 取消上一次未完成的规划请求
+    // 取消上一次未完成的规划请求，并用序号挡住已经 resolved、但回调还没执行的旧响应
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
+    const sequence = planSeqRef.current + 1
+    planSeqRef.current = sequence
     setPlanLoading(true)
+    setPlanCancelled(false)
     setError(null)
     try {
       const t = await planTrip(payload, { signal: controller.signal })
+      if (sequence !== planSeqRef.current) return
       setTrip(t)
+      setPhase('ready')
+      setRestoredAt(null)
       setActiveDay(t.days[0]?.day ?? 1)
+      setActiveStopId(null)
       setBackend({ checked: true, ok: true })
-      // 滚动到行程区（不用 scrollIntoView，避免嵌入环境的滚动干扰）
-      requestAnimationFrame(() => {
-        const el = itineraryTopRef.current
-        if (el) {
-          const top = el.getBoundingClientRect().top + window.scrollY
-          window.scrollTo({ top: Math.max(0, top - 8), behavior: 'smooth' })
-        }
-      })
+      // 新规划已接管页面，加载中的示例请求（即使忽略 abort）不能再覆盖
+      loadSeqRef.current += 1
+      scrollToItinerary()
     } catch (err) {
+      if (sequence !== planSeqRef.current) return
       if (err instanceof ApiError && err.kind === 'abort') return
       if (err instanceof ApiError && err.kind === 'network') {
         setBackend({ checked: true, ok: false })
       }
       setError(errorText(err))
     } finally {
-      if (abortRef.current === controller) abortRef.current = null
-      setPlanLoading(false)
+      if (sequence === planSeqRef.current) {
+        if (abortRef.current === controller) abortRef.current = null
+        setPlanLoading(false)
+      }
     }
-  }, [])
+  }, [scrollToItinerary])
+
+  /**
+   * 停止等待：只让本页不再等这次结果，立刻恢复可提交状态。
+   * 不承诺后端 / 上游模型停止处理或停止计费——请求可能已经在服务端跑完。
+   */
+  const handleStopWaiting = useCallback(() => {
+    if (!planLoading) return
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    setPlanLoading(false)
+    setPlanCancelled(true)
+    setError(null)
+  }, [planLoading])
+
+  /**
+   * 从本浏览器保存的副本恢复：取消未完成的规划请求与示例请求（避免旧响应覆盖恢复结果），
+   * 回到第一天，并清空选中站点和地图弹窗。
+   */
+  const handleRestoreSavedTrip = useCallback((restored: Trip, savedAt: number) => {
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
+    setPlanLoading(false)
+    setPlanCancelled(false)
+    setTrip(restored)
+    setPhase('ready')
+    setError(null)
+    setRestoredAt(savedAt)
+    setActiveStopId(null)
+    setActiveDay(restored.days[0]?.day ?? 1)
+    scrollToItinerary()
+  }, [scrollToItinerary])
 
   const dayTabs = trip?.days ?? []
   const tripIsExample = trip?.source === 'example'
@@ -187,7 +258,14 @@ export default function App() {
       <div className="topbar-progress" data-active={planLoading || phase === 'loading'} aria-hidden="true" />
 
       <main className="app-main">
-        <PlanForm onSubmit={handlePlan} loading={planLoading} />
+        <PlanForm onSubmit={handlePlan} loading={planLoading} onCancel={handleStopWaiting} />
+
+        {planCancelled && !planLoading && (
+          <p className="plan-cancel-status" role="status">
+            已停止等待这次规划，可以立刻改参数重新提交；旧响应即使到达也会被忽略。
+            这个动作只取消本页的等待，不能保证后端或上游模型立即停止处理，也不能保证不再计费。
+          </p>
+        )}
 
         {error && (
           <div className="error-banner" role="alert">
@@ -211,6 +289,17 @@ export default function App() {
           </div>
         )}
 
+        {!trip && (phase === 'loading' || phase === 'failed') && (
+          <div className="saved-offline">
+            <p className="saved-offline-note">
+              {phase === 'failed'
+                ? '后端暂时不可用。这个浏览器里保存过的行程仍可离线恢复；恢复后可以继续查看，重新规划需要等后端恢复。'
+                : '示例行程还在加载。这个浏览器里保存过的行程可以现在就恢复，不必等示例返回。'}
+            </p>
+            <SavedTripsPanel trip={null} onRestore={handleRestoreSavedTrip} />
+          </div>
+        )}
+
         <div ref={itineraryTopRef} id="trip-section" />
         {trip && (
           <section aria-label="行程安排">
@@ -218,7 +307,7 @@ export default function App() {
               <span className="trip-source-tag" data-source={trip.source}>
                 {tripIsExample ? '示例行程' : 'AI 规划'}
               </span>
-              <h2 className="trip-title">{trip.title}</h2>
+              <h2 className="trip-title" ref={tripTitleRef} tabIndex={-1}>{trip.title}</h2>
               <p className="trip-summary">{trip.summary}</p>
               {trip.warnings.length > 0 && (
                 <div className="trip-warnings">
@@ -229,7 +318,15 @@ export default function App() {
                   </ul>
                 </div>
               )}
+              {restoredAt != null && (
+                <p className="trip-restored-note">
+                  从本浏览器保存的副本恢复 · 保存于 {formatDateTime(restoredAt)}。这份副本不会同步到其他设备。
+                </p>
+              )}
             </header>
+
+            <SavedTripsPanel trip={trip} onRestore={handleRestoreSavedTrip} />
+            <IcsExportPanel trip={trip} key={`ics:${trip.id}`} />
 
             <div className="day-nav" role="tablist" aria-label="按日切换" onKeyDown={dayNavKeyDown}>
               {dayTabs.map((d) => {
@@ -268,7 +365,7 @@ export default function App() {
                     day={currentDay}
                     activeStopId={activeStopId}
                     onSelectStop={handleSelectStop}
-                    key={currentDay.day}
+                    key={`${trip.id}:${currentDay.day}`}
                   />
                 )}
               </div>

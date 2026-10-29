@@ -45,6 +45,18 @@ export function formatDate(date: string | null): string {
   return `${y} 年 ${Number(mo)} 月 ${Number(d)} 日 · ${weekdays[dt.getDay()]}`
 }
 
+/**
+ * 本地保存时间展示。用本地时区拆字段而不是 toLocaleString，
+ * 避免不同浏览器对「2026/10/29 07:43」和「2026年10月29日 07:43」的差异。
+ */
+export function formatDateTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '时间未知'
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 /** 站点在 OSM 上的检索词：名称 + 地址，避免捏造详情链接 */
 export function stopSearchQuery(stop: TripStop): string {
   return stop.address ? `${stop.name} ${stop.address}` : stop.name

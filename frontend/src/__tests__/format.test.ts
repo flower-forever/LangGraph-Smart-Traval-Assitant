@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayTime, formatDistance, formatDuration, formatDate, stopSearchQuery } from '../lib/format'
+import { displayTime, formatDateTime, formatDistance, formatDuration, formatDate, stopSearchQuery } from '../lib/format'
 import { dayToText } from '../components/ItineraryList'
 import { MOCK_TRIP } from './fixtures/trip'
 
@@ -24,6 +24,13 @@ describe('format helpers', () => {
   it('formatDate 处理纯日期，不受时区影响', () => {
     expect(formatDate('2026-04-03')).toContain('2026 年 4 月 3 日')
     expect(formatDate(null)).toBe('')
+  })
+
+  it('formatDateTime 展示本地保存时间，非法值不显示伪造日期', () => {
+    const timestamp = new Date(2026, 9, 29, 7, 43).getTime()
+    expect(formatDateTime(timestamp)).toBe('2026 年 10 月 29 日 07:43')
+    expect(formatDateTime(0)).toBe('时间未知')
+    expect(formatDateTime(Number.NaN)).toBe('时间未知')
   })
 
   it('stopSearchQuery 拼接名称与地址', () => {

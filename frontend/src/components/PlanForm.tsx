@@ -4,22 +4,25 @@ import type { PlanRequest, TravelMode } from '../lib/api'
 export interface PlanFormProps {
   onSubmit: (payload: PlanRequest) => void
   loading: boolean
+  /** 停止等待当前规划请求（只取消本页等待，不保证终止后端 / 上游处理） */
+  onCancel?: () => void
 }
 
 interface FormState {
   destination: string
-  days: number
+  /** 数字输入框用字符串保存，清空时保留空输入，不把 NaN 写进受控 value */
+  days: string
   departure_date: string
-  travelers: number
+  travelers: string
   preferences: string
   travel_mode: TravelMode
 }
 
 const INITIAL: FormState = {
   destination: '',
-  days: 3,
+  days: '3',
   departure_date: '',
-  travelers: 2,
+  travelers: '2',
   preferences: '',
   travel_mode: 'walking',
 }
@@ -38,7 +41,8 @@ function validate(f: FormState): Errors {
   if (!dest) errors.destination = '请填写目的地'
   else if (dest.length > 60) errors.destination = '目的地最多 60 字'
 
-  if (!Number.isInteger(f.days) || f.days < 1 || f.days > 7) {
+  const days = Number(f.days)
+  if (f.days.trim() === '' || !Number.isInteger(days) || days < 1 || days > 7) {
     errors.days = '天数需在 1 到 7 之间'
   }
 
@@ -56,13 +60,14 @@ function validate(f: FormState): Errors {
     }
   }
 
-  if (!Number.isInteger(f.travelers) || f.travelers < 1 || f.travelers > 20) {
+  const travelers = Number(f.travelers)
+  if (f.travelers.trim() === '' || !Number.isInteger(travelers) || travelers < 1 || travelers > 20) {
     errors.travelers = '人数需在 1 到 20 之间'
   }
   return errors
 }
 
-export default function PlanForm({ onSubmit, loading }: PlanFormProps) {
+export default function PlanForm({ onSubmit, loading, onCancel }: PlanFormProps) {
   const [form, setForm] = useState<FormState>(INITIAL)
   const [errors, setErrors] = useState<Errors>({})
   const [touched, setTouched] = useState(false)
@@ -72,6 +77,7 @@ export default function PlanForm({ onSubmit, loading }: PlanFormProps) {
   const dateId = useId()
   const travId = useId()
   const prefId = useId()
+  const cancelNoteId = useId()
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -89,9 +95,9 @@ export default function PlanForm({ onSubmit, loading }: PlanFormProps) {
     if (Object.keys(nextErrors).length > 0) return
     onSubmit({
       destination: form.destination.trim(),
-      days: form.days,
+      days: Number(form.days),
       departure_date: form.departure_date || null,
-      travelers: form.travelers,
+      travelers: Number(form.travelers),
       preferences: form.preferences.trim(),
       travel_mode: form.travel_mode,
     })
@@ -136,7 +142,7 @@ export default function PlanForm({ onSubmit, loading }: PlanFormProps) {
             max={7}
             step={1}
             value={form.days}
-            onChange={(e) => set('days', e.target.value === '' ? NaN : Number(e.target.value))}
+            onChange={(e) => set('days', e.target.value)}
             aria-invalid={hasError('days') || undefined}
             aria-describedby={hasError('days') ? `${daysId}-err` : undefined}
             disabled={loading}
@@ -173,7 +179,7 @@ export default function PlanForm({ onSubmit, loading }: PlanFormProps) {
             max={20}
             step={1}
             value={form.travelers}
-            onChange={(e) => set('travelers', e.target.value === '' ? NaN : Number(e.target.value))}
+            onChange={(e) => set('travelers', e.target.value)}
             aria-invalid={hasError('travelers') || undefined}
             aria-describedby={hasError('travelers') ? `${travId}-err` : undefined}
             disabled={loading}
@@ -231,7 +237,23 @@ export default function PlanForm({ onSubmit, loading }: PlanFormProps) {
         <button className="btn btn-primary" type="submit" disabled={loading} data-loading={loading}>
           {loading ? '正在规划…' : '生成行程'}
         </button>
+        {loading && onCancel && (
+          <button
+            type="button"
+            className="btn"
+            onClick={onCancel}
+            aria-describedby={cancelNoteId}
+          >
+            停止等待
+          </button>
+        )}
       </div>
+      {loading && (
+        <p className="plan-cancel-note" id={cancelNoteId} role="note">
+          「停止等待」只会让本页不再等待这次结果，可以立刻改参数重新提交；它不会中断后端或上游模型的处理，
+          也不能保证服务端立刻停止处理与计费。
+        </p>
+      )}
     </form>
   )
 }
