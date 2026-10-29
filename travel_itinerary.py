@@ -30,7 +30,14 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 # ==================== HTTP 日志隐私 ====================
 
@@ -78,6 +85,28 @@ SCHEDULE_CONFLICT_PREFIX = "时间冲突："
 # 下一站时间早于上一站时，仅凭 time 字符串无法确认是同日顺序写反还是跨日安排。
 # 这类情况单独用“待确认”前缀，避免把假设说成已经核实的事实。
 SCHEDULE_ORDER_PREFIX = "时间顺序或跨日待确认："
+# 归一化阶段会把无法解析的 time 换成 09:00 起的默认时刻。这些值只是占位，
+# 不能当作模型确认过的真实时间。来源记录随 TripPlan 以私有属性传递（不进
+# JSON schema，也不进 model_dump / API 响应），地图增强重算冲突时据此措辞。
+_TIME_SOURCE_MODEL = "model"
+_TIME_SOURCE_PLACEHOLDER = "placeholder"
+_TIME_SOURCE_PLACEHOLDER_UNKNOWN = "placeholder_unknown"
+_TIME_SOURCE_UNKNOWN = "unknown"
+# 归一化阶段写入的默认时间说明。行程经 JSON 往返重建后私有来源记录会丢失，
+# 但这段公开说明仍在，可以用来判定“这趟行程确实含占位时间”。只按我们自己的
+# 固定模板前缀匹配；模型文本填在名字/描述里，无法伪造出以该前缀开头的提醒。
+_DEFAULT_TIME_DISCLAIMER_PREFIX = (
+    "部分站点 time 缺失或格式不是 HH:MM，已使用默认时间："
+)
+# 冲突提醒涉及占位时间时必须原样包含这句，用户要能一眼看出时间未确认。
+PLACEHOLDER_TIME_CAVEAT = "占位时间，实际时间待确认"
+# 行程经 JSON 往返重建后私有来源记录会丢失，且看不到默认时间说明（旧数据、
+# 提醒被上限截断或调用方手写行程）时，既不能断言时间是真实的，也不能断定它
+# 是占位。这句把“无法逐站识别”的局限直接写进用户可见文案里。
+UNKNOWN_TIME_SOURCE_CAVEAT = (
+    "该行程未记录时间来源（可能是旧数据或经 JSON 重建），"
+    "无法确认哪些时刻是占位默认值，若含占位值则实际时间待确认"
+)
 # 超过 MAX_TRIP_WARNINGS 时的汇总行前缀；同样在重算前摘掉，保证重复调用幂等。
 WARNING_SUMMARY_PREFIX = "提醒数量已达上限，另有"
 
@@ -242,6 +271,11 @@ class TripPlan(BaseModel):
     map_coordinate_system: Literal["WGS84"] = "WGS84"
     warnings: list[str] = Field(default_factory=list, max_length=MAX_TRIP_WARNINGS)
     days: list[DayPlan] = Field(min_length=1, max_length=MAX_DAYS)
+
+    # 归一化阶段的站点时间来源（stop_id -> model / placeholder）。私有属性：
+    # 不进 JSON schema、model_dump 或响应体，model_copy / deepcopy 会保留。
+    # 空字典表示来源未知（例如 TripPlan 由 JSON 重建），不能当成“全是真实时间”。
+    _time_origins: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_ids_and_legs(self) -> "TripPlan":
@@ -588,13 +622,109 @@ def _travel_mode_label(mode: str) -> str:
     return "步行" if mode == "walking" else "驾车"
 
 
-def _map_independent_schedule_warnings(days: list[DayPlan], mode: str) -> list[str]:
+def _trip_mentions_default_times(trip: TripPlan) -> bool:
+    """行程的公开提醒里是否说明用过默认（占位）时间。"""
+
+    return any(
+        warning.startswith(_DEFAULT_TIME_DISCLAIMER_PREFIX)
+        for warning in trip.warnings
+    )
+
+
+def _trip_time_origins(trip: TripPlan) -> dict[str, str]:
+    """取行程内部的时间来源记录；记录缺失时逐站标记为“来源未知”。
+
+    记录只在归一化阶段写入，不参与序列化。如果调用方传的是经 JSON 重建的
+    TripPlan，私有记录会丢失：
+
+    - 公开提醒里还有“已使用默认时间”的字段说明时，把整趟行程标成“含占位
+      时间但定位不到具体站点”，冲突提醒改用保守措辞；
+    - 连说明也没有时（旧数据、提醒被上限截断或调用方手写行程），来源同样
+      未知。这里不再返回 ``None`` 让调用方按“全是真实时间”处理，否则占位
+      时刻会被当成确定事实。两条路径都只影响用户可见措辞，不改 API 契约。
+    """
+
+    origins = trip._time_origins
+    if isinstance(origins, dict) and origins:
+        return dict(origins)
+    unknown = (
+        _TIME_SOURCE_PLACEHOLDER_UNKNOWN
+        if _trip_mentions_default_times(trip)
+        else _TIME_SOURCE_UNKNOWN
+    )
+    return {
+        stop.id: unknown
+        for day in trip.days
+        for stop in day.stops
+    }
+
+
+def _stop_time_origin(stop: Stop, time_origins: dict[str, str] | None) -> str:
+    if not time_origins:
+        return _TIME_SOURCE_UNKNOWN
+    return time_origins.get(stop.id, _TIME_SOURCE_UNKNOWN)
+
+
+def _pair_has_placeholder_origin(
+    current: Stop,
+    following: Stop,
+    time_origins: dict[str, str] | None,
+) -> bool:
+    """这一对站点里是否至少有一站的时间确定或疑似是占位默认值。"""
+
+    return any(
+        _stop_time_origin(stop, time_origins)
+        in (_TIME_SOURCE_PLACEHOLDER, _TIME_SOURCE_PLACEHOLDER_UNKNOWN)
+        for stop in (current, following)
+    )
+
+
+def _time_source_caveat(
+    current: Stop,
+    following: Stop,
+    time_origins: dict[str, str] | None,
+) -> str | None:
+    """冲突提醒开头的时间来源限定；两站都确定是模型真实时间时返回 ``None``。"""
+
+    placeholders = [
+        stop
+        for stop in (current, following)
+        if _stop_time_origin(stop, time_origins)
+        in (_TIME_SOURCE_PLACEHOLDER, _TIME_SOURCE_PLACEHOLDER_UNKNOWN)
+    ]
+    if any(
+        _stop_time_origin(stop, time_origins) == _TIME_SOURCE_PLACEHOLDER_UNKNOWN
+        for stop in (current, following)
+    ):
+        return f"该行程含{PLACEHOLDER_TIME_CAVEAT}（具体是哪些站点已无法对应，请逐站确认）"
+    if len(placeholders) == 2:
+        return f"两站时间都是{PLACEHOLDER_TIME_CAVEAT}"
+    if placeholders:
+        stop = placeholders[0]
+        return f"{stop.name} 的 {stop.time} 是{PLACEHOLDER_TIME_CAVEAT}"
+    if any(
+        _stop_time_origin(stop, time_origins) == _TIME_SOURCE_UNKNOWN
+        for stop in (current, following)
+    ):
+        return UNKNOWN_TIME_SOURCE_CAVEAT
+    return None
+
+
+def _map_independent_schedule_warnings(
+    days: list[DayPlan],
+    mode: str,
+    time_origins: dict[str, str] | None = None,
+) -> list[str]:
     """在没有地图数据时检查每对相邻站点的时刻表重叠。"""
 
     mode_label = _travel_mode_label(mode)
     warnings: list[str] = []
     for day in days:
-        warnings.extend(_schedule_conflict_warnings(day, day.legs, mode_label))
+        warnings.extend(
+            _schedule_conflict_warnings(
+                day, day.legs, mode_label, time_origins=time_origins
+            )
+        )
     return warnings
 
 
@@ -884,6 +1014,8 @@ def normalize_agent_payload(
 
     bad_time_count = 0
     default_time_notes: list[str] = []
+    # stop_id -> 时间来源；只放在 TripPlan 私有属性里，不写进站点字段或响应。
+    time_origins: dict[str, str] = {}
     total_stops = 0
     days: list[DayPlan] = []
 
@@ -914,16 +1046,23 @@ def normalize_agent_payload(
             if not name:
                 continue
             raw_time = raw_stop.get("time")
+            raw_time_text = _sanitize_text(
+                raw_time, max_length=32, allow_newlines=False
+            )
             normalized_time = _normalize_time(raw_time, len(stops))
-            if _TIME_RE.match(_sanitize_text(raw_time, max_length=32, allow_newlines=False)) is None:
+            stop_id = f"stop-d{day_number:02d}-{len(stops) + 1:02d}"
+            if _TIME_RE.match(raw_time_text) is None:
                 bad_time_count += 1
+                time_origins[stop_id] = _TIME_SOURCE_PLACEHOLDER
                 default_time_notes.append(
                     f"第{day_number}天 {_sanitize_text(name, max_length=24, allow_newlines=False)}"
                     f"→{normalized_time}"
                 )
+            if stop_id not in time_origins:
+                time_origins[stop_id] = _TIME_SOURCE_MODEL
             stops.append(
                 Stop(
-                    id=f"stop-d{day_number:02d}-{len(stops) + 1:02d}",
+                    id=stop_id,
                     name=name,
                     time=normalized_time,
                     duration_minutes=_coerce_duration(raw_stop.get("duration_minutes")),
@@ -979,7 +1118,11 @@ def normalize_agent_payload(
         )
 
     # 时刻表重叠与地图无关：没有地图密钥、地图失败或地图总超时时也要提醒。
-    warnings.extend(_map_independent_schedule_warnings(days, request.travel_mode))
+    warnings.extend(
+        _map_independent_schedule_warnings(
+            days, request.travel_mode, time_origins=time_origins
+        )
+    )
 
     trip = TripPlan(
         id=stable_trip_id(request),
@@ -991,6 +1134,8 @@ def normalize_agent_payload(
         warnings=dedupe_warnings(warnings),
         days=days,
     )
+    # 私有来源记录：地图增强重算冲突时用来区分真实时刻与占位时间。
+    trip._time_origins = time_origins
     return trip, list(trip.warnings)
 
 
@@ -2402,11 +2547,22 @@ def _describe_backwards_pair(
     stay: int | None,
     travel: float | None,
     mode_label: str,
+    caveat: str | None = None,
+    caveat_is_placeholder: bool = True,
 ) -> str:
     """下一站时间早于上一站时的单条提醒。
 
     time 字符串本身不能证明下一站是当天还是次日，所以这里不把倒序断言成错误：
     先给“时间顺序或跨日待确认”，再在数据允许时给出按次日假设的核对结果。
+
+    ``caveat`` 不为空时表示两站里至少有一站的时间来源不可靠：
+
+    - 已知是占位默认值（``caveat_is_placeholder=True``）时，保留“待确认”
+      语义，但不再推演次日衔接结果：占位时刻不代表真实时间，任何结论都只
+      能是猜测；
+    - 只是来源未记录（``caveat_is_placeholder=False``）时，先说明无法确认
+      哪些时刻是占位值，再保留“按次日假设”的核对，方便用户在旧数据上仍有
+      可用的判断依据。
     """
 
     next_planned = planned + _MINUTES_PER_DAY
@@ -2414,6 +2570,21 @@ def _describe_backwards_pair(
         f"{day_label} {following.name} 的 {following.time} 早于上一站 "
         f"{current.name} 的 {current.time}。"
     )
+
+    if caveat is not None and caveat_is_placeholder:
+        return (
+            f"{SCHEDULE_ORDER_PREFIX}{day_label} {caveat}。"
+            f"按记录顺序 {current.time} → {following.time} 看是倒序，"
+            "但这些时间还不是已确认的真实时刻，无法据此核对两站能否衔接；"
+            "若下一站实际指次日，请按确认后的时间重新核对；未改动站点时间。"
+        )
+
+    if caveat is not None:
+        # 来源未知：把限定放在最前面，后面的“按次日假设”仍然只是假设。
+        lead = (
+            f"{day_label} {caveat}。{following.name} 的 {following.time} 早于上一站 "
+            f"{current.name} 的 {current.time}。"
+        )
 
     if stay is None:
         text = f"{SCHEDULE_ORDER_PREFIX}{lead}"
@@ -2477,7 +2648,12 @@ def _describe_backwards_pair(
     )
 
 
-def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) -> list[str]:
+def _schedule_conflict_warnings(
+    day: DayPlan,
+    legs: list[Leg],
+    mode_label: str,
+    time_origins: dict[str, str] | None = None,
+) -> list[str]:
     """检查相邻站点的时刻表冲突；只告警，不改站点时间、停留时长或日期假设。
 
     - 有真实交通耗时时（地图可用且路线为 navigation），检查“停留结束 + 交通
@@ -2486,6 +2662,11 @@ def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) 
       是否已经和下一站重叠，不凭空推算交通耗时；
     - 下一站时间早于上一站时，不再依赖停留时长才判断，也不会静默：统一给
       “时间顺序或跨日待确认”，有停留/交通数据时再说明按次日假设的核对结果；
+    - ``time_origins`` 标记为占位（或来源未知）的时间不能当真实时刻用：已知
+      占位时，提醒必须写明“占位时间，实际时间待确认”，只做假设性推算，不说
+      “赶不上”“两站时间重叠”这类确定性结论；来源未记录时同样不把记录时刻
+      当成已确认事实，并说明无法逐站识别占位值；两站都是模型给出的真实时间
+      时保持原措辞；
     - 每对相邻站点最多一条提醒；跨过 24:00 的时间按“次日 / 第三天”标注。
     """
 
@@ -2507,6 +2688,10 @@ def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) 
             continue
         stay = current.duration_minutes
         travel = travel_by_pair.get((current.id, following.id))
+        caveat = _time_source_caveat(current, following, time_origins)
+        caveat_is_placeholder = _pair_has_placeholder_origin(
+            current, following, time_origins
+        )
 
         if planned < start:
             # 不能等确认停留时长才提醒：11:00 -> 10:00 即使两站都没写时长，
@@ -2521,6 +2706,8 @@ def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) 
                     stay=stay,
                     travel=travel,
                     mode_label=mode_label,
+                    caveat=caveat,
+                    caveat_is_placeholder=caveat_is_placeholder,
                 )
             )
             continue
@@ -2533,6 +2720,16 @@ def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) 
             stay_end = start + stay
             if stay_end <= planned:
                 continue
+            if caveat is not None:
+                warnings.append(
+                    f"{SCHEDULE_CONFLICT_PREFIX}{day_label} {caveat}。"
+                    f"若按记录的 {current.time} 起停留 {stay} 分钟推算，"
+                    f"会到 {_schedule_time_label(stay_end)} 才结束，"
+                    f"不早于下一站 {following.name} 记录的 {_schedule_time_label(planned)}；"
+                    "这只是按记录时刻的假设性推算，不能确认两站实际重叠，"
+                    "请先确认站点时间，再调整停留时长或出发时间；未改动站点时间。"
+                )
+                continue
             warnings.append(
                 f"{SCHEDULE_CONFLICT_PREFIX}{day_label} {current.name} {current.time} "
                 f"起停留 {stay} 分钟，到 {_schedule_time_label(stay_end)} 才结束，"
@@ -2543,6 +2740,20 @@ def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) 
 
         arrival = start + stay + travel
         if arrival <= planned:
+            continue
+        if caveat is not None:
+            text = (
+                f"{SCHEDULE_CONFLICT_PREFIX}{day_label} {caveat}。"
+                f"若按记录时刻推算，{current.name} {current.time} 起停留 {stay} 分钟，"
+                f"{mode_label}到 {following.name} 约需 {int(round(travel))} 分钟，"
+                f"到达约为 {_schedule_time_label(round(arrival))}，"
+                f"晚于下一站记录的 {_schedule_time_label(planned)}；"
+                "由于上述时间还不能确认，不能据此判定赶不上，请先确认站点时间；"
+                "未改动站点时间。"
+            )
+            if arrival >= _MINUTES_PER_DAY and planned < _MINUTES_PER_DAY:
+                text += "若下一站实际指次日，日期也需一并确认。"
+            warnings.append(text)
             continue
         text = (
             f"{SCHEDULE_CONFLICT_PREFIX}{day_label} {current.name} {current.time} "
@@ -2566,6 +2777,11 @@ async def enrich_trip_with_map(
 ) -> TripPlan:
     """给行程补坐标和路线；任何上游失败都降级而不是伪造成真实导航。"""
 
+    # 时间来源记录跟着行程对象走（model_copy / deepcopy 都保留）。经 JSON 重建的
+    # TripPlan 私有记录会丢失：有公开的默认时间说明时整趟按“占位但无法对应”
+    # 处理；连说明也没有时按“来源未知”处理。两种都不会把未知时刻当成确定事实。
+    time_origins = _trip_time_origins(trip)
+
     # 上一次推算出的冲突提醒（可能是归一化阶段无地图时生成的）先摘掉，
     # 最后按本次实际拿到的路线耗时统一重算，保证同一对站点只提醒一次。
     warnings = _strip_generated_warnings(trip.warnings)
@@ -2573,7 +2789,11 @@ async def enrich_trip_with_map(
     if amap is None or not amap.configured:
         warnings.append(NO_MAP_KEY_WARNING)
         for day in trip.days:
-            warnings.extend(_schedule_conflict_warnings(day, day.legs, mode_label))
+            warnings.extend(
+                _schedule_conflict_warnings(
+                    day, day.legs, mode_label, time_origins=time_origins
+                )
+            )
         return trip.model_copy(update={"warnings": dedupe_warnings(warnings)})
 
     all_stops = [stop for day in trip.days for stop in day.stops]
@@ -2808,7 +3028,12 @@ async def enrich_trip_with_map(
 
     for day in new_days:
         warnings.extend(
-            _schedule_conflict_warnings(day, legs_by_day.get(day.day, []), mode_label)
+            _schedule_conflict_warnings(
+                day,
+                legs_by_day.get(day.day, []),
+                mode_label,
+                time_origins=time_origins,
+            )
         )
 
     final_days = [

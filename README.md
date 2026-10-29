@@ -229,7 +229,7 @@ curl -X POST http://127.0.0.1:8000/api/trips/plan \
 .venv/bin/python -m pytest tests/ -q
 ```
 
-测试文件（按模块划分，新增测试随代码补进清单即可）：`test_coordinates.py`（坐标转换）、`test_amap_client.py`（高德客户端）、`test_itinerary.py`（行程归一化/降级/提示词）、`test_map_resilience.py`（地图数据可信度与降级回归）、`test_map_timeout.py`（地图增强独立超时、客户端关闭与配置回退）、`test_route_quality.py`（异常几何不得以 navigation 输出、时间冲突告警）、`test_api.py`（FastAPI 接口与降级行为）、`test_api_compatibility.py`（兼容旧字段）、`test_mcp_runtime.py`（MCP 配置解析、跨目录启动、真实 stdio 握手）、`test_calculator_security.py` 与 `test_write_security.py`（计算器沙箱与文件写入安全）。
+测试文件（按模块划分，新增测试随代码补进清单即可）：`test_coordinates.py`（坐标转换）、`test_amap_client.py`（高德客户端）、`test_itinerary.py`（行程归一化/降级/提示词）、`test_map_resilience.py`（地图数据可信度与降级回归）、`test_map_timeout.py`（地图增强独立超时、客户端关闭与配置回退）、`test_route_quality.py`（异常几何不得以 navigation 输出、时间冲突告警）、`test_schedule_safety.py`（无地图/超时下的时刻表冲突、占位时间与来源丢失后的措辞、提醒上限与防伪）、`test_api.py`（FastAPI 接口与降级行为）、`test_api_compatibility.py`（兼容旧字段）、`test_mcp_runtime.py`（MCP 配置解析、跨目录启动、真实 stdio 握手）、`test_calculator_security.py` 与 `test_write_security.py`（计算器沙箱与文件写入安全）。
 
 前端测试（vitest，测试文件在 `frontend/src/__tests__/`，覆盖 App、ItineraryList、TripMap 集成与 api、format、mapData、tileStatus 单测）：
 
@@ -300,6 +300,7 @@ pnpm preview       # 本地预览 dist 产物
 要点：
 
 - 行程规划接口由 `travel_itinerary.py` 负责领域逻辑：模型 JSON → `TripPlan` 契约校验 → 高德地理编码/POI/路线增强 → 输出统一 WGS84。任何上游失败都降级并在 `warnings` 里说明，不伪造数据。
+- 归一化阶段无法解析的 `time` 会被换成 09:00 起的占位时间，并在 `warnings` 里说明。时间来源随 `TripPlan` 以私有属性在内部传递（不进 JSON schema、`model_dump` 或响应），地图增强重算冲突时据此判断：涉及占位时间的提醒写明「占位时间，实际时间待确认」，只做假设性推算，不下「赶不上」「两站时间重叠」的结论；模型真实给出的时间（包括合法的 09:00）仍按原来的确定性/跨日语义提醒。模型自带的站点 id 不参与归属，归一化按天重新生成 `stop-dNN-MM`，所以两天写同一个 id 也不会把占位状态串到另一天。行程经 JSON 往返重建后私有来源会丢失：公开提醒里还有默认时间说明时，整趟按「含占位但无法对应到具体站点」保守措辞；连说明也没有（旧数据或被提醒上限截断）时按「来源未知」处理，提醒里直接写明无法逐站识别、若含占位值则实际时间待确认，并保留按次日假设的核对。站点时间、停留时长与公开字段不变，API 契约不受影响。
 - 规划 Agent 被限制为只输出 JSON，且过滤掉了文件读写类工具（`is_planner_safe_tool`），天气等其余 MCP 工具仍在它的工具列表里，是否调用由模型决定；用户输入作为数据包裹在提示词里，只能降低提示注入风险，不是绝对防护。
 - 未配置 `DASHSCOPE_API_KEY` 时服务仍启动；`servers_config.json` 里写死的 venv Python 路径不存在时，api_server 会自动回退到当前解释器（CLI 侧由 mcp_runtime.py 做同样的解析，见「CLI 入口」）。
 
