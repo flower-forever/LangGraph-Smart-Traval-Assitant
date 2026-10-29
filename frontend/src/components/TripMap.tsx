@@ -4,14 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import type { TripDay, TripStop } from '../lib/api'
 import { buildDayMapData, type DayMapData } from '../lib/mapData'
 import { osmSearchUrl, displayTime } from '../lib/format'
-import {
-  TILE_STATS_INITIAL,
-  onTileLoadStart,
-  onTileSettled,
-  tileStateOf,
-  type TileState,
-  type TileStats,
-} from '../lib/tileStatus'
+import { createTileWatch, type TileState, type TileWatch } from '../lib/tileStatus'
 
 interface TripMapProps {
   day: TripDay
@@ -86,6 +79,7 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
   const markersRef = useRef<Map<string, L.Marker>>(new Map())
   const popupsRef = useRef<Map<string, L.Popup>>(new Map())
   const onSelectRef = useRef(onSelectStop)
+  const tileWatchRef = useRef<TileWatch | null>(null)
   const [tileState, setTileState] = useState<TileState>('loading')
 
   const data: DayMapData = useMemo(() => buildDayMapData(day), [day])
@@ -112,24 +106,33 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
     mapRef.current = map
     layerRef.current = L.layerGroup().addTo(map)
 
-    let stats: TileStats = TILE_STATS_INITIAL
     setTileState('loading')
-    const applyStats = (next: TileStats) => {
-      stats = next
-      setTileState(tileStateOf(next))
-    }
+    // 瓦片状态由 watchdog 统一结算：只有 start、始终等不到 load/error 时也要给出结论
+    const watch = createTileWatch(setTileState)
+    tileWatchRef.current = watch
 
     const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> 贡献者',
     })
-    // 每个瓦片结束（成功或失败）都结算一次：最后一个瓦片结束时必须给出结论
-    tiles.on('tileloadstart', () => applyStats(onTileLoadStart(stats)))
-    tiles.on('tileload', () => applyStats(onTileSettled(stats, 'load')))
-    tiles.on('tileerror', () => applyStats(onTileSettled(stats, 'error')))
+    // 每个事件都把瓦片身份（TileEvent.tile + coords）转给 watchdog：
+    // 只有仍在途的那一个瓦片第一次给出结果才记账，重复或迟到的同瓦片事件不会
+    // 把别的在途瓦片的 pending 扣掉。
+    tiles.on('tileloadstart', (e) => watch.handleStart(e))
+    tiles.on('tileload', (e) => watch.handleSettled('load', e))
+    tiles.on('tileerror', (e) => watch.handleSettled('error', e))
+    // 缩放/平移会卸载旧瓦片：已成功的那些只是常规清理，不能拿来扣在途计数
+    tiles.on('tileunload', (e) => watch.handleUnload(e))
+    // 换 zoom 时 Leaflet 会 abort 在途瓦片，只发 tileabort 不发 tileunload；
+    // 不跟着取消，这些瓦片会一直挂着，等它们的 9 秒预算到了就误报超时
+    tiles.on('tileabort', (e) => watch.handleAbort(e))
+    // 底图层被移除后不再结算，避免卸载之后还回调
+    tiles.on('remove', () => watch.dispose())
     tiles.addTo(map)
 
     return () => {
+      watch.dispose()
+      if (tileWatchRef.current === watch) tileWatchRef.current = null
       map.remove()
       mapRef.current = null
       layerRef.current = null
@@ -143,6 +146,9 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
     const map = mapRef.current
     const layer = layerRef.current
     if (!map || !layer) return
+
+    // 换天 / 重新适配视野：作废上一屏的超时计时；还有在途瓦片就从现在重新计时
+    tileWatchRef.current?.resetForViewChange()
 
     layer.clearLayers()
     markersRef.current.clear()
@@ -250,6 +256,11 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
         {!status && tileState === 'partial' && (
           <p className="map-status-note" role="status">
             部分地图瓦片加载失败，底图可能不完整；站点与路线不受影响。
+          </p>
+        )}
+        {!status && tileState === 'stalled' && (
+          <p className="map-status-note" role="status">
+            底图加载超时，底图可能暂时不可用；站点、路线和文字行程仍可查看。平移或缩放地图会再次尝试加载。
           </p>
         )}
       </div>
