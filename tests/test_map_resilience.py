@@ -732,3 +732,302 @@ def test_cancelled_error_is_not_swallowed_as_a_degraded_stop():
 
     with pytest.raises(asyncio.CancelledError):
         run(build_agent_trip(make_payload([stop("断桥残雪")]), make_request(), CancelledAMap()))
+
+
+# ==================== POI 错店：不覆盖用户地址、不输出虚假精确定位 ====================
+
+
+class WrongBranchPoiAMap:
+    """POI 只会搜到另一家同品牌门店；用户自己写的门牌地址是准确的。"""
+
+    configured = True
+
+    def __init__(self):
+        self.geocode_calls = []
+        self.route_calls = 0
+
+    async def search_poi(self, keywords, *, city=None):
+        return GeoResult(
+            location=Coordinate(lng=120.1630, lat=30.2760),
+            formatted_address="杭州市下城区武林广场1号如家酒店（武林广场店）",
+            name="如家酒店（武林广场店）",
+            city="杭州市",
+            district="下城区",
+        )
+
+    async def geocode(self, address, *, city=None):
+        self.geocode_calls.append(address)
+        return GeoResult(
+            location=Coordinate(lng=120.1300, lat=30.2740),
+            formatted_address="杭州市西湖区文三路100号",
+            level="门牌号",
+            city="杭州市",
+        )
+
+    async def route(self, origin, destination, mode):
+        self.route_calls += 1
+        return route_result(origin, destination)
+
+
+def test_wrong_branch_poi_does_not_override_user_address():
+    fake = WrongBranchPoiAMap()
+    trip = run(
+        build_agent_trip(
+            make_payload(
+                [
+                    stop("如家酒店（西湖店）", "杭州市西湖区文三路100号"),
+                    stop("西湖断桥", "杭州市西湖区北山街", time="10:30"),
+                ]
+            ),
+            make_request(),
+            fake,
+        )
+    )
+
+    first = trip.days[0].stops[0]
+    # 用户地址里的门牌号仍然生效，没有被另一家门店的地址覆盖。
+    assert first.address == "杭州市西湖区文三路100号"
+    assert "武林" not in first.address
+    # 坐标来自用户地址的地理编码，不是武林广场店。
+    expected = gcj02_to_wgs84(120.13, 30.274)
+    assert first.location is not None
+    assert first.location.lng == pytest.approx(expected[0], abs=1e-6)
+    assert first.location.lat == pytest.approx(expected[1], abs=1e-6)
+    assert fake.geocode_calls and fake.geocode_calls[0] == "杭州市西湖区文三路100号"
+
+
+class WrongBranchEverywhereAMap(WrongBranchPoiAMap):
+    """连名称地理编码都只会返回错误门店，用来验证不会硬凑坐标。"""
+
+    async def search_poi(self, keywords, *, city=None):
+        if "如家" not in keywords:
+            return GeoResult(
+                location=Coordinate(lng=120.1450, lat=30.2570),
+                formatted_address="杭州市西湖区北山街",
+                name=keywords,
+                city="杭州市",
+                district="西湖区",
+            )
+        return await super().search_poi(keywords, city=city)
+
+    async def geocode(self, address, *, city=None):
+        self.geocode_calls.append(address)
+        if "如家" not in address:
+            return GeoResult(
+                location=Coordinate(lng=120.1450, lat=30.2570),
+                formatted_address="杭州市西湖区北山街",
+                level="兴趣点",
+                city="杭州市",
+            )
+        return GeoResult(
+            location=Coordinate(lng=120.1630, lat=30.2760),
+            formatted_address="杭州市下城区武林广场1号如家酒店（武林广场店）",
+            level="兴趣点",
+            city="杭州市",
+        )
+
+    async def route(self, origin, destination, mode):  # pragma: no cover
+        self.route_calls += 1
+        raise AssertionError("没有可信坐标时不应请求路线")
+
+
+def test_unconfirmed_branch_keeps_null_location_and_warns():
+    fake = WrongBranchEverywhereAMap()
+    trip = run(
+        build_agent_trip(
+            make_payload(
+                [
+                    stop("如家酒店（西湖店）"),
+                    stop("西湖断桥", "杭州市西湖区北山街", time="10:30"),
+                ]
+            ),
+            make_request(),
+            fake,
+        )
+    )
+
+    first = trip.days[0].stops[0]
+    assert first.location is None, "不同门店的坐标不能被当成用户指定的门店"
+    assert first.address == "", "没有可信结果时不应写入别家门店的地址"
+    assert fake.route_calls == 0
+
+    joined = " ".join(trip.warnings)
+    assert "无法通过高德获取可信坐标" in joined
+    assert "门店/分店标识不一致" in joined
+    # 站点数据里不能出现别家门店的地址或坐标（warnings 里解释原因时可以提到店名）。
+    wrong = gcj02_to_wgs84(120.163, 30.276)
+    for stop_data in trip.model_dump(mode="json")["days"][0]["stops"]:
+        assert "武林广场" not in stop_data["address"]
+        if stop_data["location"] is not None:
+            assert stop_data["location"]["lng"] != pytest.approx(wrong[0], abs=1e-6)
+    assert all(
+        stop.location is None
+        for stop in trip.days[0].stops
+        if stop.name.startswith("如家")
+    )
+
+
+def test_directionally_different_station_is_not_used():
+    """杭州东站不能拿到杭州西站的坐标，哪怕高德首条就是西站。"""
+
+    class WrongStationAMap:
+        configured = True
+
+        def __init__(self):
+            self.route_calls = 0
+
+        async def search_poi(self, keywords, *, city=None):
+            return GeoResult(
+                location=Coordinate(lng=120.0300, lat=30.2900),
+                formatted_address="杭州市余杭区杭州西站",
+                name="杭州西站",
+                city="杭州市",
+            )
+
+        async def geocode(self, address, *, city=None):
+            raise AMapError("没有匹配的地点", code="geocode_not_found")
+
+        async def route(self, origin, destination, mode):  # pragma: no cover
+            self.route_calls += 1
+            raise AssertionError("没有可信坐标时不应请求路线")
+
+    fake = WrongStationAMap()
+    trip = run(
+        build_agent_trip(
+            make_payload([stop("杭州东站", "杭州东站")]),
+            make_request(),
+            fake,
+        )
+    )
+
+    assert trip.days[0].stops[0].location is None
+    assert fake.route_calls == 0
+    assert "方位标识不一致" in " ".join(trip.warnings)
+
+
+# ==================== POI 边界：门店后缀、入口、括号限定词 ====================
+
+
+class FixedPoiAMap:
+    """POI 搜索固定返回一条结果；退回地理编码即报错，用来确认坐标来源。"""
+
+    configured = True
+
+    def __init__(self, name, address):
+        self.name = name
+        self.address = address
+        self.route_calls = 0
+
+    async def search_poi(self, keywords, *, city=None):
+        return poi(self.name, 120.1600, 30.2700, address=self.address)
+
+    async def geocode(self, address, *, city=None):  # pragma: no cover
+        raise AssertionError(f"不该退回地理编码：{address}")
+
+    async def route(self, origin, destination, mode):
+        self.route_calls += 1
+        return route_result(origin, destination)
+
+
+def test_store_branch_suffix_variants_are_accepted():
+    """全聚德（东直门店）能拿到高德返回的全聚德(东直门分店) 坐标。"""
+
+    fake = FixedPoiAMap("全聚德(东直门分店)", "杭州市上城区东直门")
+    trip = run(
+        build_agent_trip(
+            make_payload([stop("全聚德（东直门店）")]),
+            make_request(),
+            fake,
+        )
+    )
+
+    first = trip.days[0].stops[0]
+    assert first.location is not None, trip.warnings
+    assert first.address == "杭州市上城区东直门"
+    assert "无法通过高德获取可信坐标" not in " ".join(trip.warnings)
+
+
+def test_same_attraction_entrance_is_accepted():
+    """搜索“雷峰塔”时拿到“雷峰塔东门”的坐标，不应被当成另一个错点。"""
+
+    fake = FixedPoiAMap("雷峰塔东门", "杭州市西湖区南山路")
+    trip = run(
+        build_agent_trip(make_payload([stop("雷峰塔")]), make_request(), fake)
+    )
+
+    first = trip.days[0].stops[0]
+    assert first.location is not None, trip.warnings
+    assert first.address == "杭州市西湖区南山路"
+
+
+def test_unspecified_branch_is_not_invented():
+    """用户只说“全聚德”，高德返回某一家分店时不能直接当成确定位置。"""
+
+    fake = FixedPoiAMap("全聚德（西湖店）", "杭州市西湖区文三路1号")
+    trip = run(
+        build_agent_trip(make_payload([stop("全聚德")]), make_request(), fake)
+    )
+
+    first = trip.days[0].stops[0]
+    assert first.location is None, "未指定分店却用了某一家分店的坐标"
+    assert first.address == "", "未指定分店却写入了某一家分店的地址"
+    joined = " ".join(trip.warnings)
+    assert "无法通过高德获取可信坐标" in joined
+    assert "没有标出" in joined
+
+
+def test_unspecified_branch_does_not_fall_back_to_name_geocode():
+    """真实客户端在 POI 只匹配到某一家分店时，不能再用名称地理编码锁定它。"""
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        calls.append(path)
+        if path == "/v3/place/text":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "pois": [
+                        {
+                            "name": "全聚德（王府井店）",
+                            "location": "120.160000,30.270000",
+                            "cityname": "杭州市",
+                            "adname": "上城区",
+                            "address": "王府井大街1号",
+                        }
+                    ],
+                },
+            )
+        if path == "/v3/geocode/geo":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "geocodes": [
+                        {
+                            "formatted_address": "杭州市上城区王府井大街1号全聚德（王府井店）",
+                            "location": "120.160000,30.270000",
+                            "level": "兴趣点",
+                            "city": "杭州市",
+                        }
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected path {path}")
+
+    async def enrich():
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            amap = AMapClient("fixture-key", client=http_client)
+            return await build_agent_trip(
+                make_payload([stop("全聚德")]), make_request(), amap
+            )
+
+    trip = run(enrich())
+
+    assert trip.days[0].stops[0].location is None
+    assert "/v3/geocode/geo" not in calls, "未指定分店时不应退回名称地理编码"
+    joined = " ".join(trip.warnings)
+    assert "无法确认是同一处" in joined

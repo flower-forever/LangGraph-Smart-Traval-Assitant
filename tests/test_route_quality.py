@@ -33,6 +33,7 @@ import pytest
 from travel_itinerary import (
     AMapClient,
     AMapError,
+    SCHEDULE_ORDER_PREFIX,
     Coordinate,
     DayPlan,
     Stop,
@@ -592,3 +593,81 @@ def test_no_route_duration_means_no_conflict_warning():
     )
     hit = _find_time_conflict_warning(trip.warnings)
     assert hit is None, f"没有真实 route 耗时却报了时间冲突: {trip.warnings!r}"
+
+
+# ==================== 问题 4：地图可用时的冲突文案细节 ====================
+
+
+def test_travel_conflict_names_the_day_and_reports_once_per_pair():
+    """停留结束就已晚点、再叠加真实步行耗时：同一对站点只提醒一次，且说明第几天。"""
+
+    handler = _beijing_amap_handler(polyline=_clean_polyline(), duration_seconds="1200")
+    trip = run(
+        _enrich_with_handler(
+            _beijing_trip(a_time="09:00", a_minutes=30, b_time="09:20"),
+            _beijing_request(),
+            handler,
+        )
+    )
+
+    conflicts = [w for w in trip.warnings if "时间冲突" in w]
+    assert len(conflicts) == 1, (
+        f"同一对站点被提醒了 {len(conflicts)} 次：{trip.warnings!r}"
+    )
+    assert "第1天" in conflicts[0]
+    assert STOP_A_NAME in conflicts[0] and STOP_B_NAME in conflicts[0]
+    # 有真实耗时时要写出交通时间，而不是只有重叠。
+    assert "约需 20 分钟" in conflicts[0]
+    # 不编造修改。
+    assert [stop.time for stop in trip.days[0].stops] == ["09:00", "09:20"]
+    assert trip.days[0].stops[0].duration_minutes == 30
+
+
+def test_cross_midnight_travel_conflict_shows_next_day_labels():
+    """23:30 停留 30 分钟再步行 20 分钟，抵达已是次日 00:20，须按次日表述。"""
+
+    handler = _beijing_amap_handler(polyline=_clean_polyline(), duration_seconds="1200")
+    trip = run(
+        _enrich_with_handler(
+            _beijing_trip(a_time="23:30", a_minutes=30, b_time="00:10"),
+            _beijing_request(),
+            handler,
+        )
+    )
+
+    conflicts = [w for w in trip.warnings if "时间冲突" in w]
+    assert len(conflicts) == 1, trip.warnings
+    conflict = conflicts[0]
+    assert "次日 00:20" in conflict, f"抵达时间没有标成次日：{conflict}"
+    assert "次日 00:10" in conflict, f"计划时间没有标成次日：{conflict}"
+    # 站点时间本身不能被改写。
+    assert [stop.time for stop in trip.days[0].stops] == ["23:30", "00:10"]
+
+
+def test_cross_midnight_without_conflict_is_not_hard_conflict_but_not_silent():
+    """23:00 停留 30 分钟、下一站 00:30 时间充裕：不报硬冲突，但仍提示日期待确认。"""
+
+    handler = _beijing_amap_handler(polyline=_clean_polyline(), duration_seconds="600")
+    trip = run(
+        _enrich_with_handler(
+            _beijing_trip(a_time="23:00", a_minutes=30, b_time="00:30"),
+            _beijing_request(),
+            handler,
+        )
+    )
+
+    conflicts = [w for w in trip.warnings if "时间冲突" in w]
+    assert conflicts == [], f"跨午夜但时间充裕被误报成硬冲突：{trip.warnings!r}"
+
+    # 倒序时间不能静默：要出现“时间顺序或跨日待确认”，并说明按次日假设可以衔接。
+    notices = [w for w in trip.warnings if w.startswith(SCHEDULE_ORDER_PREFIX)]
+    assert len(notices) == 1, f"倒序时间被静默了：{trip.warnings!r}"
+    notice = notices[0]
+    assert "第1天" in notice
+    assert "按次日假设" in notice
+    assert "次日 00:30" in notice
+    assert "可以衔接" in notice
+
+    # 只提示，不改源数据。
+    assert [stop.time for stop in trip.days[0].stops] == ["23:00", "00:30"]
+    assert trip.days[0].stops[0].duration_minutes == 30

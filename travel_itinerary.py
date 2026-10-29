@@ -72,6 +72,15 @@ MAX_STOPS_PER_DAY = 8
 MAX_TRIP_WARNINGS = 40
 MAX_AGENT_TEXT = 500_000
 
+# 时间冲突提醒的固定前缀。归一化阶段（无地图）与地图增强阶段（有真实交通耗时）
+# 用同一个前缀生成提醒，增强阶段据此先摘掉旧提醒再重算，避免同一对站点重复提醒。
+SCHEDULE_CONFLICT_PREFIX = "时间冲突："
+# 下一站时间早于上一站时，仅凭 time 字符串无法确认是同日顺序写反还是跨日安排。
+# 这类情况单独用“待确认”前缀，避免把假设说成已经核实的事实。
+SCHEDULE_ORDER_PREFIX = "时间顺序或跨日待确认："
+# 超过 MAX_TRIP_WARNINGS 时的汇总行前缀；同样在重算前摘掉，保证重复调用幂等。
+WARNING_SUMMARY_PREFIX = "提醒数量已达上限，另有"
+
 DEFAULT_AMAP_BASE_URL = "https://restapi.amap.com"
 NO_MAP_KEY_WARNING = (
     "未配置 AMAP_API_KEY：未获取真实坐标与导航路线。所有 location 保持 null，"
@@ -367,8 +376,8 @@ def _coerce_duration(value: Any) -> int | None:
     return int(number)
 
 
-def dedupe_warnings(warnings: list[str]) -> list[str]:
-    """保序去重并限制 warnings 数量。"""
+def _dedupe_warning_texts(warnings: list[str]) -> list[str]:
+    """保序去重 + 清洗，不做数量截断。"""
 
     result: list[str] = []
     seen: set[str] = set()
@@ -378,9 +387,273 @@ def dedupe_warnings(warnings: list[str]) -> list[str]:
             continue
         seen.add(text)
         result.append(text)
-        if len(result) >= MAX_TRIP_WARNINGS:
-            break
     return result
+
+
+# 提醒分档。数量超上限时按档位保留，避免大量同质降级提示把关键信息挤掉。
+# 字段填充/修正说明（例如“哪些 time 是默认值”）排在关键地图告警之后，
+# 但不能和普通提示一起被丢掉，否则用户会以为模型给出的时间都是真的。
+_WARNING_PRIORITY_MODEL_NOTICE = 0
+_WARNING_PRIORITY_MAP_DEGRADED = 1
+# 站点级地图降级提示可能很多（每天每站一条）；它和字段说明同档，
+# 但字段说明在归一化阶段先生成，稳定排序下会先保留，不会被几十条地图提示挤掉。
+_WARNING_PRIORITY_MAP_STOP = 2
+_WARNING_PRIORITY_FIELD_DISCLAIMER = 2
+_WARNING_PRIORITY_TRAFFIC_CONFLICT = 3
+_WARNING_PRIORITY_SCHEDULE_CONFLICT = 4
+_WARNING_PRIORITY_SCHEDULE_ORDER = 5
+_WARNING_PRIORITY_OTHER = 6
+
+# 真实交通耗时冲突的措辞里一定带“才能抵达”，用它把“有真实耗时”与
+# “只有停留时间重叠”两类冲突区分开，前者排得更靠前。
+_TRAFFIC_CONFLICT_MARKER = "才能抵达"
+
+_MAP_DEGRADED_PREFIXES = (
+    "高德地图",
+    "未配置 AMAP_API_KEY",
+    "地图数据超时",
+    "地图数据增强失败",
+)
+# 站点/路段级的地图降级提示措辞不固定，用片段识别，同样受上限保护。
+_MAP_DEGRADED_FRAGMENTS = (
+    "无法通过高德获取可信坐标",
+    "地图数据解析发生内部异常",
+)
+
+# 归一化阶段会改写模型字段（默认时间、截断天数、补齐空行程等）。
+# 这些说明必须优先保留：用户需要知道哪些值是占位/修正值，而不是模型原样输出。
+# 只按生成模板的开头匹配，避免站点名恰好包含“已截断”等字样时被误分档。
+_FIELD_DISCLAIMER_PREFIXES = (
+    "部分站点 time",
+    "模型返回了",
+    "模型只返回了",
+    "部分 day 条目",
+)
+_FIELD_DISCLAIMER_RE = re.compile(
+    r"^第\d+天(?:站点超过 \d+ 个，已截断。|没有可用站点，已保留为空行程。)$"
+)
+
+
+def _is_field_disclaimer(text: str) -> bool:
+    return (
+        text.startswith(_FIELD_DISCLAIMER_PREFIXES)
+        or _FIELD_DISCLAIMER_RE.match(text) is not None
+    )
+
+
+def _warning_priority(text: str) -> int:
+    if text == GENERATED_CONTENT_WARNING:
+        return _WARNING_PRIORITY_MODEL_NOTICE
+    if text.startswith(_MAP_DEGRADED_PREFIXES):
+        return _WARNING_PRIORITY_MAP_DEGRADED
+    if any(fragment in text for fragment in _MAP_DEGRADED_FRAGMENTS):
+        return _WARNING_PRIORITY_MAP_STOP
+    if _is_field_disclaimer(text):
+        return _WARNING_PRIORITY_FIELD_DISCLAIMER
+    if text.startswith(SCHEDULE_CONFLICT_PREFIX):
+        if _TRAFFIC_CONFLICT_MARKER in text:
+            return _WARNING_PRIORITY_TRAFFIC_CONFLICT
+        return _WARNING_PRIORITY_SCHEDULE_CONFLICT
+    if text.startswith(SCHEDULE_ORDER_PREFIX):
+        return _WARNING_PRIORITY_SCHEDULE_ORDER
+    return _WARNING_PRIORITY_OTHER
+
+
+def _warning_kind(text: str) -> str:
+    """汇总行里用的粗分类；只用于统计被省略的条数。"""
+
+    if text == GENERATED_CONTENT_WARNING:
+        return "模型提示"
+    if text.startswith(_MAP_DEGRADED_PREFIXES) or any(
+        fragment in text for fragment in _MAP_DEGRADED_FRAGMENTS
+    ):
+        return "地图降级"
+    if _is_field_disclaimer(text):
+        return "字段说明"
+    priority = _warning_priority(text)
+    if priority in (
+        _WARNING_PRIORITY_TRAFFIC_CONFLICT,
+        _WARNING_PRIORITY_SCHEDULE_CONFLICT,
+    ):
+        return "时间冲突"
+    if priority == _WARNING_PRIORITY_SCHEDULE_ORDER:
+        return "时间待确认"
+    return "其他"
+
+
+_KIND_ORDER = (
+    "时间冲突",
+    "时间待确认",
+    "字段说明",
+    "地图降级",
+    "模型提示",
+    "其他",
+)
+
+# 上限汇总行的严格格式。只有完整匹配的汇总才会被当作“已省略 N 条”的账本，
+# 其他以同样前缀开头的文本（例如模型写出的伪造汇总）一律不参与计数。
+_WARNING_SUMMARY_RE = re.compile(
+    r"^提醒数量已达上限，另有 (\d+) 条提醒（(.+?)）未展开"
+    r"(?:，涉及([^；]+?))?；已按重要程度优先保留[^；]+，"
+    r"共展示 (\d+) 条，[^；]+。$"
+)
+
+
+def _parse_warning_summary(text: str) -> tuple[dict[str, int], set[int]] | None:
+    """解析上一次生成的汇总行；格式不完整或数字对不上就返回 ``None``。"""
+
+    match = _WARNING_SUMMARY_RE.match(text)
+    if match is None:
+        return None
+    total = int(match.group(1))
+    detail = match.group(2)
+    days_text = match.group(3) or ""
+    counts: dict[str, int] = {}
+    for part in detail.split("、"):
+        item = re.fullmatch(r"(.+?) (\d+) 条", part)
+        if item is None:
+            return None
+        kind = item.group(1)
+        count = int(item.group(2))
+        if kind not in _KIND_ORDER or count <= 0:
+            return None
+        counts[kind] = counts.get(kind, 0) + count
+    if not counts or sum(counts.values()) != total:
+        return None
+    days = {int(day_text) for day_text in re.findall(r"第(\d+)天", days_text)}
+    leftover = re.sub(r"第\d+天", "", days_text).replace("、", "").strip()
+    if leftover or any(day < 1 or day > MAX_DAYS for day in days):
+        return None
+    return counts, days
+
+
+def _format_warning_summary(
+    total: int,
+    counts: dict[str, int],
+    days: set[int],
+    shown: int,
+) -> str:
+    detail = "、".join(
+        f"{kind} {counts[kind]} 条" for kind in _KIND_ORDER if counts.get(kind)
+    )
+    day_hint = ""
+    if days:
+        day_hint = "，涉及" + "、".join(f"第{day}天" for day in sorted(days))
+    return (
+        f"{WARNING_SUMMARY_PREFIX} {total} 条提醒（{detail}）未展开{day_hint}；"
+        "已按重要程度优先保留模型提示、字段填充/修正说明、关键地图降级与时间冲突，"
+        f"共展示 {shown} 条，其余以站点时间与路线数据为准。"
+    )
+
+
+def _strip_generated_warnings(warnings: list[str]) -> list[str]:
+    """摘掉上一次推算生成的时间提醒与上限汇总行，便于按最新数据重算。
+
+    汇总行里可能还记着更早被省略的地图降级等非时间提醒。这些条目没有源数据
+    可以重算，直接连汇总一起丢掉会让它们永久消失；因此保留它们的分类计数，
+    只把时间冲突/待确认部分交给后续重算。
+    """
+
+    kept: list[str] = []
+    carried_counts: dict[str, int] = {}
+    carried_days: set[int] = set()
+    for text in warnings:
+        if text.startswith(SCHEDULE_CONFLICT_PREFIX) or text.startswith(
+            SCHEDULE_ORDER_PREFIX
+        ):
+            continue
+        if text.startswith(WARNING_SUMMARY_PREFIX):
+            parsed = _parse_warning_summary(text)
+            if parsed is None:
+                # 无法核对的“汇总”不能当成普通提醒，也不能作为计数依据。
+                continue
+            counts, days = parsed
+            carried_days |= days
+            for kind, count in counts.items():
+                if kind in ("时间冲突", "时间待确认"):
+                    continue
+                carried_counts[kind] = carried_counts.get(kind, 0) + count
+            continue
+        kept.append(text)
+    if carried_counts:
+        kept.append(
+            _format_warning_summary(
+                sum(carried_counts.values()), carried_counts, carried_days, 0
+            )
+        )
+    return kept
+
+
+def _travel_mode_label(mode: str) -> str:
+    return "步行" if mode == "walking" else "驾车"
+
+
+def _map_independent_schedule_warnings(days: list[DayPlan], mode: str) -> list[str]:
+    """在没有地图数据时检查每对相邻站点的时刻表重叠。"""
+
+    mode_label = _travel_mode_label(mode)
+    warnings: list[str] = []
+    for day in days:
+        warnings.extend(_schedule_conflict_warnings(day, day.legs, mode_label))
+    return warnings
+
+
+def dedupe_warnings(warnings: list[str]) -> list[str]:
+    """保序去重并限制 warnings 数量。
+
+    超过 :data:`MAX_TRIP_WARNINGS` 时按档位保留（模型提示、字段填充说明、
+    关键地图降级、真实交通冲突优先），并把被省略的条数写成一条可见的汇总
+    提醒，而不是无声截断、也不能声称冲突已经全部列出。
+
+    再次传入上一次的结果时，旧汇总行会被解析成“已省略”的分类计数继续
+    累计，而不是当成一条普通提醒重新计数；这样多轮追加（例如地图超时）
+    不会把原本隐藏的 11 条冲突误报成 2 条。
+    """
+
+    texts = _dedupe_warning_texts(warnings)
+    carried_counts: dict[str, int] = {}
+    carried_days: set[int] = set()
+    normal: list[str] = []
+    for text in texts:
+        if text.startswith(WARNING_SUMMARY_PREFIX):
+            parsed = _parse_warning_summary(text)
+            if parsed is None:
+                # 伪造/损坏的汇总不能影响计数，也不当成普通提醒展示。
+                continue
+            counts, days = parsed
+            for kind, count in counts.items():
+                carried_counts[kind] = carried_counts.get(kind, 0) + count
+            carried_days |= days
+            continue
+        normal.append(text)
+
+    has_carried = bool(carried_counts)
+    if not has_carried and len(normal) <= MAX_TRIP_WARNINGS:
+        return normal
+
+    ordered = sorted(normal, key=_warning_priority)  # 稳定排序：同档保持原顺序
+    budget = MAX_TRIP_WARNINGS - 1  # 留一格给汇总行
+    kept = ordered[:budget]
+    dropped = ordered[budget:]
+
+    counts = dict(carried_counts)
+    days = set(carried_days)
+    for text in dropped:
+        kind = _warning_kind(text)
+        counts[kind] = counts.get(kind, 0) + 1
+        days.update(
+            day
+            for day in (
+                int(day_text) for day_text in re.findall(r"第(\d+)天", text)
+            )
+            if 1 <= day <= MAX_DAYS
+        )
+
+    if not counts:
+        return _dedupe_warning_texts(kept)
+
+    summary = _format_warning_summary(sum(counts.values()), counts, days, len(kept))
+    return _dedupe_warning_texts([*kept, summary])[:MAX_TRIP_WARNINGS]
 
 
 def stable_trip_id(request: TripPlanRequest) -> str:
@@ -610,6 +883,7 @@ def normalize_agent_payload(
         warnings.append(f"模型只返回了 {len(dict_days)} 天，缺失的天数已用空行程补齐。")
 
     bad_time_count = 0
+    default_time_notes: list[str] = []
     total_stops = 0
     days: list[DayPlan] = []
 
@@ -643,6 +917,10 @@ def normalize_agent_payload(
             normalized_time = _normalize_time(raw_time, len(stops))
             if _TIME_RE.match(_sanitize_text(raw_time, max_length=32, allow_newlines=False)) is None:
                 bad_time_count += 1
+                default_time_notes.append(
+                    f"第{day_number}天 {_sanitize_text(name, max_length=24, allow_newlines=False)}"
+                    f"→{normalized_time}"
+                )
             stops.append(
                 Stop(
                     id=f"stop-d{day_number:02d}-{len(stops) + 1:02d}",
@@ -682,7 +960,13 @@ def normalize_agent_payload(
     if total_stops == 0:
         raise ItineraryParseError("Agent 输出中没有可用的站点名称")
     if bad_time_count:
-        warnings.append("部分站点 time 缺失或格式不是 HH:MM，已使用默认时间。")
+        preview = "、".join(default_time_notes[:5])
+        if len(default_time_notes) > 5:
+            preview += f" 等 {len(default_time_notes)} 处"
+        warnings.append(
+            "部分站点 time 缺失或格式不是 HH:MM，已使用默认时间："
+            f"{preview}。这些是占位时间，不是模型给出的真实时刻，请确认后调整。"
+        )
 
     title = _sanitize_text(data.get("title"), max_length=160, allow_newlines=False)
     summary = _sanitize_text(data.get("summary"), max_length=1200, allow_newlines=True)
@@ -693,6 +977,9 @@ def normalize_agent_payload(
             f"为 {request.travelers} 位旅行者规划的 {request.destination} "
             f"{request.days} 天行程，共 {total_stops} 个站点。"
         )
+
+    # 时刻表重叠与地图无关：没有地图密钥、地图失败或地图总超时时也要提醒。
+    warnings.extend(_map_independent_schedule_warnings(days, request.travel_mode))
 
     trip = TripPlan(
         id=stable_trip_id(request),
@@ -907,6 +1194,152 @@ def _normalize_place_name(value: Any) -> str:
     return re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
 
 
+# 括号里通常是门店/分店/入口这类辨识性补充说明（如家酒店（西湖店））。
+# 归一化会把括号整段丢掉，两处不同门店因此变成同名——所以匹配前要先单独比对括号内容。
+_PAREN_SEGMENT_RE = re.compile(r"[（(]([^）)]*)[）)]")
+_BRANCH_SUFFIXES = ("旗舰店", "分店", "门店", "店")
+
+# 方位 + 设施名构成辨识性标识：杭州东站 / 杭州西站、西门 / 东门、西湖 / 东湖。
+# 只有方位字紧跟这些设施词时才算标识，避免把“西溪湿地”之类的名字误拆。
+_DIRECTION_MARKER_RE = re.compile(
+    r"([东南西北])(航站楼|机场|码头|车站|站|广场|公园|湖|塔|门)"
+)
+
+# 航站楼编号：T1/T2、1号航站楼、第2航站楼都归一到同一个编号。
+_TERMINAL_CODE_RE = re.compile(r"[Tt](\d+)")
+_TERMINAL_CN_RE = re.compile(r"(?:第)?(\d+)\s*号?航站楼")
+# 门店编号：2号店 / 3店 / 5分店。
+_STORE_NUMBER_RE = re.compile(r"(\d+)\s*号?\s*(?:分店|门店|店)")
+
+_MARKER_LABELS = {
+    "branch": "门店/分店",
+    "store_branch": "门店/分店",
+    "direction": "方位",
+    "entrance": "入口",
+    "terminal": "航站楼",
+    "store": "门店编号",
+}
+
+
+def _normalize_branch_marker(inner: str) -> tuple[str, str]:
+    """归一括号内容，返回 ``(标记类别, 标记文本)``。
+
+    门店后缀只去掉“店”这类类型词，不能把“东直门”最后的“门”一起吞掉：
+    “全聚德（东直门店）”和“全聚德（东直门分店）”必须落到同一个“东直门”上。
+    """
+
+    compact = re.sub(r"[\W_]+", "", inner.lower(), flags=re.UNICODE)
+    if not compact:
+        return "", ""
+    if not compact.endswith("店"):
+        return "branch", compact
+    if compact.endswith("门店") and len(compact) > 2:
+        # “东直门店”=“东直门”+“店”；只去掉最后的“店”，保留辨识用的“门”。
+        return "store_branch", compact[:-1]
+    for suffix in _BRANCH_SUFFIXES:
+        if len(compact) > len(suffix) and compact.endswith(suffix):
+            return "store_branch", compact[: -len(suffix)]
+    return "store_branch", compact
+
+
+def _place_markers(value: Any) -> dict[str, set[str]]:
+    """提取能区分同名不同点位的标识：括号店名、方位设施、入口、航站楼号、门店编号。"""
+
+    text = _sanitize_text(value, max_length=160, allow_newlines=False)
+    if not text:
+        return {}
+
+    markers: dict[str, set[str]] = {}
+
+    def add(kind: str, marker: str) -> None:
+        if marker:
+            markers.setdefault(kind, set()).add(marker)
+
+    for inner in _PAREN_SEGMENT_RE.findall(text):
+        kind, marker = _normalize_branch_marker(inner)
+        add(kind, marker)
+
+    compact = re.sub(r"[\W_]+", "", text.lower(), flags=re.UNICODE)
+    for direction, facility in _DIRECTION_MARKER_RE.findall(compact):
+        kind = "entrance" if facility == "门" else "direction"
+        add(kind, f"{direction}{facility}")
+    for code in _TERMINAL_CODE_RE.findall(compact):
+        add("terminal", str(int(code)))
+    for code in _TERMINAL_CN_RE.findall(compact):
+        add("terminal", str(int(code)))
+    for code in _STORE_NUMBER_RE.findall(compact):
+        add("store", str(int(code)))
+    return markers
+
+
+def _all_branch_markers(markers: dict[str, set[str]]) -> set[str]:
+    return markers.get("branch", set()) | markers.get("store_branch", set())
+
+
+def _branch_mentioned(values: set[str], text: str) -> bool:
+    """括号限定词是否已经写在另一侧的全名里（如“西湖（杭州）”与“杭州西湖风景名胜区”）。"""
+
+    normalized = _normalize_place_name(text)
+    if not normalized:
+        return False
+    for value in values:
+        if not value:
+            continue
+        if value in normalized:
+            return True
+        # “杭州市”/“西湖区”这类行政区写法允许去掉后缀再比一次。
+        base = _normalize_admin_name(value)
+        if len(base) >= 2 and base != value and base in normalized:
+            return True
+    return False
+
+
+def _marker_conflict_text(
+    kind: str, left_values: set[str], right_values: set[str]
+) -> str:
+    left_sample = "、".join(sorted(left_values))
+    right_sample = "、".join(sorted(right_values))
+    return (
+        f"{_MARKER_LABELS.get(kind, '地点')}标识不一致"
+        f"（{left_sample} vs {right_sample}）"
+    )
+
+
+def _place_marker_conflict(query: Any, candidate: Any) -> str | None:
+    """只在两侧都带同类标识且完全不重合时判冲突；单侧缺失不当作反对证据。
+
+    返回可读原因，没有明确冲突时返回 ``None``。这里不做“地名不对就判否”的
+    粗粒度字符串假设，避免把正常简称（断桥 vs 断桥残雪）误杀。
+    """
+
+    left = _place_markers(query)
+    right = _place_markers(candidate)
+    if not left or not right:
+        return None
+
+    left_branch = _all_branch_markers(left)
+    right_branch = _all_branch_markers(right)
+    if left_branch and right_branch and not (left_branch & right_branch):
+        # 一般括号限定词（如“杭州”）可能已经写在候选全名里；
+        # 但门店/分店两侧都点名时，必须精确对上，不能用包含关系合并不同分店。
+        both_store = bool(left.get("store_branch")) and bool(right.get("store_branch"))
+        contained = _branch_mentioned(left_branch, candidate) or _branch_mentioned(
+            right_branch, query
+        )
+        if both_store or not contained:
+            return _marker_conflict_text("branch", left_branch, right_branch)
+
+    for kind in ("direction", "entrance", "terminal", "store"):
+        left_values = left.get(kind)
+        right_values = right.get(kind)
+        if not left_values or not right_values:
+            continue
+        if left_values & right_values:
+            continue
+        return _marker_conflict_text(kind, left_values, right_values)
+    return None
+
+
 def _strip_generic_place_suffix(text: str) -> str:
     for suffix in _GENERIC_PLACE_SUFFIXES:
         if len(text) > len(suffix) and text.endswith(suffix):
@@ -921,6 +1354,65 @@ def _generic_place_category(text: str) -> str:
     return ""
 
 
+# 候选项自带方位/航站楼/门店编号、用户却没提时，同样是“没锁定具体点位”。
+_CANDIDATE_ONLY_STRICT_KINDS = ("direction", "terminal", "store")
+
+
+def _place_markers_missing(query: Any, candidate: Any) -> bool:
+    """辨识标识只出现在一侧时，无法确认是同一处，不当作可信匹配。
+
+    覆盖几类真实反例：
+    - 用户点名门店而候选没写（如家酒店（西湖店） vs 如家酒店）；
+    - 候选锁定到具体门店而用户只说品牌（全聚德 vs 全聚德（王府井店）），
+      不能替用户认定某一家分店；
+    - 用户没提方位/航站楼，候选却写死了另一个（杭州站 vs 杭州东站）。
+    例外：括号限定词已经写在候选全名里（西湖（杭州） vs 杭州西湖风景名胜区）；
+    景点 POI 自带“(售票处)”这类补充说明；以及候选项多了“东门/西门”入口。
+    """
+
+    left = _place_markers(query)
+    right = _place_markers(candidate)
+    if not left and not right:
+        return False
+
+    left_branch = _all_branch_markers(left)
+    right_branch = _all_branch_markers(right)
+    if left_branch and not right_branch:
+        if not _branch_mentioned(left_branch, candidate):
+            return True
+    if right.get("store_branch") and not left_branch:
+        # 用户只说“全聚德”，候选却是“全聚德（王府井店）”：不能替用户认定分店。
+        return True
+    for kind in ("direction", "entrance", "terminal", "store"):
+        left_values = left.get(kind)
+        if not left_values:
+            continue
+        right_values = right.get(kind)
+        if right_values:
+            continue
+        if kind == "entrance" and left_values & right_branch:
+            # “雷峰塔东门”与“雷峰塔（东门）”是同一入口，只是括号写法不同。
+            continue
+        return True
+    for kind in _CANDIDATE_ONLY_STRICT_KINDS:
+        if right.get(kind) and not left.get(kind):
+            return True
+    return False
+
+
+# 辨识标识无法确认时的匹配分：低于阈值，走地址地理编码或诚实降级。
+_PLACE_MARKER_UNCONFIRMED_SCORE = 0.4
+
+
+def _strip_entrance_markers(text: str, markers: set[str]) -> str:
+    """从归一化名称里去掉入口标记，用于比较“雷峰塔”和“雷峰塔东门”。"""
+
+    for marker in markers:
+        if marker and marker in text:
+            text = text.replace(marker, "", 1)
+    return text
+
+
 def _place_name_score(query: str, candidate: str) -> float:
     """0..4 的名称匹配分；用于避免把搜索结果里明显无关的首条 POI 当成景点。"""
 
@@ -928,8 +1420,24 @@ def _place_name_score(query: str, candidate: str) -> float:
     right = _normalize_place_name(candidate)
     if not left or not right:
         return 0.0
+    # 括号归一化会把“如家酒店（西湖店）”和“如家酒店（武林广场店）”变成同名，
+    # 方位/航站楼标识同理（杭州东站 vs 杭州西站、T1 vs T2）。这类明确冲突
+    # 必须在同名判定之前拦下。
+    if _place_marker_conflict(query, candidate):
+        return 0.0
+    if _place_markers_missing(query, candidate):
+        return _PLACE_MARKER_UNCONFIRMED_SCORE
     if left == right:
         return 4.0
+
+    # 候选只是同名景点的入口（雷峰塔 vs 雷峰塔东门）时谨慎接受；
+    # 东站/西站、机场 T1/T2 等非入口标识不在这里放行。
+    query_entrances = _place_markers(query).get("entrance", set())
+    candidate_entrances = _place_markers(candidate).get("entrance", set())
+    if candidate_entrances and not query_entrances:
+        candidate_base = _strip_entrance_markers(right, candidate_entrances)
+        if candidate_base == left and len(left) >= 3:
+            return 3.0
 
     left_category = _generic_place_category(left)
     right_category = _generic_place_category(right)
@@ -1100,6 +1608,8 @@ def _describe_amap_error(exc: AMapError) -> str:
         return "高德没有找到匹配地点"
     if code == "poi_mismatch":
         return "高德返回的 POI 与站点名称不匹配"
+    if code == "poi_unconfirmed":
+        return "高德返回的 POI 与站点名称无法确认是同一处（门店/方位标识不完整）"
     if code == "missing_distance":
         return "高德未返回有效的路线距离"
     if code in {"missing_polyline", "degenerate_polyline"}:
@@ -1343,6 +1853,7 @@ class AMapClient:
         best_score = 0.0
         best_item: dict[str, Any] | None = None
         best_location: Coordinate | None = None
+        best_unconfirmed = False
         for item in pois:
             if not isinstance(item, dict):
                 continue
@@ -1373,8 +1884,16 @@ class AMapClient:
                 best_score = score
                 best_item = item
                 best_location = location
+                # 0.4 表示“名称像，但门店/方位标识无法确认是同一处”；
+                # 下游不能再用名称地理编码替用户猜一个具体分店。
+                best_unconfirmed = score == _PLACE_MARKER_UNCONFIRMED_SCORE
 
         if best_item is None or best_location is None or best_score < _POI_NAME_MATCH_MIN_SCORE:
+            if best_unconfirmed and best_item is not None:
+                raise AMapError(
+                    "高德返回的 POI 带有未确认的门店/方位标识，无法确定是同一处",
+                    code="poi_unconfirmed",
+                )
             raise AMapError("高德返回的 POI 与站点名称不够匹配", code="poi_mismatch")
 
         poi_city = _optional_field_text(best_item.get("cityname"), max_length=80) or city_text
@@ -1648,11 +2167,25 @@ class _ResolvedStop:
     error_code: str | None = None
 
 
+# 这两类原因说明“这不是同一处地点”，不能再用站点名称去猜坐标。
+_POI_NAME_UNCONFIRMED_PREFIXES = (
+    "POI 搜索结果与站点名称",
+    "POI 结果没有标出",
+)
+_POI_MARKER_UNCONFIRMED_REASON = "POI 结果没有标出站点名称里的门店/方位标识，无法确认是同一处"
+
+
 def _poi_is_trusted(result: GeoResult, stop_name: str, destination: str) -> tuple[bool, str]:
     """兜底校验 POI 结果；真实 AMapClient 已在候选列表里做过一次匹配。"""
 
-    if result.name and _place_name_score(stop_name, result.name) < _POI_NAME_MATCH_MIN_SCORE:
-        return False, "POI 搜索结果与站点名称不符"
+    if result.name:
+        conflict = _place_marker_conflict(stop_name, result.name)
+        if conflict:
+            return False, f"POI 搜索结果与站点名称的{conflict}"
+        if _place_markers_missing(stop_name, result.name):
+            return False, _POI_MARKER_UNCONFIRMED_REASON
+        if _place_name_score(stop_name, result.name) < _POI_NAME_MATCH_MIN_SCORE:
+            return False, "POI 搜索结果与站点名称不符"
     if result.city and destination and not _city_names_compatible(destination, result.city):
         # 目的地也可能是“西湖”“外滩”这类区县/景区名，只要真实地址里出现就不算跑题。
         if not _address_mentions_query(destination, result.formatted_address):
@@ -1691,6 +2224,9 @@ async def _resolve_stop(
         errors: list[str] = []
         notes: list[str] = []
         unexpected = False
+        # POI 明确指向另一处（不同门店/方位/航站楼）时，不再用站点名称猜坐标，
+        # 只用用户自己写的地址做校验，避免把错误门店的坐标和地址覆盖上去。
+        poi_name_mismatch = False
 
         def blocked_result() -> _ResolvedStop | None:
             if guard is None or not guard.blocked:
@@ -1711,6 +2247,10 @@ async def _resolve_stop(
                 raise
             except AMapError as exc:
                 errors.append(_describe_amap_error(exc))
+                if exc.code == "poi_unconfirmed":
+                    # POI 像但门店/方位未确认（例如用户只说“全聚德”），
+                    # 不能再用名称地理编码替用户认定某一家分店。
+                    poi_name_mismatch = True
                 if guard is not None:
                     guard.observe(exc)
             except Exception:
@@ -1725,12 +2265,14 @@ async def _resolve_stop(
                         address=poi.formatted_address or stop.address,
                     )
                 notes.append(reason)
+                if reason.startswith(_POI_NAME_UNCONFIRMED_PREFIXES):
+                    poi_name_mismatch = True
 
         blocked = blocked_result()
         if blocked is not None:
             return blocked
 
-        async def try_geocode(query: str) -> _ResolvedStop | None:
+        async def try_geocode(query: str, *, is_stop_name: bool = False) -> _ResolvedStop | None:
             nonlocal unexpected
             if not query:
                 return None
@@ -1753,6 +2295,13 @@ async def _resolve_stop(
             if not trusted:
                 notes.append(reason)
                 return None
+            if is_stop_name:
+                # 用名称兜底时，返回地址里出现另一家门店/另一个方位就是明确矛盾，
+                # 不能拿它当站点坐标，更不能覆盖用户写的地址。
+                conflict = _place_marker_conflict(stop.name, result.formatted_address)
+                if conflict:
+                    notes.append(f"地理编码结果与站点名称的{conflict}")
+                    return None
             return _ResolvedStop(
                 wgs=_coordinate_to_wgs(result.location),
                 gcj=result.location,
@@ -1768,9 +2317,9 @@ async def _resolve_stop(
             if blocked is not None:
                 return blocked
 
-        # 3. 名称地理编码兜底；地址已经精确命中时不会走到这里。
-        if stop.name and stop.name != stop.address:
-            resolved = await try_geocode(stop.name)
+        # 3. 名称地理编码兜底；地址已经精确命中、或 POI 已指向另一处时不再猜。
+        if stop.name and stop.name != stop.address and not poi_name_mismatch:
+            resolved = await try_geocode(stop.name, is_stop_name=True)
             if resolved is not None:
                 return resolved
 
@@ -1820,33 +2369,193 @@ def _minutes_to_time(value: int) -> str:
     return f"{value // 60:02d}:{value % 60:02d}"
 
 
+# 相邻站点的“跨午夜”判定：下一站时间早于上一站时，只有按次日理解后间隔
+# 不超过这个上限，才把“次日”当作比较自然的假设；否则只做保守提示，不硬判。
+_MAX_OVERNIGHT_GAP_MINUTES = 360
+_MINUTES_PER_DAY = 24 * 60
+
+
+def _schedule_time_label(minutes: int) -> str:
+    """把相对当天 00:00 的分钟数写成带日期偏移的时刻。
+
+    跨过 24:00 写“次日 HH:MM”，再跨一天写“第三天 HH:MM”，不按 24 小时取模
+    把 47:30 显示成 23:30。``minutes`` 是相对当天 00:00 的累计分钟数。
+    """
+
+    day_offset, clock = divmod(int(round(max(minutes, 0))), _MINUTES_PER_DAY)
+    if day_offset == 0:
+        return _minutes_to_time(clock)
+    if day_offset == 1:
+        return f"次日 {_minutes_to_time(clock)}"
+    if day_offset == 2:
+        return f"第三天 {_minutes_to_time(clock)}"
+    return f"第{day_offset + 1}天 {_minutes_to_time(clock)}"
+
+
+def _describe_backwards_pair(
+    *,
+    day_label: str,
+    current: Stop,
+    following: Stop,
+    start: int,
+    planned: int,
+    stay: int | None,
+    travel: float | None,
+    mode_label: str,
+) -> str:
+    """下一站时间早于上一站时的单条提醒。
+
+    time 字符串本身不能证明下一站是当天还是次日，所以这里不把倒序断言成错误：
+    先给“时间顺序或跨日待确认”，再在数据允许时给出按次日假设的核对结果。
+    """
+
+    next_planned = planned + _MINUTES_PER_DAY
+    lead = (
+        f"{day_label} {following.name} 的 {following.time} 早于上一站 "
+        f"{current.name} 的 {current.time}。"
+    )
+
+    if stay is None:
+        text = f"{SCHEDULE_ORDER_PREFIX}{lead}"
+        if travel is None:
+            text += "缺少停留时长，也没有可用的交通耗时数据，无法核算两站能否衔接。"
+        else:
+            text += (
+                f"已有真实交通耗时（约 {int(round(travel))} 分钟），"
+                "但仍缺少停留时长，无法核算两站能否衔接。"
+            )
+        return text + "仅凭 time 字符串无法判断下一站是当天还是次日，未改动站点时间。"
+
+    finish = start + stay + (travel or 0)
+    if travel is None:
+        finish_desc = (
+            f"{current.name} {current.time} 起停留 {stay} 分钟，"
+            f"到 {_schedule_time_label(finish)} 才结束，且没有可用的交通耗时数据"
+        )
+    else:
+        finish_desc = (
+            f"{current.name} {current.time} 起停留 {stay} 分钟，"
+            f"{mode_label}到 {following.name} 约需 {int(round(travel))} 分钟，"
+            f"预计 {_schedule_time_label(finish)} 才能抵达"
+        )
+
+    if finish <= next_planned:
+        text = (
+            f"{SCHEDULE_ORDER_PREFIX}{lead}"
+            f"若按次日假设，{finish_desc}，早于 {_schedule_time_label(next_planned)}，"
+            "按这个假设可以衔接。"
+        )
+        gap = next_planned - finish
+        if gap > _MAX_OVERNIGHT_GAP_MINUTES:
+            text += (
+                f"但两个时间之间相隔约 {_format_minutes(gap)}，"
+                "也可能只是同一天顺序写反，请核对。"
+            )
+        return text + "这只是按次日假设的核对，不能确认日期；未改动任何站点时间。"
+
+    if next_planned - start <= _MAX_OVERNIGHT_GAP_MINUTES:
+        return (
+            f"{SCHEDULE_CONFLICT_PREFIX}{lead}"
+            "时间顺序或跨日待确认。"
+            f"若按次日假设，{finish_desc}，晚于 {_schedule_time_label(next_planned)}，"
+            "按这个假设赶不上。这只是按次日假设的推算，日期仍需确认；未改动站点时间。"
+        )
+
+    later_planned = planned + 2 * _MINUTES_PER_DAY
+    if finish <= later_planned:
+        return (
+            f"{SCHEDULE_ORDER_PREFIX}{lead}"
+            f"若按次日 {_schedule_time_label(next_planned)} 理解，{finish_desc}，已经赶不上；"
+            f"如果下一站实际指 {_schedule_time_label(later_planned)}，按这个假设可以衔接。"
+            "仅凭 time 无法确认是哪一天，未改动站点时间。"
+        )
+    return (
+        f"{SCHEDULE_ORDER_PREFIX}{lead}"
+        f"即使按 {_schedule_time_label(later_planned)} 理解，{finish_desc}，"
+        f"仍晚于 {_schedule_time_label(later_planned)}；"
+        "请核对停留时长、交通耗时与日期，未改动站点时间。"
+    )
+
+
 def _schedule_conflict_warnings(day: DayPlan, legs: list[Leg], mode_label: str) -> list[str]:
-    """用真实路线耗时检查时刻表；只告警，不改站点时间或停留时长。"""
+    """检查相邻站点的时刻表冲突；只告警，不改站点时间、停留时长或日期假设。
+
+    - 有真实交通耗时时（地图可用且路线为 navigation），检查“停留结束 + 交通
+      耗时”是否晚于下一站起始；
+    - 没有交通耗时时（未配置地图、地图失败或路线降级），只检查停留时间本身
+      是否已经和下一站重叠，不凭空推算交通耗时；
+    - 下一站时间早于上一站时，不再依赖停留时长才判断，也不会静默：统一给
+      “时间顺序或跨日待确认”，有停留/交通数据时再说明按次日假设的核对结果；
+    - 每对相邻站点最多一条提醒；跨过 24:00 的时间按“次日 / 第三天”标注。
+    """
 
     warnings: list[str] = []
-    stops_by_id = {stop.id: stop for stop in day.stops}
+    if len(day.stops) < 2:
+        return warnings
+
+    travel_by_pair: dict[tuple[str, str], float] = {}
     for leg in legs:
         if leg.route_type != "navigation" or leg.duration_minutes is None:
             continue
-        current = stops_by_id.get(leg.from_stop_id)
-        following = stops_by_id.get(leg.to_stop_id)
-        if current is None or following is None:
-            continue
+        travel_by_pair[(leg.from_stop_id, leg.to_stop_id)] = float(leg.duration_minutes)
+
+    day_label = f"第{day.day}天"
+    for current, following in zip(day.stops, day.stops[1:]):
         start = _time_to_minutes(current.time)
         planned = _time_to_minutes(following.time)
         if start is None or planned is None:
             continue
-        stay = current.duration_minutes if current.duration_minutes is not None else 0
-        arrival = start + stay + leg.duration_minutes
+        stay = current.duration_minutes
+        travel = travel_by_pair.get((current.id, following.id))
+
+        if planned < start:
+            # 不能等确认停留时长才提醒：11:00 -> 10:00 即使两站都没写时长，
+            # 也至少要让用户看到“时间顺序/日期待确认”。
+            warnings.append(
+                _describe_backwards_pair(
+                    day_label=day_label,
+                    current=current,
+                    following=following,
+                    start=start,
+                    planned=planned,
+                    stay=stay,
+                    travel=travel,
+                    mode_label=mode_label,
+                )
+            )
+            continue
+
+        if stay is None:
+            # 正向顺序且停留时长不可信时不推算重叠，避免凭空造冲突。
+            continue
+
+        if travel is None:
+            stay_end = start + stay
+            if stay_end <= planned:
+                continue
+            warnings.append(
+                f"{SCHEDULE_CONFLICT_PREFIX}{day_label} {current.name} {current.time} "
+                f"起停留 {stay} 分钟，到 {_schedule_time_label(stay_end)} 才结束，"
+                f"晚于下一站 {following.name} 的 {_schedule_time_label(planned)}；"
+                "两站时间重叠，且没有可用的交通耗时数据，请调整停留时长或出发时间。"
+            )
+            continue
+
+        arrival = start + stay + travel
         if arrival <= planned:
             continue
-        travel = int(round(leg.duration_minutes))
-        warnings.append(
-            f"时间冲突：{current.name} {current.time} 起停留 {stay} 分钟，"
-            f"{mode_label}到{following.name}约需 {travel} 分钟，"
-            f"预计 {_minutes_to_time(round(arrival))} 才能抵达，"
-            f"但计划安排在 {following.time}，按当前时刻表赶不上。"
+        text = (
+            f"{SCHEDULE_CONFLICT_PREFIX}{day_label} {current.name} {current.time} "
+            f"起停留 {stay} 分钟，{mode_label}到 {following.name} 约需 "
+            f"{int(round(travel))} 分钟，预计 {_schedule_time_label(round(arrival))} 才能抵达，"
+            f"但计划安排在 {_schedule_time_label(planned)}，按当前时刻表赶不上。"
         )
+        if arrival >= _MINUTES_PER_DAY and planned < _MINUTES_PER_DAY:
+            text += (
+                f"如果下一站其实指次日 {_schedule_time_label(planned + _MINUTES_PER_DAY)}，"
+                "请按次日核对日期。"
+            )
+        warnings.append(text)
     return warnings
 
 
@@ -1857,9 +2566,14 @@ async def enrich_trip_with_map(
 ) -> TripPlan:
     """给行程补坐标和路线；任何上游失败都降级而不是伪造成真实导航。"""
 
-    warnings = list(trip.warnings)
+    # 上一次推算出的冲突提醒（可能是归一化阶段无地图时生成的）先摘掉，
+    # 最后按本次实际拿到的路线耗时统一重算，保证同一对站点只提醒一次。
+    warnings = _strip_generated_warnings(trip.warnings)
+    mode_label = _travel_mode_label(request.travel_mode)
     if amap is None or not amap.configured:
         warnings.append(NO_MAP_KEY_WARNING)
+        for day in trip.days:
+            warnings.extend(_schedule_conflict_warnings(day, day.legs, mode_label))
         return trip.model_copy(update={"warnings": dedupe_warnings(warnings)})
 
     all_stops = [stop for day in trip.days for stop in day.stops]
@@ -2092,7 +2806,6 @@ async def enrich_trip_with_map(
     # 鉴权/配额等真实原因优先保留，避免大量普通降级提示把关键告警挤出上限。
     warnings.extend(_map_error_warnings(error_codes))
 
-    mode_label = "步行" if request.travel_mode == "walking" else "驾车"
     for day in new_days:
         warnings.extend(
             _schedule_conflict_warnings(day, legs_by_day.get(day.day, []), mode_label)
