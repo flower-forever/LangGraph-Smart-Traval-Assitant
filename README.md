@@ -16,7 +16,7 @@
 界面上的本地保存、日历导出和「停止等待」都只在浏览器这一侧工作，边界如下：
 
 - 🗂️ **本地保存**：点「保存当前行程」才写入当前浏览器、当前网址的 localStorage，不上传、不跨设备同步；换浏览器、换网址或清除站点数据后就看不到了。最多 20 份，达到上限要先删一份，不会自动顶掉旧记录。
-- 💾 **备份与导入（.json）**：点「下载行程备份」才生成明文 JSON；导入只先预览，点「保存到本地」才写入。导入与本地保存共用同一套结构约束（重复 day / 站点 ID、字段长度、每段 5000 点、全行程 40 000 点等）和同一个 640 KB 单份容量口径（算的是本地记录 `id + savedAt + trip`，不只是 trip），预览能打开的行程一定存得下，边界文件也不会「预览通过、保存必然失败」。同 ID 覆盖要页面内二次确认，确认时比对保存时间与完整内容快照，期间变过就拒绝；localStorage 没有跨标签页的原子比较交换，只能缩小覆盖窗口、不保证绝对原子。文件里可能含你自己填写的描述，工具不做脱敏。
+- 💾 **备份与导入（.json）**：点「下载行程备份」才生成明文 JSON；导入只先预览，点「保存到本地」才写入。导入与本地保存共用同一套结构约束（重复 day / 站点 ID、字段长度、每段 5000 点、全行程 40 000 点等）和同一个 640 KB 单份容量口径（算的是本地记录 `id + savedAt + trip`，不只是 trip）。导入预览校验的是这套结构与单份 640 KB 上限；真正保存还受 20 份总数、全部记录合计约 1.5 MiB 以及浏览器可用配额等限制，所以预览通过不代表当下一定有空间，保存结果以点击保存后的反馈为准。同 ID 覆盖要页面内二次确认，确认时比对保存时间与完整内容快照，期间变过就拒绝；localStorage 没有跨标签页的原子比较交换，只能缩小覆盖窗口、不保证绝对原子。文件里可能含你自己填写的描述，工具不做脱敏。
 - 📅 **日历导出**：点「下载 .ics 文件」才生成并下载到你自己的电脑，导入 iOS 日历 / Google Calendar / Outlook 需要手动操作。示例行程的事件标题带【示例】前缀；时刻不带时区，按导入设备的本地时区解释；整份行程都缺日期时要先选首日才临时推算，只有部分天缺日期时这些天的站点会被跳过；缺停留时长的站点只写开始时间，没有补结束时间。
 - ⏹️ **停止等待**：只让本页不再等这次规划，迟到的响应会被忽略，可以马上改参数重新提交。后端和上游模型可能已经在跑、甚至跑完，所以不保证服务端停止处理，也不保证停止计费。
 
@@ -240,6 +240,25 @@ pnpm test:watch    # watch 模式
 pnpm build         # tsc -b && vite build
 pnpm preview       # 本地预览 dist 产物
 ```
+
+## 🤖 CI（GitHub Actions）
+
+`.github/workflows/ci.yml` 定义了两个并行 job，`push` 到 `feat/interactive-travel-planner` / `main` 或任意 Pull Request 都会触发；同一分支有新推送时自动取消还在跑的旧任务。所有外部 action 只授予 `contents: read` 权限，不注入任何密钥。
+
+- **后端**：Windows runner + Python 3.12，装 `requirements-dev.txt` 后跑 `pytest tests -q`。设置了 `PYTHON_DOTENV_DISABLED=1` 和 `PYTHONDONTWRITEBYTECODE=1`，与本地离线测试的约定一致：测试全部走 MockTransport / 假 Agent，不读取实际 `.env`，也不需要任何 API Key。
+- **前端**：Node 22 + pnpm（lockfile 是 `lockfileVersion: '9.0'`，pnpm 9+ 可读，CI 固定 pnpm 11，与本机开发环境一致），`pnpm install --frozen-lockfile` 后跑完整 `pnpm test` 和 `pnpm build`（含 `tsc -b` 类型检查）。
+
+本地运行同样两条命令即可复现 CI 的核心检查（仓库根目录装好依赖后）：
+
+```bash
+# 后端（需先按「快速开始」装好 .venv）
+PYTHON_DOTENV_DISABLED=1 PYTHONDONTWRITEBYTECODE=1 .venv/Scripts/python.exe -m pytest tests -q -p no:cacheprovider
+
+# 前端
+cd frontend && pnpm install --frozen-lockfile && pnpm test && pnpm build
+```
+
+CI 的验证边界：这条工作流定义时经过 YAML 结构核对和命令与现有 README/lockfile 的核对，但还没有真正推送到 GitHub 上跑过，不能当作「CI 已绿」。全量回归测试请在自己的环境或 CI 实际运行后以真实结果为准。
 
 ## 💬 CLI 入口
 

@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - feat/interactive-travel-planner
+      - main
+  pull_request:
+
+# 同一分支的新推送会取消还在跑的旧任务
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: 后端测试 (Windows / Python 3.12)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # 离线测试约定：禁止读取实际 .env，不写 __pycache__
+      PYTHON_DOTENV_DISABLED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # 后端测试全部离线（MockTransport / 假 Agent / 本地 stdio 握手），不需要任何 API Key
+      - name: 安装后端依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: 运行后端测试
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  frontend:
+    name: 前端测试与构建 (Node 22 / pnpm)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      # frontend/pnpm-lock.yaml 为 lockfileVersion 9.0，pnpm 9+ 均可读取；
+      # 与本机开发环境一致固定 pnpm 11 大版本
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 前端测试
+        run: pnpm test
+
+      - name: 前端构建
+        run: pnpm build
