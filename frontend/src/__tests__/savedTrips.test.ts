@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  MAX_GEOMETRY_POINTS_PER_LEG,
   MAX_SAVED_STORAGE_BYTES,
   MAX_SAVED_TRIP_BYTES,
   MAX_SAVED_TRIPS,
@@ -11,10 +12,11 @@ import {
   loadSavedTrips,
   saveTripToStorage,
   undoSavedTripDeletion,
+  utf8ByteLength,
   type SavedTrip,
   type StorageLike,
 } from '../lib/savedTrips'
-import type { Trip } from '../lib/api'
+import type { Trip, TripLeg, TripLocation } from '../lib/api'
 import { MOCK_TRIP } from './fixtures/trip'
 
 interface MemoryStorage extends StorageLike {
@@ -57,6 +59,104 @@ function cloneTrip(overrides: Partial<Trip> = {}): Trip {
 
 function record(id: string, savedAt: number, trip: Trip = cloneTrip({ id })): SavedTrip {
   return { id, savedAt, trip }
+}
+
+/** 与后端 WGS84 输出量级一致的合成坐标：7 位小数，单点序列化约 38 字节 */
+function pointAt(seed: number): TripLocation {
+  return {
+    lng: Number((116.3974285 + seed * 0.0000001).toFixed(7)),
+    lat: Number((39.9092301 + seed * 0.0000001).toFixed(7)),
+  }
+}
+
+function geometry(count: number, offset = 0): TripLocation[] {
+  return Array.from({ length: count }, (_, index) => pointAt(offset + index))
+}
+
+/** 单段长路线行程：两个站点 + 一条 navigation leg，点数由参数决定 */
+function tripWithRoute(id: string, points: number): Trip {
+  const startStop = { ...MOCK_TRIP.days[0].stops[0], id: `${id}-start`, name: '起点' }
+  const endStop = { ...MOCK_TRIP.days[0].stops[1], id: `${id}-end`, name: '终点' }
+  return {
+    ...MOCK_TRIP,
+    id,
+    destination: '北京',
+    title: `单段 ${points} 点路线`,
+    days: [
+      {
+        day: 1,
+        date: null,
+        title: '长路线',
+        summary: '',
+        stops: [startStop, endStop],
+        legs: [
+          {
+            from_stop_id: startStop.id,
+            to_stop_id: endStop.id,
+            mode: 'walking',
+            route_type: 'navigation',
+            distance_m: 1200,
+            duration_minutes: 18,
+            geometry: geometry(points),
+            description: '合成步行路线',
+          },
+        ],
+      },
+    ],
+  }
+}
+
+/** 同一天里挂多条长路线，用来触达全行程几何点数预算 */
+function tripWithLegs(id: string, legCount: number, pointsPerLeg: number): Trip {
+  const trip = tripWithRoute(id, pointsPerLeg)
+  const day = trip.days[0]
+  const leg: TripLeg = day.legs[0]
+  return {
+    ...trip,
+    days: [{ ...day, legs: Array.from({ length: legCount }, () => ({ ...leg })) }],
+  }
+}
+
+/**
+ * 评审给的真实样本：7 天 × 8 站，每天 8 段路线（前 7 段相邻、第 8 段回起点），
+ * 每段 150 个几何点，共 56 × 150 = 8 400 个点，约 315–335 KB。
+ */
+function sevenDayEightStopTrip(id: string): Trip {
+  const makeDay = (dayIndex: number): Trip['days'][number] => ({
+    day: dayIndex + 1,
+    date: null,
+    title: `第 ${dayIndex + 1} 天`,
+    summary: '按顺序走完当天 8 个站点，再回到起点附近的落脚点。',
+    stops: Array.from({ length: 8 }, (_, stopIndex) => ({
+      id: `d${dayIndex + 1}-s${stopIndex + 1}`,
+      name: `第 ${dayIndex + 1} 天站点 ${stopIndex + 1}`,
+      time: `${String(8 + stopIndex).padStart(2, '0')}:00`,
+      duration_minutes: 30,
+      description: '合成测试站点，用来验证合法长路线能完整保存。',
+      address: '北京市东城区某条测试街道',
+      location: pointAt(dayIndex * 100 + stopIndex),
+    })),
+    legs: Array.from({ length: 8 }, (_, legIndex) => ({
+      from_stop_id: `d${dayIndex + 1}-s${legIndex + 1}`,
+      to_stop_id: `d${dayIndex + 1}-s${((legIndex + 1) % 8) + 1}`,
+      mode: 'walking',
+      route_type: 'navigation',
+      distance_m: 900,
+      duration_minutes: 14,
+      geometry: geometry(150, dayIndex * 1000 + legIndex * 150),
+      description: '合成路线几何，150 个点。',
+    })),
+  })
+
+  return {
+    ...MOCK_TRIP,
+    id,
+    destination: '北京',
+    title: '七日八站合成行程',
+    summary: '合成数据：7 天 × 8 站 × 每段 150 个几何点，用于容量边界测试。',
+    warnings: [],
+    days: Array.from({ length: 7 }, (_, dayIndex) => makeDay(dayIndex)),
+  }
 }
 
 let now = 1_760_000_000_000
@@ -253,7 +353,7 @@ describe('savedTrips 校验与上限', () => {
     expect(loaded.message).toContain('已忽略')
   })
 
-  it('单份超过体积上限时拒绝保存', () => {
+  it('单份超过体积上限时拒绝保存：已有记录与原始字节不变，提示可查看和导出日历', () => {
     const stop = MOCK_TRIP.days[0].stops[0]
     const oversizeTrip: Trip = {
       ...MOCK_TRIP,
@@ -276,12 +376,25 @@ describe('savedTrips 校验与上限', () => {
     }
 
     const storage = createMemoryStorage()
+    expect(saveTripToStorage(MOCK_TRIP, storage).ok).toBe(true)
+    const before = storage.data.get(SAVED_TRIPS_STORAGE_KEY)
+    now += 1_000
+
     const result = saveTripToStorage(oversizeTrip, storage)
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('too_large')
     expect(result.message).toContain(`${Math.round(MAX_SAVED_TRIP_BYTES / 1024)} KB`)
-    expect(storage.data.get(SAVED_TRIPS_STORAGE_KEY)).toBeUndefined()
+    expect(result.message).toContain('没有保存')
+    // 提示只说当前真实存在的能力：查看当前行程 + 导出日历，不再建议不存在的「精简行程」
+    expect(result.message).toContain('导出日历')
+    expect(result.message).not.toContain('精简')
+    // fail-closed：不写一个字节，旧记录仍在
+    expect(storage.data.get(SAVED_TRIPS_STORAGE_KEY)).toBe(before)
+    const loaded = loadSavedTrips(storage)
+    expect(loaded.skipped).toBe(0)
+    expect(loaded.trips.map((item) => item.id)).toEqual([MOCK_TRIP.id])
+    expect(loaded.trips[0].trip).toEqual(MOCK_TRIP)
   })
 
   it('结构异常（重复日期、空站点 id）的行程拒绝保存', () => {
@@ -399,4 +512,181 @@ describe('savedTrips 校验与上限', () => {
     expect(result.reason).toBe('limit')
     expect(loadSavedTrips(storage).trips).toHaveLength(MAX_SAVED_TRIPS)
   })
+})
+
+/**
+ * 后端 travel_itinerary.py 的 `_MAX_ROUTE_GEOMETRY_POINTS = 5000` 说明合法路线可以有几千个点。
+ * 这组用例锁住前端校验与后端契约一致（不再把 2001 点误判为坏数据），
+ * 同时保证容量不足时只给 too_large、不静默丢数据。
+ */
+describe('savedTrips 长路线几何与容量边界', () => {
+  it('单段 2001 点与 5000 点的合法路线都能通过结构校验并原样恢复', () => {
+    const storage = createMemoryStorage()
+
+    for (const points of [2001, 5000]) {
+      const trip = tripWithRoute(`route-${points}`, points)
+      const result = saveTripToStorage(trip, storage)
+      // 5000 点单段路线约 190 KB，必须在 640 KB 单份上限内真的存下去，不能只是「结构合法」
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+
+      const loaded = loadSavedTrips(storage)
+      expect(loaded.skipped).toBe(0)
+      const restored = loaded.trips.find((item) => item.id === trip.id)
+      expect(restored).toBeDefined()
+      expect(restored?.trip.days[0].legs).toHaveLength(1)
+      expect(restored?.trip.days[0].legs[0].geometry).toHaveLength(points)
+      // 存的是同一份数据：不抽稀、不改点
+      expect(restored?.trip).toEqual(trip)
+    }
+  }, 20_000)
+
+  it(`超过后端 ${MAX_GEOMETRY_POINTS_PER_LEG} 点上限的路线判为结构错误，且不写任何字节`, () => {
+    const storage = createMemoryStorage()
+    expect(saveTripToStorage(MOCK_TRIP, storage).ok).toBe(true)
+    const before = storage.data.get(SAVED_TRIPS_STORAGE_KEY)
+    now += 1_000
+
+    const result = saveTripToStorage(
+      tripWithRoute('route-over-contract', MAX_GEOMETRY_POINTS_PER_LEG + 1),
+      storage,
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('invalid')
+    expect(result.message).toContain(String(MAX_GEOMETRY_POINTS_PER_LEG))
+    expect(storage.data.get(SAVED_TRIPS_STORAGE_KEY)).toBe(before)
+    expect(loadSavedTrips(storage).trips.map((item) => item.id)).toEqual([MOCK_TRIP.id])
+  })
+
+  it('7 天 × 8 站 × 每段 150 点（约 315–335 KB）的合规行程可以保存，恢复后数据完整', () => {
+    const trip = sevenDayEightStopTrip('seven-day-eight-stop')
+    const storage = createMemoryStorage()
+
+    const result = saveTripToStorage(trip, storage)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const raw = storage.data.get(SAVED_TRIPS_STORAGE_KEY)
+    expect(raw).toBeTruthy()
+    const rawBytes = utf8ByteLength(raw!)
+    // 旧的 256 KB 单份上限会误杀这份合法样本
+    expect(rawBytes).toBeGreaterThan(256 * 1024)
+    expect(rawBytes).toBeLessThan(MAX_SAVED_TRIP_BYTES)
+
+    const loaded = loadSavedTrips(storage)
+    expect(loaded.status).toBe('ok')
+    expect(loaded.skipped).toBe(0)
+    expect(loaded.trips).toHaveLength(1)
+
+    const restored = loaded.trips[0].trip
+    expect(restored).toEqual(trip)
+    expect(restored.days).toHaveLength(7)
+    expect(restored.days.every((day) => day.stops.length === 8)).toBe(true)
+    expect(restored.days.every((day) => day.legs.length === 8)).toBe(true)
+    expect(
+      restored.days.every((day) => day.legs.every((leg) => leg.geometry.length === 150)),
+    ).toBe(true)
+  }, 20_000)
+
+  it('总体容量放不下时 fail-closed：原始字节不变、旧记录不丢、提示先删除其他行程', () => {
+    const storage = createMemoryStorage()
+    // 每段 4 000 点 × 4 段 = 16 000 点，单段不超后端 5 000 点上限，单份约 560 KB
+    const trips = Array.from({ length: 3 }, (_, index) =>
+      tripWithLegs(`capacity-${index}`, 4, 4_000),
+    )
+    const singleRecordBytes = utf8ByteLength(
+      JSON.stringify({ id: trips[0].id, savedAt: now, trip: trips[0] }),
+    )
+    // 单份合规，两份放得下，三份必然超过总量上限
+    expect(singleRecordBytes).toBeLessThan(MAX_SAVED_TRIP_BYTES)
+    expect(singleRecordBytes * 2).toBeLessThan(MAX_SAVED_STORAGE_BYTES)
+    expect(singleRecordBytes * 3).toBeGreaterThan(MAX_SAVED_STORAGE_BYTES)
+
+    for (const trip of trips.slice(0, 2)) {
+      expect(saveTripToStorage(trip, storage).ok).toBe(true)
+    }
+    const before = storage.data.get(SAVED_TRIPS_STORAGE_KEY)
+    now += 1_000
+
+    const third = saveTripToStorage(trips[2], storage)
+    expect(third.ok).toBe(false)
+    if (third.ok) return
+    expect(third.reason).toBe('too_large')
+    expect(third.message).toContain('总容量上限')
+    expect(third.message).toContain('导出日历')
+    expect(third.message).toContain('删除')
+
+    // 一个字节都不写，旧记录完好
+    expect(storage.data.get(SAVED_TRIPS_STORAGE_KEY)).toBe(before)
+    const loaded = loadSavedTrips(storage)
+    expect(loaded.skipped).toBe(0)
+    expect(loaded.trips.map((item) => item.id).sort()).toEqual(['capacity-0', 'capacity-1'])
+    expect(loaded.trips.every((item) => item.trip.days[0].legs[0].geometry.length === 4_000)).toBe(
+      true,
+    )
+  }, 30_000)
+
+  it('几何点数超出校验预算但结构合法时给 too_large，而不是误判 invalid', () => {
+    const storage = createMemoryStorage()
+    const trip = tripWithLegs('geometry-budget', 9, MAX_GEOMETRY_POINTS_PER_LEG)
+
+    const result = saveTripToStorage(trip, storage)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('too_large')
+    expect(result.message).toContain('几何点')
+    expect(storage.data.get(SAVED_TRIPS_STORAGE_KEY)).toBeUndefined()
+  })
+
+  it('重复保存同一份长路线仍然只保留一条，内容一致', () => {
+    const storage = createMemoryStorage()
+    const trip = tripWithRoute('route-repeat', 2001)
+
+    const first = saveTripToStorage(trip, storage)
+    expect(first.ok).toBe(true)
+    now += 1_000
+    const second = saveTripToStorage(trip, storage)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.existed).toBe(true)
+    expect(second.changed).toBe(false)
+    expect(second.trips).toHaveLength(1)
+
+    const loaded = loadSavedTrips(storage)
+    expect(loaded.trips).toHaveLength(1)
+    expect(loaded.trips[0].trip).toEqual(trip)
+    expect(loaded.trips[0].savedAt).toBe(now)
+  }, 20_000)
+
+  it('读取时总量超限只丢最旧的记录，逐条扣减的字节数与整包重算一致（含 emoji 标题）', () => {
+    const storage = createMemoryStorage()
+    const records = [0, 1, 2].map((index) => {
+      const trip = {
+        ...tripWithLegs(`trim-${index}`, 3, 4_800),
+        title: `🗺️ 超长路线 ${index} 🚗`,
+      }
+      return record(trip.id, now - index, trip)
+    })
+    writeEnvelope(storage, records)
+    const raw = storage.data.get(SAVED_TRIPS_STORAGE_KEY)!
+    // 单份都在 640 KB 内，但三份加起来已超过总容量上限
+    expect(utf8ByteLength(raw)).toBeGreaterThan(MAX_SAVED_STORAGE_BYTES)
+
+    // 暴力解：按 savedAt 从新到旧，整包体积不超上限的最长前缀
+    let expected = [...records].sort((a, b) => b.savedAt - a.savedAt)
+    while (expected.length > 0) {
+      const envelope = JSON.stringify({ version: SAVED_TRIPS_VERSION, trips: expected })
+      if (utf8ByteLength(envelope) <= MAX_SAVED_STORAGE_BYTES) break
+      expected = expected.slice(0, -1)
+    }
+    expect(expected).toHaveLength(2)
+
+    const loaded = loadSavedTrips(storage)
+    expect(loaded.skipped).toBe(1)
+    expect(loaded.trips.map((item) => item.id)).toEqual(expected.map((item) => item.id))
+    // 保留下来的仍是完整的原始数据（含 4 字节 emoji 与整段几何）
+    expect(loaded.trips[0].trip.title).toContain('🗺️')
+    expect(loaded.trips[0].trip.days[0].legs[0].geometry).toHaveLength(4_800)
+  }, 30_000)
 })

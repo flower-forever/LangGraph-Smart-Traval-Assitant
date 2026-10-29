@@ -8,6 +8,9 @@ import { isTripLike } from './api'
  * - 只写 localStorage，不请求后端、不上传、不跨设备同步；
  * - 显式点击「保存当前行程」才写入，读取不会顺手修改存储；
  * - 恢复数据必须重新过一遍结构校验，并受记录数 / 单条体积 / 总体积上限约束；
+ * - 结构校验与后端契约对齐：单条 leg 的 geometry 上限与 travel_itinerary.py 的
+ *   `_MAX_ROUTE_GEOMETRY_POINTS = 5000` 相同，合法长路线不会被当成坏数据；
+ *   校验只读不写，绝不抽稀几何、改站点或改路线；
  * - 达到上限时 fail-closed：新增或更新明确失败，绝不自动淘汰任何旧记录；
  * - 存储里存在无法识别、重复或超限的记录时，读取只展示能确认的部分，
  *   任何普通保存 / 删除 / 撤销都拒绝写入，避免把跳过的原始数据覆盖掉；
@@ -21,10 +24,16 @@ export const SAVED_TRIPS_VERSION = 1 as const
 
 /** 最多保留 20 份；已达上限时新增保存会明确失败，不会自动丢弃旧记录 */
 export const MAX_SAVED_TRIPS = 20
-/** 单份行程序列化后的 UTF-8 体积上限（约 256 KB） */
-export const MAX_SAVED_TRIP_BYTES = 256 * 1024
-/** 全部保存记录的体积上限（约 1.5 MB），避免把 localStorage 塞满 */
-export const MAX_SAVED_STORAGE_BYTES = 1_500_000
+/**
+ * 单份行程序列化后的 UTF-8 体积上限（640 KB）。
+ *
+ * 定成 640 KB 是因为后端契约本身允许长路线：7 天 × 8 站、每段 150 个几何点
+ * （约 8 400 个点）的合法行程序列化后约 315–335 KB，旧的 256 KB 上限会把它判成超限。
+ * 640 KB 也放得下单条约 5 000 点的路线（约 175 KB）再加上其余天数。
+ */
+export const MAX_SAVED_TRIP_BYTES = 640 * 1024
+/** 全部保存记录的体积上限（1.5 MB = 1536 KB），避免把 localStorage 塞满 */
+export const MAX_SAVED_STORAGE_BYTES = 1_572_864
 
 /** 读取上限比写入上限略宽，用于识别异常膨胀的存储值，而不是先解析再说 */
 const MAX_RAW_STORED_BYTES = MAX_SAVED_STORAGE_BYTES + 64 * 1024
@@ -33,7 +42,20 @@ const MAX_RAW_STORED_BYTES = MAX_SAVED_STORAGE_BYTES + 64 * 1024
 const MAX_DAYS = 31
 const MAX_STOPS_PER_DAY = 100
 const MAX_LEGS_PER_DAY = 100
-const MAX_GEOMETRY_POINTS = 2_000
+/**
+ * 单条 leg 的几何点数上限，与后端 travel_itinerary.py 的 `_MAX_ROUTE_GEOMETRY_POINTS = 5000`
+ * 保持一致：后端路线在返回前已抽稀到 5 000 点以内，超过这个数只可能来自损坏或伪造的数据。
+ * 这里只做校验，不抽稀、不改站点和路线，保证保存下来的几何与后端返回逐点一致。
+ */
+export const MAX_GEOMETRY_POINTS_PER_LEG = 5_000
+/**
+ * 全行程几何点数的校验预算（40 000）。
+ *
+ * 每个点最省也要约 20 字节（`{"lng":0,"lat":0},`），40 000 点必然超过 640 KB 的单份上限，
+ * 所以命中这个预算的行程只会得到 too_large，而不是把合法结构误判成 invalid；
+ * 提前截断逐点遍历，也避免异常数据把校验拖成 CPU 黑洞。
+ */
+const MAX_TOTAL_GEOMETRY_POINTS = 40_000
 const MAX_TOTAL_STOPS = 5_000
 const MAX_TOTAL_LEGS = 5_000
 const MAX_WARNINGS = 50
@@ -157,8 +179,25 @@ export function getLocalStorage(): Storage | null {
   }
 }
 
-function isStorableTrip(value: unknown): value is Trip {
-  if (!isTripLike(value)) return false
+type TripShapeCheck =
+  | { ok: true }
+  | { ok: false; reason: 'invalid' | 'too_large'; message: string }
+
+const INVALID_TRIP_MESSAGE =
+  '当前行程的数据结构不完整或包含异常字段（例如单条路线几何超过 ' +
+  `${MAX_GEOMETRY_POINTS_PER_LEG} 个点、站点重复或天数异常），没有保存到本地。请重新生成行程后再试。`
+
+const GEOMETRY_BUDGET_MESSAGE =
+  `这份行程包含的路线几何点超过 ${MAX_TOTAL_GEOMETRY_POINTS} 个，体积必然超过单份 ` +
+  `${Math.round(MAX_SAVED_TRIP_BYTES / 1024)} KB 的本地保存上限，这次没有保存。` +
+  '当前行程仍可以正常查看，也可以用「导出日历 (.ics)」导出日程；要保存到本地，只能重新规划更短的行程。'
+
+/**
+ * 结构校验。区别于「能不能存下」：这里只判断数据是不是可信的 Trip。
+ * 几何点数超预算不算结构损坏（后端确实会返回长路线），单独给 too_large。
+ */
+function checkTripShape(value: unknown): TripShapeCheck {
+  if (!isTripLike(value)) return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
   const trip = value
   if (
     trip.id.length > 200 ||
@@ -169,15 +208,18 @@ function isStorableTrip(value: unknown): value is Trip {
     !trip.warnings.every((warning) => warning.length <= 2_000) ||
     trip.days.length > MAX_DAYS
   ) {
-    return false
+    return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
   }
 
   const dayNumbers = new Set<number>()
   let totalStops = 0
   let totalLegs = 0
+  let totalGeometryPoints = 0
 
   for (const day of trip.days) {
-    if (day.day < 1 || day.day > 366 || dayNumbers.has(day.day)) return false
+    if (day.day < 1 || day.day > 366 || dayNumbers.has(day.day)) {
+      return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
+    }
     dayNumbers.add(day.day)
     if (
       day.title.length > 500 ||
@@ -186,14 +228,14 @@ function isStorableTrip(value: unknown): value is Trip {
       day.stops.length > MAX_STOPS_PER_DAY ||
       day.legs.length > MAX_LEGS_PER_DAY
     ) {
-      return false
+      return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
     }
     totalStops += day.stops.length
     totalLegs += day.legs.length
 
     const stopIds = new Set<string>()
     for (const stop of day.stops) {
-      if (stopIds.has(stop.id)) return false
+      if (stopIds.has(stop.id)) return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
       stopIds.add(stop.id)
       if (
         stop.id.length > 200 ||
@@ -208,7 +250,7 @@ function isStorableTrip(value: unknown): value is Trip {
         (stop.location !== null &&
           (!isFiniteNumber(stop.location.lng) || !isFiniteNumber(stop.location.lat)))
       ) {
-        return false
+        return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
       }
     }
 
@@ -222,16 +264,32 @@ function isStorableTrip(value: unknown): value is Trip {
         (leg.duration_minutes !== null &&
           (!isFiniteNumber(leg.duration_minutes) ||
             leg.duration_minutes < 0 ||
-            leg.duration_minutes > 100_000)) ||
-        leg.geometry.length > MAX_GEOMETRY_POINTS ||
-        !leg.geometry.every((point) => isFiniteNumber(point.lng) && isFiniteNumber(point.lat))
+            leg.duration_minutes > 100_000))
       ) {
-        return false
+        return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
+      }
+      // 先看长度再逐点遍历：超长几何不进入 every()，避免异常数据拖慢校验
+      if (leg.geometry.length > MAX_GEOMETRY_POINTS_PER_LEG) {
+        return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
+      }
+      totalGeometryPoints += leg.geometry.length
+      if (totalGeometryPoints > MAX_TOTAL_GEOMETRY_POINTS) {
+        return { ok: false, reason: 'too_large', message: GEOMETRY_BUDGET_MESSAGE }
+      }
+      if (!leg.geometry.every((point) => isFiniteNumber(point.lng) && isFiniteNumber(point.lat))) {
+        return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
       }
     }
   }
 
-  return totalStops <= MAX_TOTAL_STOPS && totalLegs <= MAX_TOTAL_LEGS
+  if (totalStops > MAX_TOTAL_STOPS || totalLegs > MAX_TOTAL_LEGS) {
+    return { ok: false, reason: 'invalid', message: INVALID_TRIP_MESSAGE }
+  }
+  return { ok: true }
+}
+
+function isStorableTrip(value: unknown): value is Trip {
+  return checkTripShape(value).ok
 }
 
 function isStoredTripRecord(value: unknown): value is SavedTrip {
@@ -346,10 +404,13 @@ export function loadSavedTrips(storage: StorageLike | null = getLocalStorage()):
     skipped += trips.length - MAX_SAVED_TRIPS
     trips = trips.slice(0, MAX_SAVED_TRIPS)
   }
-  // 总量超限时只保留较新的记录；单条已通过上限校验，不会无限循环
-  while (trips.length > 0 && envelopeBytes(trips) > MAX_SAVED_STORAGE_BYTES) {
+  // 总量超限时只保留较新的记录；逐条扣减已算过的字节数，避免每丢掉一条就重新序列化整包
+  let envelopedBytes = envelopeBytes(trips)
+  while (trips.length > 0 && envelopedBytes > MAX_SAVED_STORAGE_BYTES) {
+    const dropped = trips[trips.length - 1]
     trips = trips.slice(0, -1)
     skipped += 1
+    envelopedBytes -= utf8ByteLength(JSON.stringify(dropped)) + (trips.length > 0 ? 1 : 0)
   }
 
   const message = skipped > 0
@@ -437,12 +498,8 @@ export function saveTripToStorage(
   storage: StorageLike | null = getLocalStorage(),
 ): SaveTripResult {
   if (!storage) return { ok: false, ...failure('unavailable', UNAVAILABLE_MESSAGE) }
-  if (!isStorableTrip(trip)) {
-    return {
-      ok: false,
-      ...failure('invalid', '当前行程的数据结构不完整或包含异常字段，未保存到本地。请重新生成行程后再试。'),
-    }
-  }
+  const shape = checkTripShape(trip)
+  if (!shape.ok) return { ok: false, ...failure(shape.reason, shape.message) }
 
   const current = loadSavedTrips(storage)
   if (current.status === 'unavailable') {
@@ -478,7 +535,8 @@ export function saveTripToStorage(
       ok: false,
       ...failure(
         'too_large',
-        `这份行程序列化后约 ${Math.ceil(recordBytes / 1024)} KB，超过单份 ${Math.round(MAX_SAVED_TRIP_BYTES / 1024)} KB 的保存上限，未保存。可以精简行程或只保留天数较少的版本。`,
+        `这份行程序列化后约 ${Math.ceil(recordBytes / 1024)} KB，超过单份 ${Math.round(MAX_SAVED_TRIP_BYTES / 1024)} KB 的本地保存上限，这次没有保存。` +
+          '当前行程仍可以正常查看，也可以用「导出日历 (.ics)」把日程导出；单份超限无法靠删除其他已保存行程解决，需要重新规划更短的行程。',
       ),
     }
   }
@@ -501,7 +559,9 @@ export function saveTripToStorage(
       ok: false,
       ...failure(
         'too_large',
-        `保存当前行程后会超过本地总容量上限（约 ${Math.round(MAX_SAVED_STORAGE_BYTES / 1024)} KB）。为不丢掉已有记录，这次保存没有写入；请先删除一些已保存行程再试。`,
+        `保存当前行程后会超过本地总容量上限（约 ${(MAX_SAVED_STORAGE_BYTES / 1024 / 1024).toFixed(1)} MB）。` +
+          '这次没有保存，已有记录保持原样；当前行程仍可以正常查看，也可以用「导出日历 (.ics)」导出。' +
+          '要存到本地，请先在「已保存行程」里删除一些记录再保存。',
       ),
     }
   }
@@ -577,7 +637,11 @@ export function undoSavedTripDeletion(
   if (envelopeBytes(trips) > MAX_SAVED_STORAGE_BYTES) {
     return {
       ok: false,
-      ...failure('limit', '撤销后会超过本地保存的容量上限，未完成。请先删除一份其他行程再撤销。'),
+      ...failure(
+        'limit',
+        `撤销后会超过本地总容量上限（约 ${(MAX_SAVED_STORAGE_BYTES / 1024 / 1024).toFixed(1)} MB），未完成。` +
+          '其他已保存行程没有被改动；请先删除一份其他行程再撤销。',
+      ),
     }
   }
   const writeError = writeTrips(storage, trips)
