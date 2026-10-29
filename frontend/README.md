@@ -13,8 +13,10 @@ pnpm dev            # http://localhost:5173，/api 代理到 http://127.0.0.1:80
 后端（仓库根目录）：
 
 ```bash
-python api_server.py    # 需要先配置 .env（DASHSCOPE_API_KEY 等）
+python api_server.py    # 未配置密钥也能启动；真实规划需要 DASHSCOPE_API_KEY
 ```
+
+不配任何 Key 时后端是可用的降级模式：`GET /api/health` 探活和 `GET /api/trips/example` 内置示例正常返回；`POST /api/trips/plan`、`/chat` 返回明确的 503，不会伪造结果。真实生成行程需要 `DASHSCOPE_API_KEY`；真实坐标和导航路线另需 `AMAP_API_KEY`，不配时站点坐标为 `null`、路段为 `unavailable`，前端不画线。Key 的配置方式见根 README 的 `.env` 说明。
 
 后端未就绪时可先用开发桩看界面。注意：**桩只提供固定示例和探活，不提供规划**。
 
@@ -28,6 +30,29 @@ $env:VITE_API_BASE="http://127.0.0.1:8001"; pnpm dev
 
 桩返回的是写死的杭州示例，标题、摘要和 warnings 都标了「固定示例」：所有路段只有「示意直线」或「路线不可用」，`distance_m` / `duration_minutes` 一律为 `null`，没有真实导航数据。`POST /api/trips/plan` 直接返回 503，`detail` 说明请启动配置密钥的后端，不会伪造 `source: "agent"` 的结果。需要真实规划时启动 `python api_server.py`。
 
+## 本地保存
+
+- 只有点「保存当前行程」才写入，页面加载、恢复、导出都不会顺手保存。
+- 数据写入当前浏览器、当前网址（同源）的 localStorage（键 `travel-assistant:saved-trips:v1`），不上传、不跨设备同步。最多 20 份，单份约 256 KB，总计约 1.5 MB；同一 `trip.id` 再次保存只更新原记录。
+- 达到份数或体积上限时明确失败，不会自动淘汰旧记录，需要先删一份。
+- 恢复只读取本地副本，后端不可用时也能查看；恢复后回到第一天并清空选中站点。删除后有页面内「撤销删除」，撤销条保留到撤销、手动关闭或下一次删除。
+- 每次读取都会重新校验。数据损坏、版本不符或体积异常时整份读取停止；存储里有无法识别的记录时只展示能确认的部分。这两种情况下保存、删除、撤销都会暂停，避免覆盖原始数据；确认不再需要后可在面板里二次确认清除，清除不可撤销。
+- 清除浏览器站点数据会一并删除这些记录；无痕模式或禁用站点数据时保存不可用。
+
+## 日历导出（.ics）
+
+- 点「下载 .ics 文件」才生成文件并用浏览器下载到本机，需要你手动导入 iOS 日历 / Google Calendar / Outlook。不会上传，也不会修改或保存行程。
+- 每个事件必须有合法日期和开始时刻。只有整份行程所有天的 `date` 都为空、且至少一天有站点时，面板才要求你先选「行程首日」；输入框默认空，必须由你主动选择。导出按天序号在真实日历上推算日期（跨月、跨年、闰年按实际日期算），仅用于本次导出，不写回原行程。存在任何真实日期时不会出现首日设置，缺日期的天只跳过。
+- 时间是不带时区的 floating local time，导入端按导入设备的本地时区解释。换设备或跨时区时，事件对应的绝对时间会变（钟面时间不变），导入后请抽查第一场事件。
+- 停留时长缺失、为 0、负数、非整数或超过 1440 分钟时，只写开始时间，不写结束时间，也不用默认时长补算。日历应用可能按自身默认时长显示一个结束时间，那不是行程数据的一部分。
+- 坐标不写入 `.ics`，`LOCATION` 使用站点地址；地址或讲解为空就省略对应字段。
+- 示例行程的事件标题带【示例】前缀，描述注明「示例行程数据，仅用于演示，未包含任何真实预约」。导出不写 STATUS、ORGANIZER、URL，不代表真实预订或已确认。
+- 缺日期、日期非法、时刻非法或站点无名称的站点会被跳过并列出原因；没有有效事件时不会下载空文件。重复导出同一事件的 UID 保持不变。
+
+## 停止等待
+
+规划请求进行中可以点「停止等待」。本页会立即中止等待并忽略迟到的响应，可以马上改参数重新提交。这个动作只影响本页，不保证后端或上游模型停止处理，也不能保证停止计费。
+
 ## 构建与测试
 
 ```bash
@@ -36,7 +61,7 @@ pnpm test            # vitest 单测（含 App 集成测试）
 pnpm preview         # 预览 dist 产物
 ```
 
-`pnpm test` 也会跑 `dev-stub/server.test.mjs`：只起本机 http 服务核对桩的标识与 503 行为，不连外网、不依赖高德或模型。
+`pnpm test` 也会跑 `dev-stub/server.test.mjs`：只起本机 http 服务核对桩的标识与 503 行为，不连外网、不依赖高德或模型。前端单测覆盖接口客户端、地图数据、瓦片状态、保存读写（`savedTrips.test.ts`）、日历生成（`calendar.test.ts`）与下载（`icsFile.test.ts`），以及保存、导出相关的组件测试。
 
 接口地址：默认走同源 `/api`（dev 由 Vite 代理，生产需反代同源 `/api`），也可用 `VITE_API_BASE` 覆盖（如 `VITE_API_BASE=http://127.0.0.1:8001`）。注意 `VITE_API_BASE` 是构建/启动时读取的环境变量，不是运行时变量：开发在 `pnpm dev` 前设置，生产在 `pnpm build` 前设置；bundle 生成后再改系统环境变量不会重写已构建的产物。
 
@@ -48,18 +73,24 @@ frontend/
 ├── public/favicon.svg
 ├── src/
 │   ├── main.tsx               # 入口
-│   ├── App.tsx                # 页面编排：示例加载、规划、日切换、站点联动
+│   ├── App.tsx                # 页面编排：示例加载、规划/停止等待、日切换、恢复保存、站点联动
 │   ├── app.css                # 样式（引用 ../tokens.css 设计令牌）
 │   ├── tokens.css             # 设计令牌（OKLCH 颜色 + 字体 + 4pt 间距）
 │   ├── components/
-│   │   ├── PlanForm.tsx       # 规划表单（真实验证、loading、错误处理）
+│   │   ├── PlanForm.tsx       # 规划表单（校验、loading、停止等待）
 │   │   ├── ItineraryList.tsx  # 逐日行程清单（逐点讲解、复制为文本）
-│   │   └── TripMap.tsx        # Leaflet 地图（站点、路线、图例、空态）
+│   │   ├── TripMap.tsx        # Leaflet 地图（站点、路线、图例、空态）
+│   │   ├── SavedTripsPanel.tsx # 本地保存 / 恢复 / 删除 / 撤销 / 清除
+│   │   └── IcsExportPanel.tsx # 日历导出（首日选择、跳过与导入提示）
 │   └── lib/
 │       ├── api.ts             # 后端客户端（/api/trips/example、/api/trips/plan）
 │       ├── format.ts          # 展示格式化与 OSM 链接
-│       └── mapData.ts         # 日行程 → 地图数据（坐标清洗、路线分类）
-└── src/__tests__/             # vitest 单测与集成测试
+│       ├── mapData.ts         # 日行程 → 地图数据（坐标清洗、路线分类）
+│       ├── tileStatus.ts      # 瓦片加载状态结算
+│       ├── savedTrips.ts      # localStorage 读写、结构校验与容量上限
+│       ├── calendar.ts        # Trip → .ics 纯函数（转义、折行、UID、日期推算）
+│       └── icsFile.ts         # 文件名清洗与 Blob 下载
+└── src/__tests__/             # vitest 单测与集成测试（含保存、导出、日历、ICS 文件）
 ```
 
 ## 契约要点（与后端约定）
