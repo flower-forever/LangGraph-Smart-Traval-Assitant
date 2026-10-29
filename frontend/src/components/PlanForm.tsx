@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import './backendStatus.css'
 import type { PlanRequest, TravelMode } from '../lib/api'
 
 export interface PlanFormProps {
@@ -6,6 +7,11 @@ export interface PlanFormProps {
   loading: boolean
   /** 停止等待当前规划请求（只取消本页等待，不保证终止后端 / 上游处理） */
   onCancel?: () => void
+  /**
+   * 后端已经明确说 planner_ready=false。
+   * 只能传 true：探活未知（旧后端 / 字段缺失）必须保持 undefined，不能当不可用。
+   */
+  plannerUnavailable?: boolean
 }
 
 interface FormState {
@@ -67,7 +73,7 @@ function validate(f: FormState): Errors {
   return errors
 }
 
-export default function PlanForm({ onSubmit, loading, onCancel }: PlanFormProps) {
+export default function PlanForm({ onSubmit, loading, onCancel, plannerUnavailable = false }: PlanFormProps) {
   const [form, setForm] = useState<FormState>(INITIAL)
   const [errors, setErrors] = useState<Errors>({})
   const [touched, setTouched] = useState(false)
@@ -78,6 +84,7 @@ export default function PlanForm({ onSubmit, loading, onCancel }: PlanFormProps)
   const travId = useId()
   const prefId = useId()
   const cancelNoteId = useId()
+  const plannerNoteId = useId()
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -89,6 +96,8 @@ export default function PlanForm({ onSubmit, loading, onCancel }: PlanFormProps)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // 按钮已禁用；回车提交（隐式提交）也拦住，不白跑一趟后端
+    if (plannerUnavailable) return
     const nextErrors = validate(form)
     setErrors(nextErrors)
     setTouched(true)
@@ -109,6 +118,21 @@ export default function PlanForm({ onSubmit, loading, onCancel }: PlanFormProps)
     <form className="plan-card" onSubmit={handleSubmit} noValidate aria-label="行程规划表单">
       <h2 className="plan-heading">规划一次新的出行</h2>
       <p className="plan-hint">填写基本信息，由后端智能体生成逐日路线、中文讲解与地图路线。</p>
+
+      {plannerUnavailable && (
+        <div className="plan-unavailable" id={plannerNoteId} role="status" aria-live="polite">
+          <p className="plan-unavailable-title">后端在线，规划暂不可用。</p>
+          <p>
+            后端健康检查明确返回 <code>planner_ready=false</code>，说明结构化规划组件还没就绪。
+            这时提交也会失败，所以提交按钮先禁用了；参数仍可以接着填。
+          </p>
+          <p>
+            具体原因前端看不到，可能包括后端没有配置模型访问凭据（例如 DASHSCOPE_API_KEY），
+            或规划依赖初始化失败；实际以服务端启动日志为准。处理完后点页面上方的「重新检测」，不用刷新页面。
+          </p>
+          <p>示例行程和这个浏览器里保存的副本不受影响，仍可查看。</p>
+        </div>
+      )}
 
       <div className="plan-fields">
         <div className="field field-destination">
@@ -234,8 +258,14 @@ export default function PlanForm({ onSubmit, loading, onCancel }: PlanFormProps)
       </div>
 
       <div className="plan-actions">
-        <button className="btn btn-primary" type="submit" disabled={loading} data-loading={loading}>
-          {loading ? '正在规划…' : '生成行程'}
+        <button
+          className="btn btn-primary"
+          type="submit"
+          disabled={loading || plannerUnavailable}
+          data-loading={loading}
+          aria-describedby={plannerUnavailable ? plannerNoteId : undefined}
+        >
+          {loading ? '正在规划…' : plannerUnavailable ? '规划暂不可用' : '生成行程'}
         </button>
         {loading && onCancel && (
           <button

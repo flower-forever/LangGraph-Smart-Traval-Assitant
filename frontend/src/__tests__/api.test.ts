@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, isTripLike, planTrip, fetchExampleTrip, probeBackend } from '../lib/api'
+import { ApiError, isTripLike, planTrip, fetchExampleTrip, probeBackend, probeBackendCapabilities } from '../lib/api'
 import { MOCK_TRIP } from './fixtures/trip'
 
 function jsonResponse(data: unknown, status = 200) {
@@ -15,6 +15,20 @@ function proxyErrorResponse() {
     'Error occurred while trying to proxy: 127.0.0.1:5173/api/trips/example',
     { status: 500, headers: { 'Content-Type': 'text/plain' } },
   )
+}
+
+/**
+ * 只回了响应头、body 永远不结束的响应。abort 打不断这种假响应，
+ * 用来验证「响应体阶段」的超时归类不依赖底层读取是否响应 abort。
+ */
+function hangingBodyResponse(): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+    json: () => new Promise<never>(() => {}),
+    text: () => new Promise<never>(() => {}),
+  } as unknown as Response
 }
 
 describe('api client', () => {
@@ -108,6 +122,23 @@ describe('api client', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect(err.kind).toBe('bad_payload')
   })
+
+  it('响应头之后 body 卡住：超时归类 timeout，不误报 bad_payload', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(hangingBodyResponse()))
+    const err = await fetchExampleTrip({ timeoutMs: 5 }).catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.kind).toBe('timeout')
+  })
+
+  it('body 阶段被调用方取消归类 abort，不误报超时', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(hangingBodyResponse()))
+    const pending = fetchExampleTrip({ signal: controller.signal, timeoutMs: 5000 }).catch((e) => e)
+    controller.abort()
+    const err = await pending
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.kind).toBe('abort')
+  })
 })
 
 describe('probeBackend', () => {
@@ -147,5 +178,112 @@ describe('probeBackend', () => {
     controller.abort()
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('Aborted', 'AbortError')))
     await expect(probeBackend({ signal: controller.signal })).resolves.toBe(false)
+  })
+
+  it('probeBackend 的布尔结果与 capabilities.reachable 一致', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ status: 'healthy', planner_ready: false })))
+    // 规划不可用，但后端确实可达：老入口仍然只回答「可达」
+    await expect(probeBackend()).resolves.toBe(true)
+  })
+})
+
+describe('probeBackendCapabilities', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('planner_ready=false：可达，但规划明确不可用', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ status: 'healthy', tools_count: 3, planner_ready: false }),
+    ))
+    await expect(probeBackendCapabilities()).resolves.toEqual({
+      reachable: true,
+      planner: 'unavailable',
+      failure: null,
+    })
+  })
+
+  it('planner_ready=true：可达且可规划', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ status: 'healthy', planner_ready: true }),
+    ))
+    await expect(probeBackendCapabilities()).resolves.toEqual({
+      reachable: true,
+      planner: 'ready',
+      failure: null,
+    })
+  })
+
+  it('字段缺失或不是布尔值时是 unknown，绝不猜成 unavailable', async () => {
+    const payloads: unknown[] = [
+      { status: 'healthy' },
+      { status: 'healthy', planner_ready: 'false' },
+      { status: 'healthy', planner_ready: 0 },
+      { status: 'healthy', planner_ready: null },
+      { status: 'healthy', planner_ready: {} },
+    ]
+    for (const payload of payloads) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(payload)))
+      const caps = await probeBackendCapabilities()
+      expect(caps).toEqual({ reachable: true, planner: 'unknown', failure: null })
+    }
+  })
+
+  it('status 不是 healthy：不可达，且 planner 固定 unknown', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ status: 'degraded', planner_ready: true }),
+    ))
+    await expect(probeBackendCapabilities()).resolves.toEqual({
+      reachable: false,
+      planner: 'unknown',
+      failure: 'bad_payload',
+    })
+  })
+
+  it('200 HTML（SPA fallback）归为 bad_payload', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse()))
+    await expect(probeBackendCapabilities()).resolves.toMatchObject({
+      reachable: false,
+      planner: 'unknown',
+      failure: 'bad_payload',
+    })
+  })
+
+  it('HTTP 错误归为 http 分级', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(proxyErrorResponse()))
+    await expect(probeBackendCapabilities()).resolves.toMatchObject({
+      reachable: false,
+      planner: 'unknown',
+      failure: 'http',
+    })
+  })
+
+  it('网络错误归为 network 分级', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
+    await expect(probeBackendCapabilities()).resolves.toMatchObject({
+      reachable: false,
+      planner: 'unknown',
+      failure: 'network',
+    })
+  })
+
+  it('超时归为 timeout 分级（不会卡住首屏）', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    })))
+    await expect(probeBackendCapabilities({ timeoutMs: 5 })).resolves.toMatchObject({
+      reachable: false,
+      planner: 'unknown',
+      failure: 'timeout',
+    })
+  })
+
+  it('响应头到了、body 卡住：超时归为 timeout，不算 bad_payload', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(hangingBodyResponse()))
+    await expect(probeBackendCapabilities({ timeoutMs: 5 })).resolves.toEqual({
+      reachable: false,
+      planner: 'unknown',
+      failure: 'timeout',
+    })
   })
 })

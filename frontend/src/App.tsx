@@ -5,15 +5,94 @@ import PlanForm from './components/PlanForm'
 import ItineraryList from './components/ItineraryList'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
-import { ApiError, fetchExampleTrip, planTrip, probeBackend } from './lib/api'
+import './components/backendStatus.css'
+import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { formatDateTime } from './lib/format'
-import type { PlanRequest, Trip } from './lib/api'
+import type { BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, Trip } from './lib/api'
 
 type LoadPhase = 'initial' | 'loading' | 'ready' | 'failed'
 
+/** 失败结论是谁给的。探活失败和业务请求失败必须分开说，不能互相冒充。 */
+type FailureSource = 'probe' | 'request'
+
+/** 后端探活结论。可达（reachable）与能规划（planner）分开记，不能互相替代。 */
 interface BackendState {
+  /** 完成过一次探活或拿到过业务结论 */
   checked: boolean
-  ok: boolean
+  /** 后端是可用的健康服务 */
+  reachable: boolean
+  /** 只有 health 明确表态才不是 unknown；unknown 不等于不可用 */
+  planner: PlannerAvailability
+  /** 失败分级；可达时为 null */
+  failure: ProbeFailure | null
+  /** 这条失败结论来自探活还是业务请求——决定文案怎么说，不能混 */
+  failureSource: FailureSource | null
+  /** 有探活在飞 */
+  probing: boolean
+}
+
+const BACKEND_INITIAL: BackendState = {
+  checked: false,
+  reachable: false,
+  planner: 'unknown',
+  failure: null,
+  failureSource: null,
+  probing: true,
+}
+
+/** 探活失败时的固定提示：不复述后端 warnings，避免把绝对路径、密钥这类内容带进页面 */
+const PROBE_FAILURE_HINT: Record<ProbeFailure, string> = {
+  timeout: '健康检查超时没有回应。请确认后端已启动，或检查 Vite 的 /api 代理是否指向了正确的地址。',
+  network: '健康检查请求没能送达后端。请确认后端已启动，或检查 Vite 的 /api 代理设置。',
+  http: '健康检查返回了错误状态码。请确认 /api/health 确实被代理到后端，而不是静态服务器。',
+  bad_payload: '健康检查没有返回约定的 JSON。/api 可能被 SPA fallback 或静态服务器接管了。',
+}
+
+/**
+ * 业务请求失败时的固定提示：只承认「这一次调用没成」，
+ * 不用健康检查的口径描述业务错误，也不复述后端返回的原文。
+ */
+const REQUEST_FAILURE_HINT =
+  '这次失败来自业务请求，不是健康检查：它只说明这一次调用没拿到结果。点「重新检测」可以按健康检查重新确认后端状态。'
+
+/** 头部失败原因提示的固定 id，供「重新检测」按钮 aria-describedby 引用 */
+const BACKEND_HINT_ID = 'backend-hint'
+
+/** 有业务请求成功就说明后端在线：health 只是辅助信号，不能推翻实际成功的数据请求 */
+function markReachable(prev: BackendState): BackendState {
+  return { ...prev, checked: true, reachable: true, failure: null, failureSource: null }
+}
+
+/**
+ * 探活结论落到界面状态。业务请求在探活发出之后成功过（provenLater），
+ * 就不接受这次「不可达」的迟到判定——常见于代理慢、探活超时这类误判。
+ */
+function mergeProbe(prev: BackendState, caps: BackendCapabilities, provenLater: boolean): BackendState {
+  if (provenLater && !caps.reachable) return { ...markReachable(prev), probing: false }
+  return {
+    checked: true,
+    reachable: caps.reachable,
+    planner: caps.reachable ? caps.planner : 'unknown',
+    failure: caps.failure,
+    failureSource: caps.failure ? 'probe' : null,
+    probing: false,
+  }
+}
+
+/**
+ * 业务请求失败只降级「可达」，不动已经落地的规划能力结论：
+ * planner_ready=false 是健康检查给出的能力判定，不该被一次无关的业务失败抹掉。
+ */
+function mergeRequestFailure(prev: BackendState, failure: ProbeFailure): BackendState {
+  return { ...prev, checked: true, reachable: false, failure, failureSource: 'request' }
+}
+
+/** 业务失败里能说明「后端连接有问题」的只有传输层两种；结构错误不该升级成后端不可达 */
+function requestFailureOf(err: unknown): ProbeFailure | null {
+  if (!(err instanceof ApiError)) return null
+  if (err.kind === 'timeout') return 'timeout'
+  if (err.kind === 'network') return 'network'
+  return null
 }
 
 function errorText(err: unknown): { title: string; detail: string } {
@@ -54,7 +133,7 @@ export default function App() {
   const [error, setError] = useState<{ title: string; detail: string } | null>(null)
   const [planLoading, setPlanLoading] = useState(false)
   const [planCancelled, setPlanCancelled] = useState(false)
-  const [backend, setBackend] = useState<BackendState>({ checked: false, ok: false })
+  const [backend, setBackend] = useState<BackendState>(BACKEND_INITIAL)
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
   const [restoredAt, setRestoredAt] = useState<number | null>(null)
@@ -63,28 +142,66 @@ export default function App() {
   /** 行程归属序号：恢复 / 规划成功都会 +1，迟到的示例响应据此丢弃 */
   const loadSeqRef = useRef(0)
   const planSeqRef = useRef(0)
+  /** 探活归属序号：重新检测 / 规划成功都会 +1，迟到的探活结论据此丢弃 */
+  const probeSeqRef = useRef(0)
+  const probeControllerRef = useRef<AbortController | null>(null)
+  /**
+   * 后端结论版本号：探活得出一致结论、业务请求成功、业务失败被采纳，都会 +1。
+   * 业务请求在发起时记下版本，失败回来时版本变了就说明其间已有更新的结论，这次失败不许覆盖它。
+   */
+  const backendConclusionSeqRef = useRef(0)
+  /** 业务请求成功次数：探活发出后拿到过真实数据，就不再采信这次探活的失败结论 */
+  const businessProofRef = useRef(0)
   const itineraryTopRef = useRef<HTMLDivElement | null>(null)
   const tripTitleRef = useRef<HTMLHeadingElement | null>(null)
+
+  /** 探活，可重复触发；旧结论靠序号挡住，不会盖掉新结果 */
+  const runProbe = useCallback(() => {
+    probeControllerRef.current?.abort()
+    const controller = new AbortController()
+    probeControllerRef.current = controller
+    const sequence = probeSeqRef.current + 1
+    probeSeqRef.current = sequence
+    const proofAtStart = businessProofRef.current
+    setBackend((prev) => ({ ...prev, probing: true }))
+    void probeBackendCapabilities({ signal: controller.signal }).then((caps) => {
+      if (probeControllerRef.current === controller) probeControllerRef.current = null
+      if (sequence !== probeSeqRef.current) return
+      backendConclusionSeqRef.current += 1
+      const provenLater = businessProofRef.current !== proofAtStart
+      setBackend((prev) => mergeProbe(prev, caps, provenLater))
+    })
+  }, [])
+
+  /**
+   * 业务请求失败落库。两条硬规则：
+   * 1. 只有这次请求发出之后没有更新的后端结论，才轮得到它说话——旧失败不能盖掉新探活；
+   * 2. 只降级「可达」，不写 planner：规划能力是 health 的判断，业务失败无从得知。
+   */
+  const applyRequestFailure = useCallback((failure: ProbeFailure, conclusionAtStart: number) => {
+    if (backendConclusionSeqRef.current !== conclusionAtStart) return
+    backendConclusionSeqRef.current += 1
+    setBackend((prev) => mergeRequestFailure(prev, failure))
+  }, [])
 
   // 首次进入：拉示例行程 + 探活
   useEffect(() => {
     let cancelled = false
-    const probeController = new AbortController()
     const exampleController = new AbortController()
     const sequence = loadSeqRef.current
+    /** 示例请求出发时的后端结论版本，用来挡住「旧失败盖新探活」 */
+    const conclusionAtStart = backendConclusionSeqRef.current
     exampleAbortRef.current = exampleController
-    probeBackend({ signal: probeController.signal }).then((ok) => {
-      if (cancelled) return
-      // 业务请求如果已经成功，就保留在线结论（探活可能被代理或超时误判）
-      setBackend((prev) => (prev.ok ? prev : { checked: true, ok }))
-    })
+    runProbe()
     fetchExampleTrip({ signal: exampleController.signal })
       .then((t) => {
         if (cancelled || sequence !== loadSeqRef.current) return
         setTrip(t)
         setPhase('ready')
-        // 能拿到业务数据本身就说明后端在线
-        setBackend({ checked: true, ok: true })
+        // 能拿到业务数据本身就说明后端在线；它不证明规划可用，所以 planner 仍以 health 为准
+        businessProofRef.current += 1
+        backendConclusionSeqRef.current += 1
+        setBackend(markReachable)
       })
       .catch((err) => {
         if (cancelled || sequence !== loadSeqRef.current) return
@@ -92,17 +209,20 @@ export default function App() {
         if (err instanceof ApiError && err.kind === 'abort') return
         setPhase('failed')
         setError(errorText(err))
-        if (err instanceof ApiError && err.kind === 'network') {
-          setBackend({ checked: true, ok: false })
-        }
+        // 只有传输层失败才改变后端结论；结构错误是数据问题，不该说成连不上
+        const failure = requestFailureOf(err)
+        if (failure) applyRequestFailure(failure, conclusionAtStart)
       })
     return () => {
       cancelled = true
-      probeController.abort()
+      // 序号 +1 让在飞探活的迟到结论直接作废
+      probeSeqRef.current += 1
+      probeControllerRef.current?.abort()
+      probeControllerRef.current = null
       exampleController.abort()
       if (exampleAbortRef.current === exampleController) exampleAbortRef.current = null
     }
-  }, [])
+  }, [runProbe, applyRequestFailure])
 
   // 地图 marker、弹窗与列表共用同一个入口：幂等设置选中站点，空串表示收起
   const handleSelectStop = useCallback((stopId: string) => {
@@ -160,6 +280,8 @@ export default function App() {
     abortRef.current = controller
     const sequence = planSeqRef.current + 1
     planSeqRef.current = sequence
+    /** 规划请求出发时的后端结论版本，用来挡住「旧失败盖新探活」 */
+    const conclusionAtStart = backendConclusionSeqRef.current
     setPlanLoading(true)
     setPlanCancelled(false)
     setError(null)
@@ -171,16 +293,22 @@ export default function App() {
       setRestoredAt(null)
       setActiveDay(t.days[0]?.day ?? 1)
       setActiveStopId(null)
-      setBackend({ checked: true, ok: true })
+      // 真正拿到规划结果，比 health 更有说服力：此时规划确定可用，迟到的探活不能推翻
+      businessProofRef.current += 1
+      backendConclusionSeqRef.current += 1
+      probeSeqRef.current += 1
+      probeControllerRef.current?.abort()
+      probeControllerRef.current = null
+      setBackend({ checked: true, reachable: true, planner: 'ready', failure: null, failureSource: null, probing: false })
       // 新规划已接管页面，加载中的示例请求（即使忽略 abort）不能再覆盖
       loadSeqRef.current += 1
       scrollToItinerary()
     } catch (err) {
       if (sequence !== planSeqRef.current) return
       if (err instanceof ApiError && err.kind === 'abort') return
-      if (err instanceof ApiError && err.kind === 'network') {
-        setBackend({ checked: true, ok: false })
-      }
+      // 传输层失败才动后端结论；业务错误（500 / 结构不符）由错误横幅说明，不能冒充health
+      const failure = requestFailureOf(err)
+      if (failure) applyRequestFailure(failure, conclusionAtStart)
       setError(errorText(err))
     } finally {
       if (sequence === planSeqRef.current) {
@@ -188,7 +316,7 @@ export default function App() {
         setPlanLoading(false)
       }
     }
-  }, [scrollToItinerary])
+  }, [scrollToItinerary, applyRequestFailure])
 
   /**
    * 停止等待：只让本页不再等这次结果，立刻恢复可提交状态。
@@ -229,6 +357,45 @@ export default function App() {
   const dayTabs = trip?.days ?? []
   const tripIsExample = trip?.source === 'example'
 
+  // 只有后端明确返回 planner_ready=false 才锁提交；unknown 保持旧行为，照常允许
+  const plannerUnavailable = backend.reachable && backend.planner === 'unavailable'
+  const backendVisual = !backend.checked
+    ? 'unknown'
+    : !backend.reachable
+      ? 'down'
+      : plannerUnavailable
+        ? 'degraded'
+        : 'ok'
+  /**
+   * 失败原因一律用前端固定句，不回显后端 warnings（绝对路径、疑似密钥会被带进页面）。
+   * 探活失败和业务失败各说各的：业务错误不借用健康检查的口径。
+   */
+  const backendHint = !backend.checked || backend.reachable
+    ? null
+    : backend.failureSource === 'request'
+      ? REQUEST_FAILURE_HINT
+      : backend.failure
+        ? PROBE_FAILURE_HINT[backend.failure]
+        : null
+  // 状态胶囊里的一句话；结论不因重新检测而消失，进行中状态另加后缀（见 JSX）
+  const backendStatusLabel = !backend.checked
+    ? '正在检查后端…'
+    : !backend.reachable
+      ? backend.failureSource === 'request'
+        ? '最近一次请求没成功——后端状态未确认'
+        : '后端未连接——规划暂不可用'
+      : plannerUnavailable
+        ? '后端在线，规划暂不可用'
+        : (
+          <>
+            <span>后端服务正常</span>
+            <span className="backend-note">
+              {' · '}
+              {backend.planner === 'ready' ? '可以生成行程' : '规划能力未知'}
+            </span>
+          </>
+        )
+
   return (
     <div className="app-shell">
       <a className="visually-hidden sr-only-focusable" href="#trip-section">跳到行程内容</a>
@@ -239,26 +406,43 @@ export default function App() {
           <span className="brand-sub">智能出行助手 · 逐日路线与中文讲解</span>
         </div>
         <div className="header-spacer" />
-        <div
-          className="backend-state"
-          data-state={backend.checked ? (backend.ok ? 'ok' : 'down') : 'unknown'}
-          title={backend.checked && !backend.ok ? '请确认后端已启动，或检查 Vite 的 /api 代理设置' : undefined}
-        >
-          <span className="dot" aria-hidden="true" />
-          <span role="status">
-            {!backend.checked
-              ? '正在检查后端…'
-              : backend.ok
-                ? '后端服务正常'
-                : '后端未连接——规划暂不可用'}
-          </span>
+        <div className="backend-status">
+          <div className="backend-state" data-state={backendVisual}>
+            <span className="dot" aria-hidden="true" />
+            {/* role=status 自带 polite 播报：重新检测的开始 / 结束都会念出来 */}
+            <span role="status" aria-live="polite">
+              {backendStatusLabel}
+              {backend.probing && backend.checked && (
+                <span className="backend-probing">{' · '}正在重新检测…</span>
+              )}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost backend-reprobe"
+            onClick={runProbe}
+            aria-busy={backend.probing || undefined}
+            aria-describedby={backendHint ? BACKEND_HINT_ID : undefined}
+            title="重新探测后端健康状态，不会刷新页面"
+          >
+            重新检测
+          </button>
         </div>
       </header>
+
+      {backendHint && (
+        <p className="backend-hint" id={BACKEND_HINT_ID}>{backendHint}</p>
+      )}
 
       <div className="topbar-progress" data-active={planLoading || phase === 'loading'} aria-hidden="true" />
 
       <main className="app-main">
-        <PlanForm onSubmit={handlePlan} loading={planLoading} onCancel={handleStopWaiting} />
+        <PlanForm
+          onSubmit={handlePlan}
+          loading={planLoading}
+          onCancel={handleStopWaiting}
+          plannerUnavailable={plannerUnavailable}
+        />
 
         {planCancelled && !planLoading && (
           <p className="plan-cancel-status" role="status">

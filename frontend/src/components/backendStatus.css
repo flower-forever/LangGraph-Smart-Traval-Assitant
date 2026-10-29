@@ -1,0 +1,91 @@
+/* 后端能力状态：App 头部的探活胶囊 + 规划表单里的「规划暂不可用」提示。
+   颜色一律取 tokens.css 的变量，不在这里写死色值。 */
+
+.backend-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 状态文字用次级墨色（--color-ink-2，38% 亮度）而不是 faint，宣纸底上对比够读 */
+.backend-state {
+  color: var(--color-ink-2);
+}
+
+/* 可达但规划不可用：琥珀色，和「断了」区分开 */
+.backend-state[data-state="degraded"] .dot { background: var(--color-warn-ink); }
+.backend-state[data-state="unknown"] .dot { background: var(--color-line-strong); }
+
+/* 附注（规划能力未知 / 可以生成行程）跟着状态文字走，不再弱化到 faint */
+.backend-state .backend-note {
+  color: var(--color-ink-2);
+  letter-spacing: 0.04em;
+}
+
+/* 重新检测进行中：结论照旧显示，后面挂一句进行中，读屏会随 role=status 播报 */
+.backend-state .backend-probing {
+  color: var(--color-ink-2);
+  letter-spacing: 0.02em;
+}
+
+.backend-reprobe {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+  white-space: nowrap;
+}
+
+/* 检测中：按钮保留焦点（不 disabled），用 aria-busy + 胶囊文字表达进行中 */
+.backend-reprobe[aria-busy="true"] {
+  cursor: progress;
+  color: var(--color-ink);
+}
+
+/* 失败原因的固定文案：放在头部下方整行，可读、可被 aria-describedby 引用 */
+.backend-hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-6);
+  border-bottom: var(--rule);
+  background: var(--color-paper-3);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.plan-unavailable {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-warn-bg);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+}
+
+.plan-unavailable p {
+  margin: 0 0 var(--space-1);
+  max-width: 78ch;
+}
+
+.plan-unavailable p:last-child { margin-bottom: 0; }
+
+.plan-unavailable-title {
+  font-weight: 600;
+  color: var(--color-warn-ink);
+}
+
+.plan-unavailable code {
+  padding: 0 0.25em;
+  border-radius: 3px;
+  background: var(--color-paper-3);
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+@media (max-width: 640px) {
+  .backend-status { flex-wrap: wrap; justify-content: flex-end; }
+  /* 移动端触达：重新检测按钮至少 44px 高 */
+  .backend-reprobe { min-height: 44px; }
+  .backend-hint { padding: var(--space-2) var(--space-4); }
+}

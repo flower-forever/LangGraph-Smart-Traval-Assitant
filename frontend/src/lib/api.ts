@@ -65,9 +65,10 @@ export interface PlanRequest {
 }
 
 export type ApiErrorKind =
-  | 'network'      // 后端不可达 / 超时
+  | 'network'      // 后端不可达 / 连接中途断开
   | 'server'       // 后端返回 4xx/5xx
-  | 'abort'        // 用户取消
+  | 'abort'        // 调用方主动取消
+  | 'timeout'      // 等待响应超时（含响应头到达之后的响应体阶段）
   | 'bad_payload'  // 返回结构不符合契约
 
 export class ApiError extends Error {
@@ -101,6 +102,11 @@ export interface ApiOptions {
   signal?: AbortSignal
   /** 覆盖 VITE_API_BASE，测试或多环境部署时用 */
   baseUrl?: string
+  /**
+   * 整个请求（含响应体读取）的超时，毫秒。
+   * 不传就不设超时：AI 规划本来就可能跑很久，该由调用方的 signal 决定取不取消。
+   */
+  timeoutMs?: number
 }
 
 /** 健康探针走 /api 前缀，才能被 Vite 开发代理转发到后端 */
@@ -113,50 +119,200 @@ function apiBase(options?: ApiOptions): string {
   return base.replace(/\/+$/, '')
 }
 
+/**
+ * 请求时钟：把「调用方取消」和「超时」分开记，被打断的请求才能归类对。
+ * 计时覆盖整个请求生命周期，包括响应头到达之后的响应体读取——
+ * 后端先回了 200 头、body 卡住时属于超时，不是结构错误（bad_payload）。
+ */
+interface RequestClock {
+  signal: AbortSignal
+  timedOut(): boolean
+  abortedByCaller(): boolean
+  /**
+   * 与信号中止竞速。底层读取不一定响应 abort——真实浏览器会中断响应体，
+   * 但 polyfill / 代理 / keep-alive 场景里 res.text() 可能一直挂着。
+   * 用 race 保证「响应头已到、body 卡住」也能按时落到 timeout，而不是永远等下去。
+   */
+  race<T>(promise: Promise<T>): Promise<T>
+  dispose(): void
+}
+
+function createRequestClock(options?: ApiOptions): RequestClock {
+  const controller = new AbortController()
+  const caller = options?.signal
+  const timeoutMs = options?.timeoutMs
+  let timedOut = false
+  let callerAborted = false
+  const onCallerAbort = () => {
+    callerAborted = true
+    controller.abort()
+  }
+  if (caller) {
+    if (caller.aborted) onCallerAbort()
+    else caller.addEventListener('abort', onCallerAbort, { once: true })
+  }
+  const abortError = () => {
+    if (typeof DOMException === 'function') return new DOMException('请求已中止', 'AbortError')
+    const err = new Error('请求已中止')
+    err.name = 'AbortError'
+    return err
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+    timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+  }
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    abortedByCaller: () => callerAborted,
+    race<T>(promise: Promise<T>): Promise<T> {
+      const { signal } = controller
+      if (signal.aborted) {
+        // 已经中止就别再挂着读取了，顺手把它的拒绝吃掉，避免 unhandled rejection
+        promise.catch(() => {})
+        return Promise.reject(abortError())
+      }
+      return new Promise<T>((resolve, reject) => {
+        const onAbort = () => {
+          signal.removeEventListener('abort', onAbort)
+          // 底层读取可能不响应 abort，挂着的那个 promise 要自己兜住
+          promise.catch(() => {})
+          reject(abortError())
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        promise.then(
+          (value) => {
+            signal.removeEventListener('abort', onAbort)
+            resolve(value)
+          },
+          (err) => {
+            signal.removeEventListener('abort', onAbort)
+            reject(err)
+          },
+        )
+      })
+    },
+    dispose() {
+      if (timer !== undefined) clearTimeout(timer)
+      caller?.removeEventListener('abort', onCallerAbort)
+    },
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError'
+}
+
+/**
+ * 把「被打断」的请求归类：先认自己的超时，再认调用方取消；都不是就返回 null，
+ * 让调用方按真实故障（网络错误、HTTP 错误等）处理。
+ */
+function interruptedApiError(clock: RequestClock, err: unknown): ApiError | null {
+  if (clock.timedOut()) return new ApiError('timeout', '等待后端响应超时，没在限定时间内拿到完整结果')
+  if (clock.abortedByCaller() || isAbortError(err)) return new ApiError('abort', '请求已取消')
+  return null
+}
+
+/**
+ * 规划能力。只有后端明确表态才算数：
+ * - 'ready'：health 里 planner_ready 是布尔 true
+ * - 'unavailable'：health 里 planner_ready 是布尔 false
+ * - 'unknown'：字段缺失、类型不对（例如字符串 "false"）、旧后端或 stub——不能当 false 处理
+ */
+export type PlannerAvailability = 'ready' | 'unavailable' | 'unknown'
+
+/** 探活失败分级，与请求层 network/server/bad_payload 的口径对齐，另加超时 */
+export type ProbeFailure = 'timeout' | 'network' | 'http' | 'bad_payload'
+
+/** 探活结论：后端是否可达，与规划是否可用，是两件事 */
+export interface BackendCapabilities {
+  /** 后端是活着的、契约内的健康服务（status=healthy 的 JSON） */
+  reachable: boolean
+  /** 规划能力；reachable=false 时固定 unknown，没连上就无从判断 */
+  planner: PlannerAvailability
+  /** 失败分级；reachable=true 时为 null */
+  failure: ProbeFailure | null
+}
+
+const UNREACHABLE: BackendCapabilities = { reachable: false, planner: 'unknown', failure: 'network' }
+
 /** 健康响应必须是 JSON 对象且 status 为 healthy；HTML fallback 的 200 不算数 */
 function isHealthyPayload(body: unknown): boolean {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return false
   return (body as { status?: unknown }).status === 'healthy'
 }
 
+/** 只认布尔字面量：缺字段、null、"false" 之类一律未知，绝不猜成不可用 */
+function readPlannerAvailability(body: unknown): PlannerAvailability {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return 'unknown'
+  const value = (body as { planner_ready?: unknown }).planner_ready
+  if (value === true) return 'ready'
+  if (value === false) return 'unavailable'
+  return 'unknown'
+}
+
 /**
- * 探活：GET {base}/api/health。
+ * 探活：GET {base}/api/health，返回「可达」与「规划能力」两件事。
  * 静态服务器（或 SPA fallback）对未知路径也会回 200 HTML，因此不能只看 res.ok；
  * 必须解析出契约里的 JSON，且 status === 'healthy'。
+ * 本函数不抛错，失败原因收敛成 failure 分级，调用方按需展示。
  */
-export async function probeBackend(options?: ApiOptions & { timeoutMs?: number }): Promise<boolean> {
-  const controller = new AbortController()
-  const callerSignal = options?.signal
-  const abort = () => controller.abort()
-  if (callerSignal) {
-    if (callerSignal.aborted) controller.abort()
-    else callerSignal.addEventListener('abort', abort, { once: true })
-  }
-  const timer = setTimeout(abort, options?.timeoutMs ?? HEALTH_TIMEOUT_MS)
+export async function probeBackendCapabilities(
+  options?: ApiOptions & { timeoutMs?: number },
+): Promise<BackendCapabilities> {
+  const clock = createRequestClock({ ...options, timeoutMs: options?.timeoutMs ?? HEALTH_TIMEOUT_MS })
   try {
     const res = await fetch(apiBase(options) + HEALTH_PATH, {
       headers: { Accept: 'application/json' },
-      signal: controller.signal,
+      signal: clock.signal,
     })
-    if (!res.ok) return false
-    const body: unknown = await res.json()
-    return isHealthyPayload(body)
+    if (!res.ok) return { reachable: false, planner: 'unknown', failure: 'http' }
+    let body: unknown
+    try {
+      // 响应头到了、body 还在路上：超时后立刻归类，不等底层读取自己醒悟
+      body = await clock.race(res.json())
+    } catch {
+      // 响应头先到、body 阶段被超时打断：这是超时，不是返回结构有问题。
+      // 只有真正读完却解析不了（200 + HTML 的 SPA fallback / 静态服务器）才算 bad_payload。
+      if (clock.timedOut()) return { reachable: false, planner: 'unknown', failure: 'timeout' }
+      if (clock.abortedByCaller()) return { ...UNREACHABLE, failure: 'network' }
+      return { reachable: false, planner: 'unknown', failure: 'bad_payload' }
+    }
+    if (!isHealthyPayload(body)) {
+      return { reachable: false, planner: 'unknown', failure: 'bad_payload' }
+    }
+    // 兼容旧后端与 stub：字段缺失时 planner 是 unknown，不是 false
+    return { reachable: true, planner: readPlannerAvailability(body), failure: null }
   } catch {
-    return false
+    return { ...UNREACHABLE, failure: clock.timedOut() ? 'timeout' : 'network' }
   } finally {
-    clearTimeout(timer)
-    callerSignal?.removeEventListener('abort', abort)
+    clock.dispose()
   }
+}
+
+/**
+ * 旧调用入口，只回答「后端是否可达」。
+ * 需要知道能不能规划时用 probeBackendCapabilities——可达不等于规划可用。
+ */
+export async function probeBackend(options?: ApiOptions & { timeoutMs?: number }): Promise<boolean> {
+  const caps = await probeBackendCapabilities(options)
+  return caps.reachable
 }
 
 const JSON_BODY_START = /^\s*[[{]/
 
-async function parseErrorResponse(res: Response): Promise<ApiError> {
+async function parseErrorResponse(res: Response, clock: RequestClock): Promise<ApiError> {
   const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
   let raw = ''
   try {
-    raw = await res.text()
-  } catch {
+    raw = await clock.race(res.text())
+  } catch (err) {
+    // 读错误响应体时被打断，优先报「超时 / 取消」，别让它变成一条假的业务错误
+    const interrupted = interruptedApiError(clock, err)
+    if (interrupted) throw interrupted
     raw = ''
   }
   const looksJson = contentType.includes('json') || JSON_BODY_START.test(raw)
@@ -183,14 +339,21 @@ async function parseErrorResponse(res: Response): Promise<ApiError> {
   )
 }
 
-/** 读业务 JSON；把 SPA fallback 的 HTML 200 识别成「没连上后端」，而不是数据格式错误 */
-async function readJson<T>(res: Response): Promise<T> {
+/**
+ * 读业务 JSON。三类失败要分开：
+ * - 读取过程被打断（超时 / 取消）：按 timeout 或 abort 报，不能算结构问题
+ * - 读到的是 HTML 200：SPA fallback，等于没代理到后端
+ * - 读完整了却不是合法 JSON：才是 bad_payload
+ */
+async function readJson<T>(res: Response, clock: RequestClock): Promise<T> {
   const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
   let text: string
   try {
-    text = await res.text()
-  } catch {
-    throw new ApiError('bad_payload', '后端响应读取失败')
+    text = await clock.race(res.text())
+  } catch (err) {
+    const interrupted = interruptedApiError(clock, err)
+    if (interrupted) throw interrupted
+    throw new ApiError('network', '读取后端响应时连接中断')
   }
   if (!contentType.includes('json') && /^\s*</.test(text)) {
     throw new ApiError('network', '接口返回的是 HTML 页面，/api 请求可能没有代理到后端')
@@ -203,39 +366,47 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 async function requestJson<T>(path: string, options?: ApiOptions): Promise<T> {
-  let res: Response
+  const clock = createRequestClock(options)
   try {
-    res = await fetch(apiBase(options) + path, {
-      headers: { Accept: 'application/json' },
-      signal: options?.signal,
-    })
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new ApiError('abort', '请求已取消')
+    let res: Response
+    try {
+      res = await fetch(apiBase(options) + path, {
+        headers: { Accept: 'application/json' },
+        signal: clock.signal,
+      })
+    } catch (err) {
+      const interrupted = interruptedApiError(clock, err)
+      if (interrupted) throw interrupted
+      throw new ApiError('network', '无法连接后端服务，请确认 api_server 已启动')
     }
-    throw new ApiError('network', '无法连接后端服务，请确认 api_server 已启动')
+    if (!res.ok) throw await parseErrorResponse(res, clock)
+    return await readJson<T>(res, clock)
+  } finally {
+    clock.dispose()
   }
-  if (!res.ok) throw await parseErrorResponse(res)
-  return readJson<T>(res)
 }
 
 async function postJson<T>(path: string, body: unknown, options?: ApiOptions): Promise<T> {
-  let res: Response
+  const clock = createRequestClock(options)
   try {
-    res = await fetch(apiBase(options) + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new ApiError('abort', '请求已取消')
+    let res: Response
+    try {
+      res = await fetch(apiBase(options) + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+        signal: clock.signal,
+      })
+    } catch (err) {
+      const interrupted = interruptedApiError(clock, err)
+      if (interrupted) throw interrupted
+      throw new ApiError('network', '无法连接后端服务，请确认 api_server 已启动')
     }
-    throw new ApiError('network', '无法连接后端服务，请确认 api_server 已启动')
+    if (!res.ok) throw await parseErrorResponse(res, clock)
+    return await readJson<T>(res, clock)
+  } finally {
+    clock.dispose()
   }
-  if (!res.ok) throw await parseErrorResponse(res)
-  return readJson<T>(res)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

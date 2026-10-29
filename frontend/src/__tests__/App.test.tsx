@@ -95,6 +95,304 @@ describe('App 集成', () => {
     await waitFor(() => expect(screen.getByText('后端服务正常')).toBeInTheDocument())
   })
 
+  it('health 明确 planner_ready=false：提示后端在线但规划不可用，禁用提交且表单仍可编辑', async () => {
+    const leakyHealth = {
+      status: 'healthy',
+      tools_count: 0,
+      planner_ready: false,
+      warnings: ['C:\\Users\\someone\\travel-assistant\\.env 里 DASHSCOPE_API_KEY 未设置（sk-live-should-not-render）'],
+    }
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse(leakyHealth))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('杭州三日漫步路书')
+    expect(await screen.findByText('后端在线，规划暂不可用')).toBeInTheDocument()
+
+    const submit = screen.getByRole('button', { name: '规划暂不可用' })
+    expect(submit).toBeDisabled()
+
+    // 表单本身不禁用，参数可以继续填
+    const dest = screen.getByLabelText(/目的地/) as HTMLInputElement
+    expect(dest).toBeEnabled()
+    await user.type(dest, '西安')
+    expect(dest.value).toBe('西安')
+
+    // 点禁用按钮不会发出规划请求，也不白跑一趟后端
+    await user.click(submit)
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/trips/plan')).toHaveLength(0)
+
+    // 不把后端 warnings 原文（绝对路径、疑似密钥）搬到页面上
+    const pageText = document.body.textContent ?? ''
+    expect(pageText).toContain('planner_ready=false')
+    expect(pageText).not.toContain('C:\\Users')
+    expect(pageText).not.toContain('sk-live-should-not-render')
+  })
+
+  it('health 缺 planner_ready：显示规划能力未知，仍允许提交', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', tools_count: 2 }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('杭州三日漫步路书')
+    expect(await screen.findByText(/规划能力未知/)).toBeInTheDocument()
+    expect(screen.queryByText('后端在线，规划暂不可用')).toBeNull()
+
+    const submit = screen.getByRole('button', { name: '生成行程' })
+    expect(submit).toBeEnabled()
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(submit)
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/trips/plan')).toHaveLength(1))
+  })
+
+  it('点「重新检测」后规划状态更新，不需要刷新页面', async () => {
+    let healthCalls = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/health') {
+        healthCalls += 1
+        return Promise.resolve(jsonResponse(healthCalls === 1
+          ? { status: 'healthy', planner_ready: false }
+          : { status: 'healthy', planner_ready: true }))
+      }
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('后端在线，规划暂不可用')
+    expect(screen.getByRole('button', { name: '规划暂不可用' })).toBeDisabled()
+
+    const reprobe = screen.getByRole('button', { name: '重新检测' })
+    expect(reprobe).toBeEnabled()
+    await user.click(reprobe)
+
+    await waitFor(() => expect(screen.getByText('后端服务正常')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+    expect(screen.queryByText('后端在线，规划暂不可用')).toBeNull()
+    expect(healthCalls).toBe(2)
+  })
+
+  it('规划成功后迟到的探活不能把状态翻回不可用', async () => {
+    let resolveHealth!: (response: Response) => void
+    const pendingHealth = new Promise<Response>((resolve) => {
+      resolveHealth = resolve
+    })
+    const planned = { ...MOCK_TRIP, id: 'trip-agent-x', source: 'agent' as const, title: '西安速览' }
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return pendingHealth
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.resolve(jsonResponse(planned))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('杭州三日漫步路书')
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await screen.findByText('西安速览')
+    expect(screen.getByText('后端服务正常')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveHealth(jsonResponse({ status: 'healthy', planner_ready: false }))
+      await Promise.resolve()
+    })
+
+    // 真实规划已经证明能力可用，这场迟到的旧探活不能把提交重新锁上
+    expect(screen.queryByText('后端在线，规划暂不可用')).toBeNull()
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+  })
+
+  it('示例先成功、探活稍后失败：不把在线结论翻成断开', async () => {
+    let resolveHealth!: (response: Response) => void
+    const pendingHealth = new Promise<Response>((resolve) => {
+      resolveHealth = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return pendingHealth
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    render(<App />)
+
+    await screen.findByText('杭州三日漫步路书')
+    expect(screen.getByText('后端服务正常')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveHealth(textResponse('Error occurred while trying to proxy', 500))
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText(/后端未连接/)).toBeNull()
+    expect(screen.getByText('后端服务正常')).toBeInTheDocument()
+  })
+
+  it('健康检查先判 planner_ready=false，随后示例请求网络失败：能力不被翻成未知，提交保持禁用', async () => {
+    let rejectExample!: (err: unknown) => void
+    const examplePending = new Promise<Response>((_resolve, reject) => {
+      rejectExample = reject
+    })
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: false }))
+      if (url === '/api/trips/example') return examplePending
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    render(<App />)
+
+    // 探活先落地：后端在线，但规划明确不可用
+    expect(await screen.findByText('后端在线，规划暂不可用')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '规划暂不可用' })).toBeDisabled()
+
+    // 示例请求迟到失败：只说明那一次调用没成，不能把 health 的能力判定抹成 unknown
+    await act(async () => {
+      rejectExample(new TypeError('fetch failed'))
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('后端在线，规划暂不可用')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '规划暂不可用' })).toBeDisabled()
+    // 规划能力仍以 health 为准，不会退化成「未知」后重新放行提交
+    expect(screen.queryByText(/规划能力未知/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '生成行程' })).toBeNull()
+  })
+
+  it('示例请求的旧失败迟到，不覆盖之后完成的健康检查结论', async () => {
+    let rejectExample!: (err: unknown) => void
+    const examplePending = new Promise<Response>((_resolve, reject) => {
+      rejectExample = reject
+    })
+    let healthCalls = 0
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') {
+        healthCalls += 1
+        return Promise.resolve(jsonResponse(healthCalls === 1
+          ? { status: 'healthy', planner_ready: false }
+          : { status: 'healthy', planner_ready: true }))
+      }
+      if (url === '/api/trips/example') return examplePending
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('后端在线，规划暂不可用')
+
+    // 重测比示例请求新：后端这次说规划就绪
+    await user.click(screen.getByRole('button', { name: '重新检测' }))
+    await waitFor(() => expect(screen.getByText('后端服务正常')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+
+    // 最初那次示例请求现在才失败：它比新探活旧，不许把页面翻回「未连接」
+    await act(async () => {
+      rejectExample(new TypeError('fetch failed'))
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('后端服务正常')).toBeInTheDocument()
+    expect(screen.queryByText(/后端未连接/)).toBeNull()
+    expect(screen.queryByText(/最近一次请求没成功/)).toBeNull()
+    expect(screen.getByRole('button', { name: '生成行程' })).toBeEnabled()
+  })
+
+  it('规划请求传输失败算业务失败：说明来自业务请求，不借用健康检查的失败文案', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      if (url === '/api/trips/plan') return Promise.reject(new TypeError('fetch failed'))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('杭州三日漫步路书')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('后端服务正常')).toBeInTheDocument())
+
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('连不上后端服务'))
+
+    // 头部把这次失败归到业务请求自身，而不是复述健康检查的口径
+    expect(screen.getByText(/最近一次请求没成功/)).toBeInTheDocument()
+    const pageText = document.body.textContent ?? ''
+    expect(pageText).toContain('这次失败来自业务请求，不是健康检查')
+    expect(pageText).not.toContain('健康检查请求没能送达后端')
+  })
+
+  it('重新检测期间给出可见与 aria 反馈，结束后恢复结论', async () => {
+    let resolveHealth!: (response: Response) => void
+    let healthCalls = 0
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') {
+        healthCalls += 1
+        if (healthCalls === 1) return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
+        return new Promise<Response>((resolve) => {
+          resolveHealth = resolve
+        })
+      }
+      if (url === '/api/trips/example') return Promise.resolve(jsonResponse(MOCK_TRIP))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('后端服务正常')).toBeInTheDocument())
+
+    const reprobe = screen.getByRole('button', { name: '重新检测' })
+    expect(reprobe).not.toHaveAttribute('aria-busy')
+
+    await user.click(reprobe)
+
+    // 可见：结论后面挂上进行中；aria：状态区会播报，按钮标记 busy
+    expect(screen.getByText(/正在重新检测/)).toBeInTheDocument()
+    expect(screen.getByRole('status').textContent).toContain('正在重新检测')
+    expect(reprobe).toHaveAttribute('aria-busy', 'true')
+    // 按钮不 disabled，焦点不会丢
+    expect(reprobe).toBeEnabled()
+
+    await act(async () => {
+      resolveHealth(jsonResponse({ status: 'healthy', planner_ready: true }))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.queryByText(/正在重新检测/)).toBeNull())
+    expect(reprobe).not.toHaveAttribute('aria-busy')
+    expect(screen.getByText('后端服务正常')).toBeInTheDocument()
+  })
+
+  it('健康检查失败原因用可见的固定安全文案，不塞进 title 也不回显后端原文', async () => {
+    const leaky = {
+      status: 'unhealthy',
+      warnings: ['C:\\Users\\someone\\travel-assistant\\.env 里 DASHSCOPE_API_KEY 未设置（sk-live-should-not-render）'],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse(leaky, 503))
+      if (url === '/api/trips/example') return Promise.resolve(proxyErrorResponse())
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    }))
+    render(<App />)
+
+    // 文案在正文里可见（getByText 只认文本内容，title 属性不算）
+    const hint = await screen.findByText(/健康检查返回了错误状态码/)
+    expect(hint).toBeVisible()
+    expect(screen.getByRole('button', { name: '重新检测' })).toHaveAccessibleDescription(/健康检查返回了错误状态码/)
+
+    const pageText = document.body.textContent ?? ''
+    expect(pageText).not.toContain('C:\\Users')
+    expect(pageText).not.toContain('sk-live-should-not-render')
+  })
+
   it('后端断开时不声称还能浏览示例，并提供重试', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))))
     render(<App />)
