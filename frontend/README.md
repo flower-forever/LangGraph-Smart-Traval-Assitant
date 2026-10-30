@@ -87,6 +87,20 @@ $env:VITE_API_BASE="http://127.0.0.1:8001"; pnpm dev
 - 有效的 AI 成功会说明规划服务可用；迟到的健康检查不能把这个结论翻成不可用。后端明确 `planner_ready=false` 时面板禁用生成，并说明本地编辑仍可用。
 - 本轮该流程只用 mock 业务请求做前端测试，没有与真实模型服务联调；实际可用性取决于后端是否已部署该接口。
 
+## 本日天气（独立查询）
+
+当天行程下方有「查天气」入口。它是独立功能：不经过模型、不写 Trip、不写 localStorage，也不改地图和预算；后端明确 `planner_ready=false` 时照样可用。
+
+- 打开面板不会发请求；点「查询天气」才调用一次 `GET /api/weather/day?lat&lon&date`，不做自动重试。查询进行中可以「停止等待」，只结束本页等待，不保证后端或上游停止处理。
+- 坐标只取本日行程记录里带 WGS84 坐标的站点，可切换站点并明确本次按哪条记录的经纬度查；0 与负坐标是合法值。本日没有坐标就说明并禁用查询，不改用其它天、浏览器定位或按城市猜的坐标。
+- 查询日期默认取当前天 `date` 字段；该字段缺失或不是合法日历日时留空，要求用户自己选，不拿今天冒充出行日。
+- 站点选择、日期输入与查询按钮都是受控控件；改天、换站、改日期、行程对象或页面版本变化会立即清掉旧结果并中止在途请求；关闭面板、停止等待后迟到的响应也不会展示。
+- 结果按后端信封展示：每日最高 / 最低温、降水概率、降水量、最大风速和天气类型。缺值、单位不符或范围异常显示「未知」；0 与负温按真值显示。WMO 代码只按官方表做确定性中文映射，表外代码保留代码并显示未知。
+- `out_of_range` 只说明来源当前实际覆盖范围与该日暂无记录，不展示其它日期的天气；超时、502/503、网络失败与结构不符同样不会冒充上一次成功的结果。
+- 面板区分「查询发起时间」与「本次获取时间」，不把 `fetched_at` 叫作预报更新时间；显示来源、目的地天气时区与采样网格点，并说明网格点不是站点精确位置。示例或导入文件的坐标只按记录查询，不宣称为已核验。
+- 页面始终显示官方署名链接 [Weather data by Open-Meteo.com](https://open-meteo.com/) 与数据源说明链接；接口固定由后端请求 Open-Meteo，不迁移旧 MCP。
+- 本轮只用 mock adapter / fetch 做离线测试，没有调用真实天气服务；实际可用性取决于后端是否已部署该接口。
+
 ## 停止等待
 
 规划请求进行中可以点「停止等待」。本页会立即中止等待并忽略迟到的响应，可以马上改参数重新提交。这个动作只影响本页，不保证后端或上游模型停止处理，也不能保证停止计费。
@@ -124,6 +138,8 @@ frontend/
 │   │   ├── tripDraftEditor.css # 草稿编辑器样式
 │   │   ├── DayReplanPanel.tsx # AI 单日调整面板（指令、模式、可选人数、候选对比、应用/关闭）
 │   │   ├── dayReplanPanel.css # 单日调整面板样式
+│   │   ├── DayWeatherPanel.tsx # 本日天气面板（记录坐标、日期、显式查询、停止等待、来源署名）
+│   │   ├── dayWeatherPanel.css # 天气面板样式（引用 tokens.css，不写死色值）
 │   │   ├── SavedTripsPanel.tsx # 本地保存 / 恢复 / 删除 / 撤销 / 清除
 │   │   ├── TripTransferPanel.tsx # 行程备份导出、文件导入预览、同 ID 覆盖确认
 │   │   ├── tripTransfer.css   # 备份面板样式（引用 tokens.css，不写死色值）
@@ -137,6 +153,8 @@ frontend/
 │       ├── tripDraft.ts       # 本地草稿纯函数（copy-on-write、应用、本地检查）
 │       ├── dayReplan.ts       # 单日 AI 候选请求构造、响应校验、单日应用与提醒合并
 │       ├── dayReplanApi.ts    # POST /api/trips/days/replan 客户端（复用 postJson 与校验）
+│       ├── weather.ts         # 天气信封类型、DTO 校验、WMO 映射、单位与来源展示工具
+│       ├── weatherApi.ts      # GET /api/weather/day 客户端（复用 getJson 与校验）
 │       ├── tripTransfer.ts    # 备份信封、严格投影、导入 / 导出共用的结构与容量校验
 │       ├── tripFile.ts        # 备份文件名、Blob 下载、读文件前的体积门禁
 │       ├── calendar.ts        # Trip → .ics 纯函数（转义、折行、UID、日期推算）
@@ -150,6 +168,8 @@ frontend/
 - 坐标一律 WGS84 `lng/lat`；前端转成 Leaflet 的 `lat,lng`。
 - `route_type`：`navigation` 画地图服务路线、`straight_line` 画虚线并在图例标注「示意直线（非导航）」、`unavailable` 不画线只给文字。
 - 健康检查会解析 `amap_configured`（只认布尔字面量，缺失/非法按未知处理）。它只说明「当前后端服务」是否配置了地图 Key，解释不了历史行程（导入/恢复）的坐标来源。
+- `GET /api/weather/day?lat&lon&date` 直接返回天气信封（不套第二层），核心字段：`status`（`available` / `out_of_range` / `invalid_request` / `timeout` / `unavailable` / `failed`）、`requested_date`、`checked_at`、`fetched_at`、`coordinate{system,verified,requested,grid,grid_elevation_m}`、`source{provider,endpoint,docs_url,attribution_url,license}`、`coverage{first_date,last_date,count}`、`forecast{date,values,units,missing_fields}`。前端会核对 `requested_date` 与 `coordinate.requested` 是否匹配本次请求，不匹配按 `bad_payload` 处理。
+- 天气六变量固定单位：`°C` / `mm` / `%` / `km/h` / `wmo code`；`values` 为 null 或单位不符时界面显示未知。`coordinate.verified` 固定 false，网格点不是站点精确坐标。
 - 同一坐标的多个站点在地图上合成一个 marker，圆点显示站数，弹窗内逐站列出可访问入口；坐标按字面相等分组，不改动任何真实坐标或路线几何。
 - 模型文案只按纯文本渲染，不做 HTML 注入。
 - 后端不可达时：示例区给出明确错误与重试；规划区给出可操作的提示；地图缺瓦片/缺坐标各有空态。

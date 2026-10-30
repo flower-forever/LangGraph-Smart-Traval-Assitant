@@ -19,7 +19,7 @@
   六个变量都有已知官方单位且数值通过范围校验时才给出数值，否则该字段
   value 置 null 并进 missing_fields；0 与负温是真值不是缺值。
 - 请求坐标与 provider 返回的网格中心坐标分开存放，verified 固定 False：
-  网格中心可能偏离请求点（官方说明最多约 5 km），不代表站点精确坐标。
+  网格中心可能偏离请求点，不代表站点精确坐标。
 """
 
 from __future__ import annotations

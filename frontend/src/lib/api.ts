@@ -382,7 +382,11 @@ async function readJson<T>(res: Response, clock: RequestClock): Promise<T> {
   }
 }
 
-async function requestJson<T>(path: string, options?: ApiOptions): Promise<T> {
+/**
+ * GET 业务 JSON。天气等只读查询共用这个入口，不另起 fetch 时钟。
+ * 失败分类与 postJson 一致：abort / timeout / network / server / bad_payload。
+ */
+export async function getJson<T>(path: string, options?: ApiOptions): Promise<T> {
   const clock = createRequestClock(options)
   try {
     let res: Response
@@ -522,7 +526,7 @@ export function isTripLike(value: unknown): value is Trip {
 }
 
 export async function fetchExampleTrip(options?: ApiOptions): Promise<Trip> {
-  const data = await requestJson<unknown>('/api/trips/example', options)
+  const data = await getJson<unknown>('/api/trips/example', options)
   if (!isTripLike(data)) {
     throw new ApiError('bad_payload', '示例行程返回结构不符合契约')
   }

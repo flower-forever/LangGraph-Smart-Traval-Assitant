@@ -1,12 +1,13 @@
 # 🚗 智能出行助手
 
-基于 **LangGraph + MCP** 架构的智能出行助手，集成天气查询、高德地图导航、费用计算、文件管理共 **20 个 MCP 工具**，提供结构化分日行程规划接口（`travel_itinerary.py` + `/api/trips/plan`）和网页前端（React + Vite + Leaflet 地图）。
+基于 **LangGraph + MCP** 架构的智能出行助手，集成天气查询、高德地图导航、费用计算、文件管理共 **20 个 MCP 工具**，提供结构化分日行程规划接口（`travel_itinerary.py` + `/api/trips/plan`）和网页前端（React + Vite + Leaflet 地图）。另有独立的单日天气接口 `GET /api/weather/day`（Open-Meteo，无需 Key），不属于 MCP 工具。
 
 ## ✨ 功能特性
 
 | 功能 | 描述 | 代码位置 | 工具数 |
 |------|------|----------|--------|
 | 🌤️ 天气查询 | 实时天气、天气预报、穿衣建议、出行贴士 | weather_server.py | 4 |
+| 🌦️ 日天气接口 | 按 WGS84 坐标与日期查询 Open-Meteo 单日预报，返回带来源、覆盖范围、抓取时间与缺值标记的独立信封，无需 Key；前端已接线（离线整合测试通过），真实源与浏览器联调未测 | weather_client.py + weather_api.py / GET /api/weather/day | — |
 | 🗺️ 高德地图 | POI 搜索、路线规划、地理编码、周边搜索 | amap_server.py | 7 |
 | 🧮 费用计算 | 油费估算、预算规划、货币换算、数学计算 | calculator_server.py | 5 |
 | 📝 文件管理 | 保存/读取旅行计划、文件操作；写入固定落在项目根 `outputs/` 目录（与启动目录无关） | write_server.py | 4 |
@@ -27,7 +28,7 @@
 - **Node.js 20.19+ 或 22.12+**：前端用 Vite 7，这是 Vite 7 的最低要求（实测版本 Node 22.21）。
 - **pnpm**：前端使用 pnpm-lock.yaml 锁定依赖，推荐 `npm i -g pnpm` 安装。
 - **uv**（Windows 本机装环境用，见快速开始）：按 [官方文档](https://docs.astral.sh/uv/getting-started/installation/) 安装即可。
-- **可访问外网**：DashScope（模型）、高德 Web 服务（地理编码/路线）、OpenWeather（天气）、OpenStreetMap 瓦片（前端底图）都是外部服务，断网或上游配额不足时对应功能会降级或报错。
+- **可访问外网**：DashScope（模型）、高德 Web 服务（地理编码/路线）、OpenWeather（天气 MCP）、Open-Meteo 日天气（无需 Key）、OpenStreetMap 瓦片（前端底图）都是外部服务，断网或上游配额不足时对应功能会降级或报错。
 
 ## 🚀 快速开始
 
@@ -174,6 +175,7 @@ VITE_API_BASE=http://127.0.0.1:8001 pnpm dev             # bash
 | `/api/trips/example` | GET | 内置示例行程，不需要任何 API Key |
 | `/api/trips/plan` | POST | 生成结构化分日行程 |
 | `/api/trips/days/replan` | POST | 单日 AI 重规划，只返回目标日的候选行程（见下节） |
+| `/api/weather/day` | GET | 按 WGS84 坐标与日期查询 Open-Meteo 单日预报；无需 API Key，返回独立天气信封（见下节） |
 
 `POST /api/trips/plan` 请求体：
 
@@ -255,6 +257,41 @@ curl -X POST http://127.0.0.1:8000/api/trips/plan \
 
 错误码语义：422 参数不合法；503 未配置 `DASHSCOPE_API_KEY` 或规划 Agent 未就绪；502 模型上游失败或模型输出不是恰好一天；504 单日重规划里模型生成阶段超过 `TRIP_REPLAN_TIMEOUT`（默认 90 秒，地图增强另有独立限时）。超时与上游错误不会静默重试。
 
+### 日天气查询（GET /api/weather/day）
+
+按 WGS84 坐标和日期查询 Open-Meteo 每日预报。独立信封，不写入行程、不缓存、不自动查询；**不需要 API Key**，也不依赖模型或 MCP。
+
+参数（三者必填）：
+
+| 参数 | 类型 | 约束 |
+|------|------|------|
+| `lat` | number | WGS84 纬度，-90..90 的有限数值 |
+| `lon` | number | WGS84 经度，-180..180 的有限数值 |
+| `date` | string | `YYYY-MM-DD` 的真实日历日（会校验闰年） |
+
+```bash
+curl "http://127.0.0.1:8000/api/weather/day?lat=31.2304&lon=121.4737&date=2026-11-02"
+```
+
+HTTP 语义：
+
+- **422**：缺参、非数值、NaN/Infinity、坐标越界、日期格式错误或不是真实日历日。全部在发请求前拦下，不会请求上游。
+- **200**：上游结果统一 200，用响应体的 `status` 区分 `available` / `out_of_range` / `timeout` / `unavailable` / `failed`。超时、429/5xx、网络失败、非 JSON 等都不改 HTTP 状态码，也不重试。
+- **503**：天气 client 未初始化或启动时构造失败。返回固定短句，不回显异常、URL 或 token；`/health` 与其它业务路由不受影响。
+
+响应字段（完整结构见 `/docs` 的 `WeatherDayReport`）：
+
+- `status` / `reason` / `provider_http_status` / `requested_date`。
+- `checked_at` 是本次处理开始时间（UTC ISO8601）；`fetched_at` 只在成功收到并解析上游 2xx 响应后才有值，失败为 `null`。**这是数据获取时间，不是模型预报发布时间。**
+- `coordinate`：`system` 固定 `WGS84`，`verified` 固定 `false`；`requested` 是调用方坐标，`grid` 是 provider 返回的天气网格中心（可能偏离请求点，不代表站点精确位置），`grid_elevation_m` 单独给出。
+- `source`：provider、endpoint、文档、署名链接与许可。
+- `coverage`：上游返回的日期首尾与条数；目标日不在其中即 `out_of_range`，`forecast` 为 `null`。
+- `forecast.values` / `forecast.units` / `forecast.missing_fields`：缺值或单位不符时该字段为 `null` 并列入 `missing_fields`，不填 0 或猜测值；0 和负温度按真值保留。
+
+数据来源与许可：免费 API 仅限**非商业用途**（官方当前限额 10 000 次/日、5 000 次/时、600 次/分），商用需另行订阅；数据许可为 CC BY 4.0，对外展示时须附 [Weather data by Open-Meteo.com](https://open-meteo.com/) 署名链接。免费额度与条款以官方页面为准。
+
+边界：本批只做每日值，不做逐小时/历史实况、geocode 或缓存；网格点不等同于站点实测。接口只允许固定的 Open-Meteo host/path 与固定参数，不能由调用方指定 URL，但**没有缓存和限流**，连续点击会多次请求上游。真实 Open-Meteo 样本尚未执行——当前验证全部是 `httpx.MockTransport` 离线回归，不能证明线上数据质量。前端日天气卡片已接入本接口并通过离线整合测试。旧 OpenWeather MCP 未迁移，`/chat` 的天气工具链路仍是原样，不能据此说聊天天气已修复。
+
 ### 浏览器来源防护（CORS 与写请求 403）
 
 后端对来自浏览器的调用有两层限制：
@@ -286,7 +323,7 @@ curl -X POST http://127.0.0.1:8000/api/trips/plan \
 .venv/bin/python -m pytest tests/ -q
 ```
 
-测试文件（按模块划分，新增测试随代码补进清单即可）：`test_coordinates.py`（坐标转换）、`test_amap_client.py`（高德客户端）、`test_itinerary.py`（行程归一化/降级/提示词）、`test_map_resilience.py`（地图数据可信度与降级回归）、`test_map_timeout.py`（地图增强独立超时、客户端关闭与配置回退）、`test_route_quality.py`（异常几何不得以 navigation 输出、时间冲突告警）、`test_schedule_safety.py`（无地图/超时下的时刻表冲突、占位时间与来源丢失后的措辞、提醒上限与防伪）、`test_api.py`（FastAPI 接口与降级行为）、`test_api_compatibility.py`（兼容旧字段）、`test_mcp_runtime.py`（MCP 配置解析、跨目录启动、真实 stdio 握手）、`test_calculator_security.py` 与 `test_write_security.py`（计算器沙箱与文件写入安全）。
+测试文件（按模块划分，新增测试随代码补进清单即可）：`test_coordinates.py`（坐标转换）、`test_amap_client.py`（高德客户端）、`test_itinerary.py`（行程归一化/降级/提示词）、`test_map_resilience.py`（地图数据可信度与降级回归）、`test_map_timeout.py`（地图增强独立超时、客户端关闭与配置回退）、`test_route_quality.py`（异常几何不得以 navigation 输出、时间冲突告警）、`test_schedule_safety.py`（无地图/超时下的时刻表冲突、占位时间与来源丢失后的措辞、提醒上限与防伪）、`test_api.py`（FastAPI 接口与降级行为）、`test_api_compatibility.py`（兼容旧字段）、`test_weather_client.py`（天气客户端）与 `test_weather_client_regressions.py`（客户端回归）、`test_weather_api.py`（天气路由、422/503、生命周期与生产接线）、`test_mcp_runtime.py`（MCP 配置解析、跨目录启动、真实 stdio 握手）、`test_calculator_security.py` 与 `test_write_security.py`（计算器沙箱与文件写入安全）。
 
 前端测试（vitest，测试文件在 `frontend/src/__tests__/`，覆盖 App、ItineraryList、TripMap 集成与 api、format、mapData、tileStatus 单测）：
 
@@ -388,6 +425,8 @@ LangGraph-Smart-Traval-Assitant/
 ├── client_simple.py           # 单次问答示例
 ├── mcp_runtime.py             # CLI 共用 MCP 运行时：配置/提示词定位、解释器回退、路径解析
 ├── api_server.py              # FastAPI HTTP 服务器
+├── weather_client.py          # Open-Meteo 每日预报客户端（独立信封，离线可测）
+├── weather_api.py             # 天气日预报 APIRouter（/api/weather/day）
 ├── travel_itinerary.py        # 结构化行程领域逻辑（契约/解析/高德客户端/坐标转换/降级）
 ├── day_replan.py              # 单日 AI 重规划（请求校验/提示词/归一化/地图状态）
 ├── weather_server.py          # 天气 MCP 服务器 (STDIO)
@@ -399,7 +438,7 @@ LangGraph-Smart-Traval-Assitant/
 ├── requirements.txt           # 运行时依赖
 ├── requirements-dev.txt       # 开发/测试依赖（runtime + pytest）
 ├── .env.example               # 环境变量模板（复制为 .env）
-├── tests/                     # pytest：坐标 / 高德客户端 / 行程 / 地图降级与超时 / API / MCP 运行时 / 安全
+├── tests/                     # pytest：坐标 / 高德客户端 / 行程 / 地图降级与超时 / 天气 / API / MCP 运行时 / 安全
 ├── frontend/                  # React + Vite 前端（pnpm 管理），详见 frontend/README.md
 │   ├── dev-stub/server.mjs    # 契约桩：固定示例 + 探活，不提供规划
 │   ├── src/components/        # PlanForm（规划表单）/ ItineraryList（逐日清单）/ TripMap（Leaflet 地图）

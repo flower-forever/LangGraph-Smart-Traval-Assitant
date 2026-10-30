@@ -8,6 +8,7 @@ import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
 import TripDraftEditor from './components/TripDraftEditor'
 import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPanel'
+import DayWeatherPanel from './components/DayWeatherPanel'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
@@ -186,6 +187,8 @@ export default function App() {
   const [openedFromFile, setOpenedFromFile] = useState(false)
   /** 备份 / 导入面板是否展开；默认收起，展开后才挂载面板 */
   const [transferOpen, setTransferOpen] = useState(false)
+  /** 本日天气面板是否展开；收起后不挂载，未查询不请求 */
+  const [weatherOpen, setWeatherOpen] = useState(false)
   const transferBodyId = useId()
   const abortRef = useRef<AbortController | null>(null)
   const exampleAbortRef = useRef<AbortController | null>(null)
@@ -1156,6 +1159,39 @@ export default function App() {
               <p className="day-switch-note" data-testid="ai-day-lock-note" role="status">
                 AI 调整面板打开着：日期切换已暂停，目标固定为第 {activeDay} 天；关闭面板后恢复。
               </p>
+            )}
+
+            {/*
+              本日天气：独立于 AI / 规划，按本日站点记录坐标查询。
+              本地编辑或 AI 面板打开时收起，减少上下文竞态；面板展开本身不发请求。
+            */}
+            {!editingDraft && !aiOpen && currentDay && (
+              <div className="weather-slot" data-testid="weather-slot">
+                {weatherOpen ? (
+                  <DayWeatherPanel
+                    trip={trip}
+                    day={currentDay}
+                    revision={tripRevision}
+                    openedFromFile={openedFromFile}
+                    onClose={() => setWeatherOpen(false)}
+                  />
+                ) : (
+                  <div className="edit-entry" data-testid="weather-entry">
+                    <div>
+                      <p className="field-label">本日天气（第 {currentDay.day} 天）</p>
+                      <p className="field-help">
+                        按本日行程记录坐标查询天气。打开面板不会发请求，点「查询天气」才会请求一次；
+                        结果只在本页内存里，不写进行程或本地保存。
+                      </p>
+                    </div>
+                    <div className="edit-entry-actions">
+                      <button type="button" className="btn" onClick={() => setWeatherOpen(true)}>
+                        查天气
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             <div className="trip-layout">

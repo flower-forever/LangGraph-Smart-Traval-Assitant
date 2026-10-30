@@ -1,0 +1,379 @@
+/* 本日天气查询面板（Extension）：沿用 tokens.css 的宣纸 / 朱砂体系，
+ * 只用 .dwp- 独立类名，不影响行程卡、草稿编辑器与地图。
+ * 颜色一律取 tokens.css 变量，不在这里写死色值；触达目标按 44px 处理。
+ */
+
+.weather-slot {
+  margin: 0 0 var(--space-6);
+}
+
+.dwp {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: var(--rule-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper-2);
+  box-shadow: var(--shadow-1);
+  min-width: 0;
+}
+
+.dwp *,
+.dwp *::before,
+.dwp *::after {
+  box-sizing: border-box;
+}
+
+.dwp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dwp-head-main {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.dwp-eyebrow {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  color: var(--color-accent-ink);
+}
+
+.dwp-title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-lg);
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.dwp-meta-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  min-width: 0;
+}
+
+.dwp-note,
+.dwp-hint,
+.dwp-memory-note,
+.dwp-empty,
+.dwp-pending {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--color-faint);
+  overflow-wrap: anywhere;
+}
+
+.dwp-note {
+  color: var(--color-muted);
+}
+
+.dwp-empty {
+  padding: var(--space-4);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+}
+
+.dwp-badge,
+.dwp-tag {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 1px 8px;
+  border: var(--rule-strong);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
+  white-space: nowrap;
+}
+
+.dwp-meta-line .dwp-badge,
+.dwp-meta-line .dwp-tag {
+  margin-left: 0;
+}
+
+.dwp-tag-ok {
+  color: var(--color-ok);
+  background: var(--color-paper-3);
+}
+
+.dwp-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-4);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+}
+
+.dwp-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.dwp-field label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-2);
+}
+
+.dwp-field select,
+.dwp-field input[type='date'] {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+}
+
+.dwp-field select:focus-visible,
+.dwp-field input[type='date']:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dwp-field select:disabled,
+.dwp-field input[type='date']:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.dwp-field input[aria-invalid='true'] {
+  border-color: var(--color-accent);
+}
+
+.dwp-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-1);
+}
+
+.dwp-request-hint {
+  flex: 1 1 260px;
+}
+
+.dwp-btn {
+  appearance: none;
+  min-height: 44px;
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.dwp-btn:hover:not(:disabled) {
+  background: var(--color-paper-3);
+  border-color: var(--color-accent);
+}
+
+.dwp-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dwp-btn:disabled {
+  cursor: not-allowed;
+  color: var(--color-muted);
+  background: var(--color-paper-3);
+  border-color: var(--color-line);
+}
+
+.dwp-btn-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-paper-2);
+  font-weight: 600;
+}
+
+.dwp-btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+}
+
+.dwp-pending {
+  color: var(--color-muted);
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--color-accent);
+}
+
+.dwp-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+}
+
+.dwp-result {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+}
+
+.dwp-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dwp-result-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.dwp-notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--color-ink-2);
+}
+
+.dwp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.dwp-metric {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-3);
+  border: var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  min-width: 0;
+}
+
+.dwp-metric dt {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+}
+
+.dwp-metric dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.dwp-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: var(--rule);
+}
+
+.dwp-facts > div {
+  min-width: 0;
+}
+
+.dwp-facts dt {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+.dwp-facts dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.dwp-facts a {
+  color: var(--color-accent-ink);
+}
+
+.dwp-attribution {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: var(--rule);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  color: var(--color-muted);
+}
+
+.dwp-attribution a {
+  color: var(--color-accent-ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.dwp-attribution a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .dwp {
+    padding: var(--space-4);
+  }
+
+  .dwp-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dwp-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dwp-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
