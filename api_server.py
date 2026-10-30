@@ -40,6 +40,7 @@ from dotenv import load_dotenv
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 
+from day_replan import DayReplanRequest, DayReplanResponse, run_day_replan
 from travel_itinerary import (
     AMapClient,
     ItineraryParseError,
@@ -100,6 +101,10 @@ DEFAULT_MAP_ENRICH_TIMEOUT = 40.0
 
 # /chat 的模型调用单独限时，避免请求无限挂起。
 DEFAULT_CHAT_TIMEOUT = 120.0
+
+# 单日 AI 重规划只调用一次 planner graph，使用独立于整趟规划的 90 秒上限；
+# 底层模型仍可能发生多次内部调用，这里限制的是一次 graph 调用。
+DEFAULT_TRIP_REPLAN_TIMEOUT = 90.0
 
 # CORS：只使用显式 origin，绝不再用 "*" + credentials。
 # 默认覆盖本机前端开发端口 5173，以及当前/后续预览使用的 5181、5182；
@@ -355,6 +360,9 @@ class Configuration:
         )
         self.chat_timeout = _positive_finite_timeout(
             "CHAT_TIMEOUT", DEFAULT_CHAT_TIMEOUT
+        )
+        self.replan_timeout = _positive_finite_timeout(
+            "TRIP_REPLAN_TIMEOUT", DEFAULT_TRIP_REPLAN_TIMEOUT
         )
         (
             self.cors_origins,
@@ -1166,6 +1174,49 @@ async def plan_trip(request: TripPlanRequest):
     trip = await _apply_map_enrichment(trip, request)
 
     return trip
+
+
+@app.post(
+    "/api/trips/days/replan",
+    response_model=DayReplanResponse,
+    summary="只重新生成指定一天的行程",
+    responses={
+        502: {"description": "模型上游失败或模型输出结构非法"},
+        503: {"description": "模型/Agent 未配置，无法动态生成"},
+        504: {"description": "单日重规划超时"},
+    },
+)
+async def replan_trip_day(request: DayReplanRequest):
+    """只重写请求指定的那一天，返回独立信封而不是新 Trip v1。
+
+    - 一次 planner graph 调用（底层模型仍可能多次内部调用），不隐藏重试；
+      超时用独立的 TRIP_REPLAN_TIMEOUT（默认 90 秒）。
+    - 模型必须恰好返回 1 天；返回 0 天或多天按 502 处理，不补齐、不截断。
+    - 站点 id 重新生成，legs 与时间来源记录同步；模型坐标被忽略。
+    - 地图增强复用 _enrich_with_amap 并单独限时；无 Key/超时/异常保留文字日程，
+      并给出结构化 map_status，不依赖解析中文 warnings。
+    - parent 只作为版本令牌原样回显，不持久化。
+    """
+    if planner_agent is None:
+        raise HTTPException(
+            status_code=503,
+            detail=planner_unavailable_reason
+            or "结构化行程规划 Agent 尚未初始化：请配置 DASHSCOPE_API_KEY 并检查启动日志。",
+        )
+    if HumanMessage is None:
+        raise HTTPException(status_code=503, detail="消息依赖不可用，无法生成行程。")
+
+    return await run_day_replan(
+        request,
+        planner_agent=planner_agent,
+        human_message_cls=HumanMessage,
+        amap_configured=bool(cfg.amap_api_key),
+        replan_timeout=cfg.replan_timeout,
+        map_enrich_timeout=cfg.map_enrich_timeout,
+        enrich_with_amap=_enrich_with_amap,
+        append_map_warning=_with_map_warning,
+        safe_error=_safe_error,
+    )
 
 
 def _agent_checkpointer() -> Optional[Any]:
