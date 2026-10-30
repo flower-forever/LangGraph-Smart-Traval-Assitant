@@ -13,6 +13,7 @@
 | 📝 文件管理 | 保存/读取旅行计划、文件操作；写入固定落在项目根 `outputs/` 目录（与启动目录无关） | write_server.py | 4 |
 | 🗓️ 分日行程规划 | 模型生成行程 JSON，服务端校验归一化，按需补高德坐标与路线 | travel_itinerary.py + /api/trips/plan | — |
 | 🔁 单日 AI 重规划 | 只重生成指定一天，返回独立信封候选结果，不写原行程；服务端与前端面板均已进入仓库并通过离线测试，真实模型与浏览器联调未做 | day_replan.py + /api/trips/days/replan | — |
+| 🗺️ 单日地图刷新 | 只重解析指定一天的站点坐标并重算相邻路线，返回 typed patch 供预览后显式 apply；不调用大模型、不改文字行程。服务端接口、前端地图预览、显式应用与一次撤销均已接线，并通过离线整合测试 | travel_itinerary.py refresh_day_map + /api/trips/days/map-refresh | — |
 | 🖥️ 网页界面 | 示例行程与 AI 规划表单、逐日地图、站点弹窗与逐点讲解、本地保存与 .ics 导出；本地编辑与「AI 调整这一天」入口代码完成并通过离线整合验证（523 项测试、tsc 与生产 build 通过），真实浏览器联调未做 | frontend/ | — |
 
 界面上的本地保存、日历导出和「停止等待」都只在浏览器这一侧工作，边界如下：
@@ -84,6 +85,7 @@ cp .env.example .env
 | `MCP_INIT_TIMEOUT` / `TRIP_PLAN_TIMEOUT` / `AMAP_TIMEOUT` | 可选 | 超时秒数，默认 20 / 180 / 6 |
 | `TRIP_REPLAN_TIMEOUT` | 可选 | 单日重规划接口里模型生成阶段的单独限时，默认 90 秒，与 `TRIP_PLAN_TIMEOUT`、地图超时互相独立；地图增强不走这个预算。缺失、非法（0、负数、非有限数）回退默认值。接口层不会自动重试整次图调用 |
 | `MAP_ENRICH_TIMEOUT` | 可选 | 地图增强（坐标/路线补全）单独限时，默认 40 秒；配置缺失、非正数或非法时回退默认值。超时只放弃地图数据，保留已生成的文字行程，并在 `warnings` 里说明坐标与路线未获取（限时与回退行为有离线单测覆盖，未实测真实高德链路） |
+| `MAP_REFRESH_TIMEOUT` | 可选 | 单日地图刷新接口（`POST /api/trips/days/map-refresh`）本次请求的总预算，默认 20 秒；缺失、非正数或非法（0、负数、nan/inf、溢出）都回退默认值。超时返回 `timeout` 空补丁，不返回部分数据；无 `AMAP_API_KEY` 时零客户端创建、不发任何网络请求（限时与回退行为有离线单测覆盖，未实测真实高德链路） |
 | `CHAT_TIMEOUT` | 可选 | `/chat` 的模型调用单独限时，默认 120 秒；必须是正的有限数，缺失、非法（0、负数、限不住的 inf/nan）都回退默认值。超过时限返回 504 |
 | `CORS_ORIGINS` | 可选 | 允许的浏览器来源白名单。未设置时默认 6 个本机 origin（127.0.0.1 与 localhost 的 5173、5181、5182）；设置后为逗号分隔的整体覆盖而不是追加；设成空值或任一项非法都触发 fail-closed。改完需重启后端，细节见下文「浏览器来源防护（CORS 与写请求 403）」 |
 
@@ -175,6 +177,7 @@ VITE_API_BASE=http://127.0.0.1:8001 pnpm dev             # bash
 | `/api/trips/example` | GET | 内置示例行程，不需要任何 API Key |
 | `/api/trips/plan` | POST | 生成结构化分日行程 |
 | `/api/trips/days/replan` | POST | 单日 AI 重规划，只返回目标日的候选行程（见下节） |
+| `/api/trips/days/map-refresh` | POST | 单日地图刷新：只重解析站点坐标与相邻路线，返回地图补丁，不调用大模型（见下节） |
 | `/api/weather/day` | GET | 按 WGS84 坐标与日期查询 Open-Meteo 单日预报；无需 API Key，返回独立天气信封（见下节） |
 
 `POST /api/trips/plan` 请求体：
@@ -256,6 +259,50 @@ curl -X POST http://127.0.0.1:8000/api/trips/plan \
 ```
 
 错误码语义：422 参数不合法；503 未配置 `DASHSCOPE_API_KEY` 或规划 Agent 未就绪；502 模型上游失败或模型输出不是恰好一天；504 单日重规划里模型生成阶段超过 `TRIP_REPLAN_TIMEOUT`（默认 90 秒，地图增强另有独立限时）。超时与上游错误不会静默重试。
+
+### 单日地图刷新（POST /api/trips/days/map-refresh）
+
+已有行程改动站点后，用该接口只重新获取指定一天的坐标与路线，**不调用大模型**。前端已接入候选预览、显式应用与一次撤销，应用生成新副本；服务端不写回任何 Trip、不自动保存。服务端只回显 parent，最终版本与当前行程投影由客户端校验。路线耗时基于查询时刻的高德估测，不是未来出行时分的实时交通保证。
+
+行为要点：
+
+- **只回地图补丁**：响应是 `{day, date, parent, map_status, stops, unresolved, legs, warnings}`，不含 Trip、不含 `source`、不回显用户原文。`parent` 只原样回显，新鲜度由客户端在预览与 apply 两处各自校验，服务端不代替客户端裁决。
+- **成功点 location 永不为 null**：未解析的站点只出现在 `unresolved`（id / reason_code / reason），响应里不返回的点由前端保留原坐标，绝不/不能改成 null。`resolved_address` 是解析时高德返回的地址记录，仅供查看，不声称实地核验，apply 不写回用户原 `address`。
+- **legs 覆盖全部相邻对**：类型仍是 navigation / straight_line / unavailable，沿用行程 Leg 结构与几何校验；直线估测如实标注。路线失败不抹掉已成功解析的坐标点（那是 partial，不是 failed）。
+- **map_status 六态自洽**：`ready` 全部解析且全为 navigation（单站 0 段路线也算 ready）；`partial` 有成功点但未达成 ready；`unavailable` / `no_key` / `timeout` / `failed` 时 `stops` 与 `legs` 为空、`unresolved` 覆盖全部站点 id。失败补丁为空，apply 无操作，旧坐标与旧路线原样保留。
+- **请求是纯文字投影**：`stops` 只含 `id`/`name`/`address`（address 可空），1–8 个；超过 8 个直接 422 `too_many_stops`，不截断。坐标、geometry、instruction 等未知字段一律 422。无 `AMAP_API_KEY` 时返回 `no_key`，不创建高德客户端、不发任何网络请求，也不需要 `DASHSCOPE_API_KEY`。
+- **保留可复用的旧导航**：端点、邻接与出行方式未变，而本次只取得直线示意时，沿用旧 navigation 原对象并标明本次未重算；不会以更少的几何点和未知耗时覆盖旧记录。端点或方式已变时，不复用不匹配的旧导航；可采用明确标注的直线示意。没有实际地图变化时不生成新副本。
+- 总预算 `MAP_REFRESH_TIMEOUT`（默认 20 秒）独立限时，超时返回空补丁；服务端传播 CancelledError 并关闭客户端，页面停止等待不保证上游处理已停止。站点解析顺序复用行程规划的 POI 核对逻辑（门店/分店/入口/航站楼/方位/city 核验），每请求限流与原 enrichment 一致（并发 4，不自动重试）。
+
+请求体字段约束（未知字段一律 422）：
+
+| 字段 | 约束 |
+|------|------|
+| `destination` | 1–80 字 |
+| `day` | 1–7 |
+| `date` | 严格 `YYYY-MM-DD` 或 null（不接受其它 ISO 形状或空字符串） |
+| `travel_mode` | `walking` 或 `driving`，默认 `walking` |
+| `parent` | 必填：`trip_id`（1–100 字符，不清洗原样回显）+ `revision`（0 到 2^53-1 的整数，客户端权威） |
+| `stops` | 1–8 个；id 1–100 字符且当日不重复，name 1–120 字，address 可空、最长 300 字 |
+
+示例请求（字段值仅为示例）：
+
+```json
+{"destination": "杭州", "day": 2, "date": "2026-11-02", "travel_mode": "walking",
+ "parent": {"trip_id": "local-abc123", "revision": 12},
+ "stops": [{"id": "s1", "name": "断桥残雪", "address": "杭州市西湖区"}]}
+```
+
+示例响应（字段值仅为示例）：
+
+```json
+{"day": 2, "date": "2026-11-02", "parent": {"trip_id": "local-abc123", "revision": 12},
+ "map_status": "ready",
+ "stops": [{"id": "s1", "location": {"lng": 120.15, "lat": 30.25}, "resolved_address": "杭州市西湖区北山街断桥"}],
+ "unresolved": [], "legs": [], "warnings": []}
+```
+
+错误码语义：422 参数不合法；其余失败一律以 200 + `map_status` 表达，不静默重试。
 
 ### 日天气查询（GET /api/weather/day）
 

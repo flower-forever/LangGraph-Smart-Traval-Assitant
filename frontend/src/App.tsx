@@ -9,6 +9,7 @@ import TripTransferPanel from './components/TripTransferPanel'
 import TripDraftEditor from './components/TripDraftEditor'
 import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPanel'
 import DayWeatherPanel from './components/DayWeatherPanel'
+import MapRefreshPanel from './components/MapRefreshPanel'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
@@ -20,6 +21,12 @@ import {
   type DayReplanResponse,
 } from './lib/dayReplan'
 import { replanDay } from './lib/dayReplanApi'
+import {
+  applyMapRefresh,
+  type MapRefreshApplyResult,
+  type MapRefreshRequest,
+  type MapRefreshResponse,
+} from './lib/mapRefresh'
 import { formatDateTime } from './lib/format'
 import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, TravelMode, Trip } from './lib/api'
 
@@ -249,17 +256,21 @@ export default function App() {
   const aiRequestSeqRef = useRef(0)
   /** AI 单日调整面板是否打开；与本地草稿互斥 */
   const [aiOpen, setAiOpen] = useState(false)
+  /** 仅刷新地图面板是否打开；与本地草稿 / AI 面板互斥，打开期间暂停会替换行程的入口 */
+  const [mapOpen, setMapOpen] = useState(false)
 
   /** 当前是否处于本地编辑状态（草稿已打开） */
   const editingDraft = draft !== null
   /** 本地草稿或 AI 单日面板打开时，都暂停会替换行程 / 写存储的外部入口 */
-  const interactionPaused = editingDraft || aiOpen
+  const interactionPaused = editingDraft || aiOpen || mapOpen
   /** 暂停期间的公共说明 */
   const editPauseNote = editingDraft
     ? '本地编辑进行中：新行程规划、保存、恢复、导出备份和导出日历已暂停。请先「应用草稿」或「放弃草稿」回到原视图，再使用这些功能。'
     : aiOpen
       ? 'AI 单日调整进行中：新行程规划、保存、恢复、导出备份和导出日历已暂停。请先关闭 AI 面板，再使用这些功能。'
-      : null
+      : mapOpen
+        ? '仅刷新地图进行中：新行程规划、保存、恢复、导入导出、撤销和日期切换已暂停。请先关闭面板，再使用这些功能。'
+        : null
 
   /** 探活，可重复触发；旧结论靠序号挡住，不会盖掉新结果 */
   const runProbe = useCallback(() => {
@@ -355,22 +366,22 @@ export default function App() {
 
   const switchDay = useCallback(
     (dayNum: number) => {
-      // AI 面板打开时目标日锁定：中途换天会让候选与当前目标日脱节。
-      if (aiOpen) return
+      // AI 面板或仅刷新地图面板打开时目标日锁定：中途换天会让面板目标与当前日脱节。
+      if (aiOpen || mapOpen) return
       // 有未提交的单站输入时明确挡住日切换：输入属于当前天，切换会把它晾在别的天。
       // 没有表单输入时允许跨日编辑同一份草稿（草稿由父级持有，切天不丢）。
       if (editingDraft && editorInputDirty) return
       setActiveDay(dayNum)
     },
-    [aiOpen, editingDraft, editorInputDirty],
+    [aiOpen, mapOpen, editingDraft, editorInputDirty],
   )
 
   // tablist 方向键导航（WAI-APG）：左右键在日签间移动并激活
   const dayNavKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (!trip || e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-      // AI 面板打开时同样锁住目标日
-      if (aiOpen) {
+      // AI 面板或仅刷新地图面板打开时同样锁住目标日
+      if (aiOpen || mapOpen) {
         e.preventDefault()
         return
       }
@@ -389,7 +400,7 @@ export default function App() {
       const el = document.getElementById(`day-tab-${nextDay}`)
       el?.focus()
     },
-    [trip, activeDay, aiOpen, editingDraft, editorInputDirty],
+    [trip, activeDay, aiOpen, mapOpen, editingDraft, editorInputDirty],
   )
 
   const scrollToItinerary = useCallback(() => {
@@ -560,7 +571,7 @@ export default function App() {
    * 停止等待只取消本页的等待，不保证后端停止处理。
    */
   const handleStartEditing = useCallback(() => {
-    if (!trip || draft || aiOpen) return
+    if (!trip || draft || aiOpen || mapOpen) return
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -661,7 +672,7 @@ export default function App() {
    * 草稿与 AI 面板互斥：有草稿时入口按钮被禁用，草稿输入不会被清掉。
    */
   const handleOpenAiPanel = useCallback(() => {
-    if (!trip || draft || aiOpen) return
+    if (!trip || draft || aiOpen || mapOpen) return
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -770,6 +781,84 @@ export default function App() {
       return applied
     },
     [activeDay, bumpTripRevision, openedFromFile, scrollToItinerary],
+  )
+
+  /* ───────── 仅刷新地图：打开 / 应用 / 关闭 ───────── */
+
+  /**
+   * 打开「仅刷新地图」面板。和 AI 面板一样，先作废并中止在飞的规划 / 示例请求，
+   * 清掉旧错误与请求归属，避免迟到的结果在面板打开期间替换页面。只要求当前日存在，
+   * 不要求 planner_ready：这里只用地图服务，Key 缺失由接口以 no_key 原样说明。
+   */
+  const handleOpenMapRefresh = useCallback(() => {
+    if (!trip || !currentDay || draft || aiOpen || mapOpen) return
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
+    aiRequestSeqRef.current += 1
+    setPlanLoading(false)
+    setPlanCancelled(false)
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
+    setDraftError(null)
+    // 面板打开期间天气收起卸载：不保留旧的查询结果，也不自动重查
+    setWeatherOpen(false)
+    setMapOpen(true)
+  }, [trip, currentDay, draft, aiOpen, mapOpen])
+
+  /** 关闭面板：当前行程不变；面板自己负责作废在途的地图请求。 */
+  const handleCloseMapRefresh = useCallback(() => {
+    setMapOpen(false)
+  }, [])
+
+  /**
+   * 面板里点了「应用到行程」：父级当场读取最新 trip / revision 再走 applyMapRefresh，
+   * 绝不直接 setTrip 旧响应。失败原样返回给面板显示，当前行程、撤销快照和保存记录都不动；
+   * changed=false 同样不替换行程。成功才进同一个「撤销应用」快照并关闭面板。
+   */
+  const handleMapApply = useCallback(
+    (request: MapRefreshRequest, response: MapRefreshResponse): MapRefreshApplyResult => {
+      const latestTrip = tripRef.current
+      if (!latestTrip) {
+        return { ok: false, reason: 'invalid_base', message: '当前没有可应用的行程，地图刷新未应用。' } as MapRefreshApplyResult
+      }
+      const applied = applyMapRefresh({
+        baseTrip: latestTrip,
+        request,
+        response,
+        currentRevision: tripRevisionRef.current,
+        forkTripId: newUuid(),
+      })
+      if (!applied.ok || !applied.changed) return applied
+
+      undoApplyRef.current = latestTrip
+      setCanUndoApply(true)
+      setTrip(applied.trip)
+      bumpTripRevision()
+      setPhase('ready')
+      setError(null)
+      setRequestOutcome({ kind: 'none' })
+      // 新副本不是本浏览器保存的那份记录，不能继续显示「从已保存副本恢复」
+      setRestoredAt(null)
+      setMapOpen(false)
+      const dayValid = applied.trip.days.some((d) => d.day === activeDay)
+      if (!dayValid) setActiveDay(applied.trip.days[0]?.day ?? 1)
+      setActiveStopId((current) =>
+        current && applied.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
+      )
+      setAppliedNotice(
+        `本次只更新了地图相关字段：文字、时间、地址说明和其它天都沿用原安排，沿旧路线也没有重新计算。` +
+          '地图耗时来自这次地图服务的估算，不保证出行当天的实时交通。' +
+          '这次更新只放在当前页面，不会自动保存；需要留存请再点「保存当前行程」。' +
+          '可以点「撤销应用」回到更新前的行程；之前显式保存过的记录和导入的文件内容都不会被改动。',
+      )
+      scrollToItinerary()
+      return applied
+    },
+    [activeDay, bumpTripRevision, scrollToItinerary],
   )
 
   /**
@@ -988,7 +1077,7 @@ export default function App() {
               )}
             </header>
 
-            {appliedNotice && !editingDraft && !aiOpen && (
+            {appliedNotice && !editingDraft && !aiOpen && !mapOpen && (
               <div className="apply-result-note" data-testid="apply-notice">
                 <p role="status">{appliedNotice}</p>
                 {canUndoApply && (
@@ -999,7 +1088,7 @@ export default function App() {
               </div>
             )}
 
-            {!editingDraft && !aiOpen && (
+            {!editingDraft && !aiOpen && !mapOpen && (
               <>
                 <SavedTripsPanel trip={trip} onRestore={handleRestoreSavedTrip} />
                 <IcsExportPanel trip={trip} key={`ics:${trip.id}`} />
@@ -1007,7 +1096,7 @@ export default function App() {
             )}
 
             {/* 本地编辑入口：行程下方、日签上方。编辑期间被现有草稿取代；AI 面板打开时收起 */}
-            {!editingDraft && !aiOpen && (
+            {!editingDraft && !aiOpen && !mapOpen && (
               <div className="edit-entry" data-testid="edit-entry">
                 <div className="field edit-entry-mode">
                   <span className="field-label" id="edit-mode-label">新增路段的出行方式</span>
@@ -1060,7 +1149,25 @@ export default function App() {
               AI 单日调整入口：目标固定为当前日。
               有本地草稿时按钮禁用——先应用或放弃草稿，避免把草稿输入晾在一边。
             */}
-            {!aiOpen && (
+            {!editingDraft && !mapOpen && (
+              <div className="edit-entry" data-testid="map-refresh-entry" data-day={currentDay?.day ?? activeDay}>
+                <div>
+                  <p className="field-label">仅刷新地图（第 {currentDay?.day ?? activeDay} 天）</p>
+                  <p className="field-help">
+                    只按当前日已有的站点重新获取地图坐标与路段，不重新规划行程，也不需要 AI。
+                    文字、时间、地址说明和其它天都保持不变；面板里会先让你选步行或驾车，再获取、预览，确认后才替换当前行程。
+                    地图服务未配置 Key 时会直接说明，不影响你继续查看当前行程。
+                  </p>
+                </div>
+                <div className="edit-entry-actions">
+                  <button type="button" className="btn" onClick={handleOpenMapRefresh}>
+                    仅刷新地图
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!aiOpen && !mapOpen && (
               <div className="ai-entry" data-testid="ai-entry" data-day={activeDay}>
                 <div className="ai-entry-copy">
                   <p className="field-label">
@@ -1086,6 +1193,23 @@ export default function App() {
                     AI 调整这一天
                   </button>
                 </div>
+              </div>
+            )}
+
+            {mapOpen && trip && (
+              <div className="ai-panel-slot" data-testid="map-refresh-slot">
+                <p className="ai-pause-note" role="note">
+                  仅刷新地图面板打开着：规划、恢复、保存、导入导出、撤销和日期切换已暂停，关闭面板后恢复。
+                  面板里的「停止等待」只停止本页等待，不保证地图服务停止处理。
+                </p>
+                <MapRefreshPanel
+                  trip={trip}
+                  day={currentDay ?? null}
+                  revision={tripRevision}
+                  openedFromFile={openedFromFile}
+                  onApply={handleMapApply}
+                  onClose={handleCloseMapRefresh}
+                />
               </div>
             )}
 
@@ -1124,7 +1248,7 @@ export default function App() {
             <div className="day-nav" role="tablist" aria-label="按日切换" onKeyDown={dayNavKeyDown}>
               {dayTabs.map((d) => {
                 const selected = d.day === activeDay
-                const blocked = aiOpen || (editingDraft && editorInputDirty)
+                const blocked = aiOpen || mapOpen || (editingDraft && editorInputDirty)
                 return (
                 <button
                   key={d.day}
@@ -1137,9 +1261,11 @@ export default function App() {
                   onClick={() => switchDay(d.day)}
                   aria-disabled={blocked || undefined}
                   title={
-                    aiOpen
-                      ? 'AI 调整面板打开着，目标日已锁定；关闭面板后可切换日期。'
-                      : blocked
+                    mapOpen
+                      ? '仅刷新地图面板打开着，目标日已锁定；关闭面板后可切换日期。'
+                      : aiOpen
+                        ? 'AI 调整面板打开着，目标日已锁定；关闭面板后可切换日期。'
+                        : blocked
                         ? '有未保存的站点输入，先保存到草稿或取消输入，再切换日期。'
                         : undefined
                   }
@@ -1155,6 +1281,11 @@ export default function App() {
                 单站输入尚未保存：日期切换已暂停。输入属于当前正在编辑的天，先「保存到草稿」或「取消输入」再切换。
               </p>
             )}
+            {mapOpen && (
+              <p className="day-switch-note" data-testid="map-day-lock-note" role="status">
+                仅刷新地图面板打开着：日期切换已暂停，目标固定为第 {activeDay} 天；关闭面板后恢复。
+              </p>
+            )}
             {aiOpen && (
               <p className="day-switch-note" data-testid="ai-day-lock-note" role="status">
                 AI 调整面板打开着：日期切换已暂停，目标固定为第 {activeDay} 天；关闭面板后恢复。
@@ -1165,7 +1296,7 @@ export default function App() {
               本日天气：独立于 AI / 规划，按本日站点记录坐标查询。
               本地编辑或 AI 面板打开时收起，减少上下文竞态；面板展开本身不发请求。
             */}
-            {!editingDraft && !aiOpen && currentDay && (
+            {!editingDraft && !aiOpen && !mapOpen && currentDay && (
               <div className="weather-slot" data-testid="weather-slot">
                 {weatherOpen ? (
                   <DayWeatherPanel
@@ -1237,6 +1368,10 @@ export default function App() {
           ) : aiOpen ? (
             <p className="edit-pause-note" role="note">
               AI 单日调整进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先关闭 AI 面板再使用。
+            </p>
+          ) : mapOpen ? (
+            <p className="edit-pause-note" role="note">
+              仅刷新地图进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先关闭面板再使用。
             </p>
           ) : (
             <>

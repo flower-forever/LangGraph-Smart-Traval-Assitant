@@ -44,6 +44,9 @@ from day_replan import DayReplanRequest, DayReplanResponse, run_day_replan
 from travel_itinerary import (
     AMapClient,
     ItineraryParseError,
+    MapRefreshRequest,
+    MapRefreshResponse,
+    MapRefreshUnresolved,
     TripPlan,
     TripPlanRequest,
     build_agent_prompt,
@@ -54,6 +57,8 @@ from travel_itinerary import (
     extract_json_object,
     is_planner_safe_tool,
     normalize_agent_payload,
+    empty_map_refresh_response,
+    refresh_day_map,
 )
 from weather_api import weather_router_factory
 
@@ -99,6 +104,9 @@ except Exception as exc:  # pragma: no cover - 本机常见缺少该可选依赖
 # 地图增强（地址解析 + 路线）单独限时，避免网络抖动把请求拖到模型超时之外。
 # 默认值留出足够余量覆盖多站点并发请求，同时远小于 TRIP_PLAN_TIMEOUT。
 DEFAULT_MAP_ENRICH_TIMEOUT = 40.0
+
+# 单日地图刷新总预算独立限时：一次最多 8 站 + 7 段路线，默认 20 秒。
+DEFAULT_MAP_REFRESH_TIMEOUT = 20.0
 
 # /chat 的模型调用单独限时，避免请求无限挂起。
 DEFAULT_CHAT_TIMEOUT = 120.0
@@ -358,6 +366,9 @@ class Configuration:
             self.amap_timeout = 6.0
         self.map_enrich_timeout = _positive_finite_timeout(
             "MAP_ENRICH_TIMEOUT", DEFAULT_MAP_ENRICH_TIMEOUT
+        )
+        self.map_refresh_timeout = _positive_finite_timeout(
+            "MAP_REFRESH_TIMEOUT", DEFAULT_MAP_REFRESH_TIMEOUT
         )
         self.chat_timeout = _positive_finite_timeout(
             "CHAT_TIMEOUT", DEFAULT_CHAT_TIMEOUT
@@ -660,6 +671,48 @@ async def _apply_map_enrichment(trip: TripPlan, request: TripPlanRequest) -> Tri
         return _with_map_warning(
             trip,
             "地图数据增强失败，已返回不含实时地图数据的行程：" + _safe_error(exc),
+        )
+
+
+async def run_map_refresh(request: MapRefreshRequest) -> MapRefreshResponse:
+    """执行单日地图刷新：无 Key 零客户端零网络，超时/失败都是空补丁。
+
+    - ``MAP_REFRESH_TIMEOUT`` 是单次请求总预算（默认 20 秒），用 wait_for 限制；
+    - asyncio.CancelledError 继续上抛，``async with`` 会关闭高德客户端；
+    - 初始化/上游异常统一映射为 failed 空补丁，不回显异常文本或 Key。
+    """
+
+    if not cfg.amap_api_key:
+        return await refresh_day_map(request, None)
+    try:
+        async with AMapClient(cfg.amap_api_key, timeout=cfg.amap_timeout) as amap:
+            return await asyncio.wait_for(
+                refresh_day_map(request, amap),
+                timeout=cfg.map_refresh_timeout,
+            )
+    except asyncio.TimeoutError:
+        return empty_map_refresh_response(
+            request,
+            map_status="timeout",
+            reason_code="timeout",
+            reason="本次地图刷新总预算超时，未返回任何坐标或路线。",
+            warning=(
+                f"单日地图刷新总预算超时（>{cfg.map_refresh_timeout:g} 秒），"
+                "本次等待已结束，未取得可应用地图数据；前端保留原坐标与旧路线。"
+            ),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return empty_map_refresh_response(
+            request,
+            map_status="failed",
+            reason_code="failed",
+            reason="地图服务初始化或请求失败。",
+            warning=(
+                "地图服务初始化或请求失败，本次刷新未返回任何地图数据；"
+                "前端保留原坐标与旧路线。"
+            ),
         )
 
 
@@ -1222,6 +1275,24 @@ async def replan_trip_day(request: DayReplanRequest):
         append_map_warning=_with_map_warning,
         safe_error=_safe_error,
     )
+
+
+@app.post(
+    "/api/trips/days/map-refresh",
+    response_model=MapRefreshResponse,
+    summary="只刷新指定一天的地图坐标与路线（不调用大模型）",
+    responses={
+        422: {"description": "请求体非法；站点超过 8 个时明确报 too_many_stops，不截断"},
+    },
+)
+async def refresh_trip_day_map(request: MapRefreshRequest):
+    """返回单日地图补丁，前端预览后由用户显式 apply 到新 fork。
+
+    - 只解析请求给定的站点文字，不触 LLM、不接天气或重规划；
+    - parent 只作为版本令牌原样回显（服务端不存行程，客户端权威）；
+    - 响应不含 Trip、source 或用户原文，成功站点 location 永不为 null。
+    """
+    return await run_map_refresh(request)
 
 
 def _agent_checkpointer() -> Optional[Any]:

@@ -38,6 +38,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 # ==================== HTTP 日志隐私 ====================
 
@@ -368,6 +369,192 @@ class TripPlanRequest(BaseModel):
             return _date.fromisoformat(value).isoformat()
         except (TypeError, ValueError) as exc:
             raise ValueError("departure_date 必须是 YYYY-MM-DD 或 null") from exc
+
+
+# ==================== 单日地图刷新（无 LLM） ====================
+
+# parent.revision 是前端版本令牌，只接受 JSON 安全整数（2^53-1 以内）。
+MAX_SAFE_JSON_INTEGER = 2**53 - 1
+_DATE_SHAPE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+MapRefreshStatus = Literal[
+    "ready", "partial", "unavailable", "no_key", "timeout", "failed"
+]
+
+
+class MapRefreshParent(BaseModel):
+    """父行程版本令牌：只做回显与形状校验，服务端不存版本。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(..., min_length=1, max_length=100)
+    revision: int = Field(..., ge=0, le=MAX_SAFE_JSON_INTEGER)
+
+    @field_validator("trip_id", mode="before")
+    @classmethod
+    def _check_trip_id(cls, value: Any) -> str:
+        """opaque 令牌原样回显：只查形状，不做 strip 或替换。"""
+
+        if not isinstance(value, str):
+            raise ValueError("parent.trip_id 必须是字符串")
+        if not value.strip():
+            raise ValueError("parent.trip_id 不能为空或全空白")
+        if _CONTROL_CHARS.search(value) is not None:
+            raise ValueError("parent.trip_id 不能包含控制字符")
+        return value
+
+    @field_validator("revision", mode="before")
+    @classmethod
+    def _reject_bool_revision(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("parent.revision 必须是整数，不能是布尔值")
+        return value
+
+
+class MapRefreshStop(BaseModel):
+    """刷新请求里的站点文字投影；不接受坐标、几何或指令字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=120)
+    address: str = Field(default="", max_length=300)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _check_id(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("站点 id 必须是字符串")
+        if not value.strip():
+            raise ValueError("站点 id 不能为空或全空白")
+        if _CONTROL_CHARS.search(value) is not None:
+            raise ValueError("站点 id 不能包含控制字符")
+        return value
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("name 必须是字符串")
+        text = re.sub(r"\s+", " ", _CONTROL_CHARS.sub(" ", value)).strip()
+        if not text:
+            raise ValueError("name 不能为空或全空白")
+        return text
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def _clean_address(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("address 必须是字符串")
+        return re.sub(r"\s+", " ", _CONTROL_CHARS.sub(" ", value)).strip()
+
+
+class MapRefreshRequest(BaseModel):
+    """POST /api/trips/days/map-refresh 的请求体；未知字段一律 422。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    destination: str = Field(..., min_length=1, max_length=80)
+    day: int = Field(..., ge=1, le=MAX_DAYS)
+    date: str | None = None
+    travel_mode: Literal["walking", "driving"] = "walking"
+    parent: MapRefreshParent
+    stops: list[MapRefreshStop] = Field(..., min_length=1)
+
+    @field_validator("destination", mode="before")
+    @classmethod
+    def _clean_destination(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("destination 必须是字符串")
+        text = re.sub(r"\s+", " ", _CONTROL_CHARS.sub(" ", value)).strip()
+        if not text:
+            raise ValueError("destination 不能为空")
+        return text
+
+    @field_validator("day", mode="before")
+    @classmethod
+    def _reject_bool_day(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("day 必须是整数，不能是布尔值")
+        return value
+
+    @field_validator("date", mode="before")
+    @classmethod
+    def _normalize_empty_date(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("date 必须是 YYYY-MM-DD 或 null")
+        text = value.strip()
+        if not text:
+            raise ValueError("date 必须是 YYYY-MM-DD 或 null；空字符串请改用 null")
+        return text
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if _DATE_SHAPE_RE.fullmatch(value) is None:
+            raise ValueError("date 必须是 YYYY-MM-DD 或 null")
+        try:
+            return _date.fromisoformat(value).isoformat()
+        except (TypeError, ValueError) as exc:
+            raise ValueError("date 必须是 YYYY-MM-DD 或 null") from exc
+
+    @model_validator(mode="after")
+    def _validate_stops(self) -> "MapRefreshRequest":
+        if len(self.stops) > MAX_STOPS_PER_DAY:
+            # 明确拒绝而不是静默截断：调用方需要知道还有站点没有刷新。
+            raise PydanticCustomError(
+                "too_many_stops",
+                "too_many_stops：单日地图刷新最多支持 {max_stops} 个站点；"
+                "超过上限请先拆分或减少站点，本接口不截断",
+                {"max_stops": MAX_STOPS_PER_DAY},
+            )
+        seen: set[str] = set()
+        for stop in self.stops:
+            if stop.id in seen:
+                raise ValueError(f"stops 中存在重复的站点 id：{stop.id}")
+            seen.add(stop.id)
+        return self
+
+
+class MapRefreshStopPatch(BaseModel):
+    """本次解析成功的站点补丁；location 永不为 null。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    id: str = Field(..., min_length=1, max_length=100)
+    location: Coordinate
+    resolved_address: str | None = Field(default=None, max_length=300)
+
+
+class MapRefreshUnresolved(BaseModel):
+    """本次没有拿到可信坐标的站点；与 stops 不重叠。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, max_length=100)
+    reason_code: str = Field(..., min_length=1, max_length=64)
+    reason: str = Field(..., min_length=1, max_length=200)
+
+
+class MapRefreshResponse(BaseModel):
+    """单日地图刷新补丁；不含 Trip、source 或用户文字。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    day: int = Field(ge=1, le=MAX_DAYS)
+    date: str | None = None
+    parent: MapRefreshParent
+    map_status: MapRefreshStatus
+    stops: list[MapRefreshStopPatch] = Field(default_factory=list)
+    unresolved: list[MapRefreshUnresolved] = Field(default_factory=list)
+    legs: list[Leg] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list, max_length=MAX_TRIP_WARNINGS)
 
 
 # ==================== 文本处理与 ID ====================
@@ -2991,6 +3178,9 @@ class _ResolvedStop:
     address: str
     error: str | None = None
     error_code: str | None = None
+    # 仅记录高德实际返回的格式化地址；空字符串表示上游没有给地址。
+    # 旧入口不读这个字段，保持 _resolve_stop 原有行为。
+    resolved_address: str = ""
 
 
 # 这两类原因说明“这不是同一处地点”，不能再用站点名称去猜坐标。
@@ -3033,9 +3223,11 @@ def _geocode_result_is_trusted(
     return True, ""
 
 
-async def _resolve_stop(
+async def _resolve_place(
     amap: AMapClient,
-    stop: Stop,
+    *,
+    name: str,
+    address: str,
     destination: str,
     semaphore: asyncio.Semaphore,
     guard: _AMapCallGuard | None = None,
@@ -3060,7 +3252,7 @@ async def _resolve_stop(
             return _ResolvedStop(
                 wgs=None,
                 gcj=None,
-                address=stop.address,
+                address=address,
                 error="地图服务鉴权、权限或配额错误，已停止继续请求",
                 error_code=guard.fatal_code,
             )
@@ -3068,7 +3260,7 @@ async def _resolve_stop(
         # 1. 名称可识别时先搜 POI：景点名称通常比模型写的宽泛地址可靠。
         if guard is None or not guard.blocked:
             try:
-                poi = await amap.search_poi(stop.name, city=destination)
+                poi = await amap.search_poi(name, city=destination)
             except asyncio.CancelledError:
                 raise
             except AMapError as exc:
@@ -3083,12 +3275,13 @@ async def _resolve_stop(
                 unexpected = True
                 errors.append("POI 搜索发生内部异常")
             else:
-                trusted, reason = _poi_is_trusted(poi, stop.name, destination)
+                trusted, reason = _poi_is_trusted(poi, name, destination)
                 if trusted:
                     return _ResolvedStop(
                         wgs=_coordinate_to_wgs(poi.location),
                         gcj=poi.location,
-                        address=poi.formatted_address or stop.address,
+                        address=poi.formatted_address or address,
+                        resolved_address=poi.formatted_address or "",
                     )
                 notes.append(reason)
                 if reason.startswith(_POI_NAME_UNCONFIRMED_PREFIXES):
@@ -3112,7 +3305,7 @@ async def _resolve_stop(
             if is_stop_address:
                 # 模型地址自己就写着另一家门店/入口/航站楼时，不发这次地理编码：
                 # 它只会把矛盾候选的坐标拿回来。名称兜底仍可独立给出正确点位。
-                conflict = _address_identity_conflict(stop.name, query, destination)
+                conflict = _address_identity_conflict(name, query, destination)
                 if conflict:
                     notes.append(f"模型地址与站点名称的{conflict}")
                     return None
@@ -3137,7 +3330,7 @@ async def _resolve_stop(
                 # 输入地址干净、返回地址却自行指到另一家门店/入口/航站楼时，
                 # 同样不能采用这个候选坐标，也不能覆盖用户写的地址。
                 conflict = _address_identity_conflict(
-                    stop.name, result.formatted_address, destination
+                    name, result.formatted_address, destination
                 )
                 if conflict:
                     notes.append(f"地理编码结果与站点名称的{conflict}")
@@ -3146,7 +3339,7 @@ async def _resolve_stop(
                 # 用名称兜底时，返回地址里出现另一家门店/另一个方位就是明确矛盾，
                 # 不能拿它当站点坐标，更不能覆盖用户写的地址。
                 conflict = _stop_identity_conflict_text(
-                    stop.name, result.formatted_address, destination
+                    name, result.formatted_address, destination
                 )
                 if conflict:
                     notes.append(f"地理编码结果与站点名称的{conflict}")
@@ -3154,7 +3347,7 @@ async def _resolve_stop(
                 # 用户点名了门店/分店，返回地址却没有任何门店标识时，不能把
                 # 附近地址当成“用户指定的那家店”。行政区同名（西湖区）不算证据。
                 if not _branch_confirmed_by_address(
-                    stop.name, result.formatted_address, destination
+                    name, result.formatted_address, destination
                 ):
                     notes.append(
                         "地理编码返回地址没有写出站点名称里的门店/分店标识，"
@@ -3164,7 +3357,7 @@ async def _resolve_stop(
                 # 无括号但带方位/入口/航站楼标识的查询（雷峰塔东门/首都机场T1）
                 # 同样不能把“地址里只写了主体名”的结果当精准点位——旧实现
                 # 对这类查询跳过标识核对，是可能造成假导航的缺口。
-                query_markers = _place_markers(stop.name)
+                query_markers = _place_markers(name)
                 if query_markers:
                     address_compact = re.sub(
                         r"[\W_]+", "", result.formatted_address.lower(), flags=re.UNICODE
@@ -3181,12 +3374,13 @@ async def _resolve_stop(
             return _ResolvedStop(
                 wgs=_coordinate_to_wgs(result.location),
                 gcj=result.location,
-                address=result.formatted_address or stop.address,
+                address=result.formatted_address or address,
+                resolved_address=result.formatted_address or "",
             )
 
         # 2. 模型地址只在通过级别/城市校验后使用。
-        if stop.address:
-            resolved = await try_geocode(stop.address, is_stop_address=True)
+        if address:
+            resolved = await try_geocode(address, is_stop_address=True)
             if resolved is not None:
                 return resolved
             blocked = blocked_result()
@@ -3194,8 +3388,8 @@ async def _resolve_stop(
                 return blocked
 
         # 3. 名称地理编码兜底；地址已经精确命中、或 POI 已指向另一处时不再猜。
-        if stop.name and stop.name != stop.address and not poi_name_mismatch:
-            resolved = await try_geocode(stop.name, is_stop_name=True)
+        if name and name != address and not poi_name_mismatch:
+            resolved = await try_geocode(name, is_stop_name=True)
             if resolved is not None:
                 return resolved
 
@@ -3211,10 +3405,29 @@ async def _resolve_stop(
         return _ResolvedStop(
             wgs=None,
             gcj=None,
-            address=stop.address,
+            address=address,
             error=reason,
             error_code=error_code,
         )
+
+
+async def _resolve_stop(
+    amap: AMapClient,
+    stop: Stop,
+    destination: str,
+    semaphore: asyncio.Semaphore,
+    guard: _AMapCallGuard | None = None,
+) -> _ResolvedStop:
+    """旧入口：行为保持不变，解析逻辑已抽到 :func:`_resolve_place`。"""
+
+    return await _resolve_place(
+        amap,
+        name=stop.name,
+        address=stop.address,
+        destination=destination,
+        semaphore=semaphore,
+        guard=guard,
+    )
 
 
 def _format_distance(distance_m: int) -> str:
@@ -3777,6 +3990,362 @@ async def enrich_trip_with_map(
     ]
     return trip.model_copy(
         update={"days": final_days, "warnings": dedupe_warnings(warnings)}
+    )
+
+
+def empty_map_refresh_response(
+    request: MapRefreshRequest,
+    *,
+    map_status: MapRefreshStatus,
+    reason_code: str,
+    reason: str,
+    warning: str,
+) -> MapRefreshResponse:
+    """构造 stops/legs 全空的刷新补丁；失败不等于旧记录失效。
+
+    仅供 timeout / failed / no_key 等空补丁路径复用：unresolved 必须覆盖请求
+    里的全部站点 id，warnings 只保留一条可见说明。
+    """
+
+    return MapRefreshResponse(
+        day=request.day,
+        date=request.date,
+        parent=request.parent,
+        map_status=map_status,
+        stops=[],
+        unresolved=[
+            MapRefreshUnresolved(id=place.id, reason_code=reason_code, reason=reason)
+            for place in request.stops
+        ],
+        legs=[],
+        warnings=dedupe_warnings([warning]),
+    )
+
+
+async def refresh_day_map(
+    request: MapRefreshRequest,
+    amap: AMapClient | None,
+) -> MapRefreshResponse:
+    """只刷新单日地图补丁：解析站点坐标并重算相邻路线，不重写文字行程。
+
+    与 :func:`enrich_trip_with_map` 的关键差异：
+    - 只按请求给定的 name/address 解析；不覆盖行程任何 address/location/time
+      等字段，也不触发 _strip_generated_warnings / _schedule_conflict_warnings；
+    - 未解析成功的站点只出现在 ``unresolved``，成功站点的 location 永不为 null；
+    - ``resolved_address`` 只记录高德返回的格式化地址，不回显用户文字；
+    - ``warnings`` 只描述本次刷新，不接触行程原有提醒。
+    时间超时由调用方（api_server）用 asyncio.wait_for 控制；本函数收到
+    CancelledError 继续上抛，保证客户端被关闭。
+    """
+
+    if amap is None or not amap.configured:
+        return empty_map_refresh_response(
+            request,
+            map_status="no_key",
+            reason_code="no_key",
+            reason="服务端未配置高德地图 Key，本次未执行任何地图查询。",
+            warning=(
+                "服务端未配置高德地图 Key（AMAP_API_KEY），本次刷新未返回任何"
+                "地图数据；前端保留原坐标与旧路线。"
+            ),
+        )
+
+    semaphore = asyncio.Semaphore(4)
+    guard = _AMapCallGuard()
+    warnings: list[str] = []
+    route_error_codes: list[str | None] = []
+    internal_error_count = 0
+
+    async def safe_resolve(place: MapRefreshStop) -> _ResolvedStop:
+        nonlocal internal_error_count
+        try:
+            return await _resolve_place(
+                amap,
+                name=place.name,
+                address=place.address,
+                destination=request.destination,
+                semaphore=semaphore,
+                guard=guard,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 单个站点意外错误只让该站点保持未解析，不拖垮整批刷新。
+            internal_error_count += 1
+            return _ResolvedStop(
+                wgs=None,
+                gcj=None,
+                address=place.address,
+                error="站点地图解析发生内部异常",
+                error_code="internal_error",
+            )
+
+    resolved_list = await asyncio.gather(*(safe_resolve(p) for p in request.stops))
+    resolved_by_id = {p.id: result for p, result in zip(request.stops, resolved_list)}
+
+    stop_patches: list[MapRefreshStopPatch] = []
+    unresolved: list[MapRefreshUnresolved] = []
+    for place, result in zip(request.stops, resolved_list):
+        if result.wgs is None:
+            reason = (
+                _sanitize_text(result.error, max_length=160, allow_newlines=False)
+                or "未找到可信坐标"
+            )
+            code = (
+                _sanitize_text(result.error_code, max_length=64, allow_newlines=False)
+                or "not_found"
+            )
+            unresolved.append(
+                MapRefreshUnresolved(id=place.id, reason_code=code, reason=reason)
+            )
+            continue
+        resolved_address = (
+            _sanitize_text(
+                result.resolved_address, max_length=300, allow_newlines=False
+            )
+            or None
+        )
+        stop_patches.append(
+            MapRefreshStopPatch(
+                id=place.id,
+                location=result.wgs,
+                resolved_address=resolved_address,
+            )
+        )
+
+    travel_mode = request.travel_mode
+    mode_label = _travel_mode_label(travel_mode)
+
+    def straight_line_leg(
+        current_id: str,
+        following_id: str,
+        current_loc: Coordinate,
+        following_loc: Coordinate,
+        description: str,
+    ) -> Leg:
+        return Leg(
+            from_stop_id=current_id,
+            to_stop_id=following_id,
+            mode=travel_mode,
+            route_type="straight_line",
+            distance_m=None,
+            duration_minutes=None,
+            geometry=[current_loc, following_loc],
+            description=description,
+        )
+
+    def unavailable_leg(current_id: str, following_id: str, description: str) -> Leg:
+        return Leg(
+            from_stop_id=current_id,
+            to_stop_id=following_id,
+            mode=travel_mode,
+            route_type="unavailable",
+            distance_m=None,
+            duration_minutes=None,
+            geometry=[],
+            description=description,
+        )
+
+    async def build_leg(current: MapRefreshStop, following: MapRefreshStop) -> Leg:
+        nonlocal internal_error_count
+        async with semaphore:
+            current_res = resolved_by_id[current.id]
+            following_res = resolved_by_id[following.id]
+            if (
+                current_res.wgs is None
+                or following_res.wgs is None
+                or current_res.gcj is None
+                or following_res.gcj is None
+            ):
+                return unavailable_leg(
+                    current.id, following.id, "缺少可信坐标，无法生成路线或直线示意。"
+                )
+
+            if guard.blocked:
+                return straight_line_leg(
+                    current.id,
+                    following.id,
+                    current_res.wgs,
+                    following_res.wgs,
+                    "地图服务已因鉴权/配额错误停止继续请求，这里只画两点间"
+                    "直线示意，距离与耗时未知。",
+                )
+
+            try:
+                route = await amap.route(current_res.gcj, following_res.gcj, travel_mode)
+            except asyncio.CancelledError:
+                raise
+            except AMapError as exc:
+                route_error_codes.append(exc.code)
+                guard.observe(exc)
+                reason = _describe_amap_error(exc)
+                warnings.append(
+                    f"{ROUTE_DEGRADED_PREFIX}本次{mode_label}路线获取失败，"
+                    "已降级为两点直线示意。"
+                )
+                return straight_line_leg(
+                    current.id,
+                    following.id,
+                    current_res.wgs,
+                    following_res.wgs,
+                    f"无法获取{mode_label}路线数据（{reason}），"
+                    "这里只画两点间直线示意，距离与耗时未知。",
+                )
+            except Exception:
+                internal_error_count += 1
+                warnings.append(
+                    f"{ROUTE_DEGRADED_PREFIX}本次{mode_label}路线解析异常，"
+                    "已降级为两点直线示意。"
+                )
+                return straight_line_leg(
+                    current.id,
+                    following.id,
+                    current_res.wgs,
+                    following_res.wgs,
+                    f"{mode_label}路线数据解析异常，这里只画两点间直线示意，"
+                    "距离与耗时未知。",
+                )
+
+            if len(route.geometry) < 2:
+                warnings.append(
+                    f"{ROUTE_DEGRADED_PREFIX}本次{mode_label}路线几何不足，"
+                    "已降级为两点直线示意。"
+                )
+                return straight_line_leg(
+                    current.id,
+                    following.id,
+                    current_res.wgs,
+                    following_res.wgs,
+                    f"高德未返回可用的{mode_label}路线几何，仅显示两点直线示意。",
+                )
+
+            distance_m = _to_int(route.distance_m)
+            if distance_m is None:
+                warnings.append(
+                    f"{ROUTE_DEGRADED_PREFIX}本次{mode_label}路线距离异常，"
+                    "已降级为两点直线示意。"
+                )
+                return straight_line_leg(
+                    current.id,
+                    following.id,
+                    current_res.wgs,
+                    following_res.wgs,
+                    f"高德返回的{mode_label}路线距离无效，仅显示两点直线示意。",
+                )
+
+            duration_minutes = _to_finite_float(route.duration_minutes)
+            if route.duration_minutes is not None and duration_minutes is None:
+                warnings.append(
+                    f"本次{mode_label}路线耗时异常，该段已标记为耗时未知。"
+                )
+
+            return Leg(
+                from_stop_id=current.id,
+                to_stop_id=following.id,
+                mode=travel_mode,
+                route_type="navigation",
+                distance_m=distance_m,
+                duration_minutes=duration_minutes,
+                geometry=route.geometry,
+                description=(
+                    f"高德{mode_label}路线规划：约 {_format_distance(distance_m)}，"
+                    f"预计 {_format_minutes(duration_minutes)}。"
+                ),
+            )
+
+    async def safe_build_leg(current: MapRefreshStop, following: MapRefreshStop) -> Leg:
+        nonlocal internal_error_count
+        try:
+            return await build_leg(current, following)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 单段路线构造/校验异常只降级这一段，其他站点与路段保留。
+            internal_error_count += 1
+            current_res = resolved_by_id[current.id]
+            following_res = resolved_by_id[following.id]
+            if current_res.wgs is not None and following_res.wgs is not None:
+                warnings.append(
+                    f"{ROUTE_DEGRADED_PREFIX}本次{mode_label}路线解析异常，"
+                    "已降级为两点直线示意。"
+                )
+                return straight_line_leg(
+                    current.id,
+                    following.id,
+                    current_res.wgs,
+                    following_res.wgs,
+                    "路线数据解析发生内部异常，仅显示两点直线示意，"
+                    "距离与耗时未知。",
+                )
+            return unavailable_leg(
+                current.id, following.id, "缺少可信坐标，无法生成路线或直线示意。"
+            )
+
+    leg_tasks = [
+        (current, following)
+        for current, following in zip(request.stops, request.stops[1:])
+    ]
+    legs: list[Leg] = list(
+        await asyncio.gather(
+            *(safe_build_leg(current, following) for current, following in leg_tasks)
+        )
+    )
+
+    if not stop_patches:
+        # 硬状态（failed/unavailable）：stops/legs 必须为空，unresolved 覆盖全部 id。
+        legs = []
+
+    if internal_error_count:
+        warnings.append(
+            "部分站点或路段的地图数据解析发生内部异常，相关位置/路段已降级，"
+            "其他数据保留。"
+        )
+    if stop_patches:
+        # 有成功点时如实说明部分未解析，partial/ready 都不给"全部失败"暗示。
+        if unresolved:
+            warnings.append(
+                f"{len(unresolved)} 个站点未解析出可信坐标，本次补丁不含这些点，"
+                "前端保留原坐标与原路线。"
+            )
+
+    error_codes = [result.error_code for result in resolved_list]
+    error_codes.extend(route_error_codes)
+    error_codes.append(guard.fatal_code)
+    warnings.extend(_map_error_warnings(error_codes))
+
+    all_resolved = not unresolved
+    if all_resolved and all(leg.route_type == "navigation" for leg in legs):
+        map_status: MapRefreshStatus = "ready"
+    elif stop_patches or legs:
+        map_status = "partial"
+    elif guard.blocked:
+        map_status = "failed"
+    else:
+        map_status = "unavailable"
+
+    navigation_count = sum(1 for leg in legs if leg.route_type == "navigation")
+    warnings.append(
+        f"本次单日地图刷新（{mode_label}）：解析成功 "
+        f"{len(stop_patches)}/{len(request.stops)} 个站点，"
+        f"路线 {len(legs)} 段（导航 {navigation_count} 段）。"
+    )
+
+    if len(warnings) > MAX_TRIP_WARNINGS:
+        dropped = len(warnings) - (MAX_TRIP_WARNINGS - 1)
+        warnings = warnings[: MAX_TRIP_WARNINGS - 1] + [
+            f"本次地图刷新提醒超过 {MAX_TRIP_WARNINGS} 条上限，省略 {dropped} 条。"
+        ]
+    warnings = dedupe_warnings(warnings)
+
+    return MapRefreshResponse(
+        day=request.day,
+        date=request.date,
+        parent=request.parent,
+        map_status=map_status,
+        stops=stop_patches,
+        unresolved=unresolved,
+        legs=legs,
+        warnings=warnings,
     )
 
 
