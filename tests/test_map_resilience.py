@@ -1031,3 +1031,289 @@ def test_unspecified_branch_does_not_fall_back_to_name_geocode():
     assert "/v3/geocode/geo" not in calls, "未指定分店时不应退回名称地理编码"
     joined = " ".join(trip.warnings)
     assert "无法确认是同一处" in joined
+
+
+# ==================== 名称地理编码兜底：必须证实用户点名的分店 ====================
+#
+# 真实场景：站点名“如家酒店（西湖店）”，POI 搜索只找到武林广场店（被客户端拒绝），
+# 名称地理编码返回“杭州市下城区武林广场1号”这类不带任何门店标识的地址。
+# 旧逻辑只比对冲突标识，不核对“用户点名的门店有没有被证实”，于是把错店地址
+# 当成了精确定位。这里用真实 AMapClient + MockTransport 固定新行为。
+
+_BRANCH_USER_ADDRESS = "杭州市西湖区文三路100号"
+
+
+def _branch_mock_handler(
+    *,
+    geocode_address: str,
+    geocode_city: str = "杭州市",
+    geocode_location: str = "120.130000,30.274000",
+    pois: list | None = None,
+    geocode_calls: list[str] | None = None,
+    route_calls: list[tuple[str, str]] | None = None,
+    route_status: tuple[str, str] = ("1", "OK"),
+):
+    """模拟高德：如家只搜到错误分店，名称地理编码返回指定地址。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        params = dict(request.url.params)
+        if path == "/v3/place/text":
+            query = params.get("keywords", "")
+            if "如家" in query:
+                items = [
+                    {
+                        "name": "如家酒店（武林广场店）",
+                        "location": "120.163000,30.276000",
+                        "cityname": "杭州市",
+                        "adname": "下城区",
+                        "address": "武林广场1号",
+                    }
+                ]
+            else:
+                items = [
+                    {
+                        "name": query,
+                        "location": "120.150000,30.260000",
+                        "cityname": "杭州市",
+                        "adname": "西湖区",
+                        "address": "北山街1号",
+                    }
+                ]
+            if pois is not None:
+                items = pois
+            return httpx.Response(
+                200, json={"status": "1", "info": "OK", "pois": items}
+            )
+        if path == "/v3/geocode/geo":
+            address = params.get("address", "")
+            if geocode_calls is not None:
+                geocode_calls.append(address)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "info": "OK",
+                    "geocodes": [
+                        {
+                            "formatted_address": geocode_address,
+                            "location": geocode_location,
+                            "level": "门牌号",
+                            "city": geocode_city,
+                        }
+                    ],
+                },
+            )
+        if path.startswith("/v5/direction/"):
+            if route_calls is not None:
+                route_calls.append((params["origin"], params["destination"]))
+            status, info = route_status
+            if status != "1":
+                return httpx.Response(
+                    200, json={"status": status, "info": info, "infocode": info}
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "route": {
+                        "paths": [
+                            {
+                                "distance": "300",
+                                "cost": {"duration": "240"},
+                                "steps": [
+                                    {
+                                        "polyline": (
+                                            f"{params['origin']};{params['destination']}"
+                                        )
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected path {path}")
+
+    return handler
+
+
+async def _enrich_with_mock_handler(payload, request, handler):
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        amap = AMapClient("fixture-key", client=http_client)
+        return await build_agent_trip(payload, request, amap)
+
+
+@pytest.mark.parametrize(
+    ("geocode_address", "accepted"),
+    [
+        ("杭州市西湖区文三路100号如家酒店（西湖店）", True),
+        ("杭州市西湖区文三路100号如家酒店西湖分店", True),
+        # 只有行政区同名（西湖区），不能证明是“西湖店”。
+        ("杭州市西湖区文三路100号", False),
+        # 完全没有门店标识的地址。
+        ("杭州市下城区武林广场1号", False),
+        # 明确写了另一家店。
+        ("杭州市下城区武林广场1号如家酒店（武林广场店）", False),
+        # 同名分店但不是用户点名的品牌。
+        ("杭州市西湖区文三路100号全季酒店（西湖店）", False),
+        # 只有“（西湖店）”字样，没有品牌名，无法确认是哪家店。
+        ("杭州市西湖区文三路100号（西湖店）", False),
+    ],
+    ids=[
+        "paren-branch",
+        "store-phrase",
+        "district-only",
+        "no-marker",
+        "other-branch",
+        "other-brand",
+        "branch-no-brand",
+    ],
+)
+def test_name_geocode_must_confirm_user_branch(geocode_address, accepted):
+    route_calls: list[tuple[str, str]] = []
+    handler = _branch_mock_handler(
+        geocode_address=geocode_address, route_calls=route_calls
+    )
+    payload = make_payload(
+        [
+            stop("如家酒店（西湖店）"),
+            stop("断桥残雪", "杭州市西湖区北山街1号", time="10:30"),
+        ]
+    )
+
+    trip = run(_enrich_with_mock_handler(payload, make_request(), handler))
+    resolved = trip.days[0].stops[0]
+    joined = " ".join(trip.warnings)
+
+    if accepted:
+        assert resolved.location is not None, joined
+        expected = gcj02_to_wgs84(120.13, 30.274)
+        assert resolved.location.lng == pytest.approx(expected[0], abs=1e-6)
+        assert resolved.location.lat == pytest.approx(expected[1], abs=1e-6)
+        assert resolved.address == geocode_address
+        assert "无法通过高德获取可信坐标" not in joined
+        assert len(route_calls) == 1
+    else:
+        assert resolved.location is None, f"未证实的门店不能被当成精确定位：{geocode_address}"
+        assert resolved.address == ""
+        assert "无法通过高德获取可信坐标" in joined
+        assert "门店/分店标识" in joined, joined
+        assert route_calls == [], "没有可信坐标时不应请求路线"
+        assert trip.days[0].legs[0].route_type == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("stop_name", "geocode_address", "accepted"),
+    [
+        ("如家酒店（杭州西湖店）", "杭州市西湖区文三路100号如家酒店（西湖店）", True),
+        ("如家酒店（杭州新西湖店）", "杭州市西湖区文三路100号如家酒店（西湖店）", False),
+        ("如家酒店（杭州西湖店）", "杭州市西湖区文三路100号如家酒店（武林广场店）", False),
+    ],
+    ids=["city-prefix-same-branch", "new-xihu-not-xihu", "wulin-not-xihu"],
+)
+def test_name_geocode_city_prefix_branch_identity(stop_name, geocode_address, accepted):
+    """城市前缀只在证实同一家分店时放行名称地理编码。"""
+
+    handler = _branch_mock_handler(geocode_address=geocode_address)
+    payload = make_payload([stop(stop_name), stop("断桥残雪", time="10:30")])
+
+    trip = run(_enrich_with_mock_handler(payload, make_request(), handler))
+    resolved = trip.days[0].stops[0]
+    joined = " ".join(trip.warnings)
+
+    if accepted:
+        assert resolved.location is not None, joined
+        assert resolved.address == geocode_address
+    else:
+        assert resolved.location is None, f"不同分店不能被城市前缀合并：{stop_name}"
+        assert resolved.address == ""
+        assert "门店/分店标识" in joined, joined
+
+
+def test_explicit_user_address_is_geocoded_even_when_poi_is_wrong_branch():
+    """用户写了完整门牌地址时，按用户地址取坐标，不被 POI 错店覆盖。"""
+
+    geocode_calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v3/place/text":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "pois": [
+                        {
+                            "name": "如家酒店（武林广场店）",
+                            "location": "120.163000,30.276000",
+                            "cityname": "杭州市",
+                            "adname": "下城区",
+                            "address": "武林广场1号",
+                        }
+                    ],
+                },
+            )
+        if path == "/v3/geocode/geo":
+            address = dict(request.url.params).get("address", "")
+            geocode_calls.append(address)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "geocodes": [
+                        {
+                            "formatted_address": _BRANCH_USER_ADDRESS,
+                            "location": "120.130000,30.274000",
+                            "level": "门牌号",
+                            "city": "杭州市",
+                        }
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected path {path}")
+
+    trip = run(
+        _enrich_with_mock_handler(
+            make_payload([stop("如家酒店（西湖店）", _BRANCH_USER_ADDRESS)]),
+            make_request(),
+            handler,
+        )
+    )
+
+    resolved = trip.days[0].stops[0]
+    assert resolved.address == _BRANCH_USER_ADDRESS
+    expected = gcj02_to_wgs84(120.13, 30.274)
+    assert resolved.location is not None
+    assert resolved.location.lng == pytest.approx(expected[0], abs=1e-6)
+    assert resolved.location.lat == pytest.approx(expected[1], abs=1e-6)
+    # 用户地址一次命中，不再用站点名去猜另一家店的坐标。
+    assert geocode_calls == [_BRANCH_USER_ADDRESS]
+
+
+def test_name_geocode_in_other_city_is_rejected():
+    """名称地理编码跑到别的城市时不能当成本地分店坐标。"""
+
+    route_calls: list[tuple[str, str]] = []
+    handler = _branch_mock_handler(
+        geocode_address="上海市浦东新区张杨路1号如家酒店（西湖店）",
+        geocode_city="上海市",
+        geocode_location="121.500000,31.200000",
+        pois=[],
+        route_calls=route_calls,
+    )
+
+    trip = run(
+        _enrich_with_mock_handler(
+            make_payload([stop("如家酒店（西湖店）"), stop("断桥残雪", time="10:30")]),
+            make_request(),
+            handler,
+        )
+    )
+
+    resolved = trip.days[0].stops[0]
+    assert resolved.location is None
+    joined = " ".join(trip.warnings)
+    assert "城市与目的地不符" in joined, joined
+    assert route_calls == []

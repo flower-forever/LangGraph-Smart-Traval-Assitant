@@ -455,3 +455,55 @@ def test_search_poi_does_not_invent_unspecified_branch():
         _search_poi_with([_poi_response("全聚德（王府井店）")], "全聚德")
 
     assert exc_info.value.code == "poi_unconfirmed"
+
+
+# ==================== 城市前缀：只有城市明确匹配才允许对齐分店名 ====================
+
+
+@pytest.mark.parametrize(
+    ("query", "candidate", "city", "should_match", "note"),
+    [
+        ("如家酒店（杭州西湖店）", "如家酒店（西湖店）", "杭州", True, "城市前缀 + 同一家店"),
+        ("如家酒店（杭州西湖店）", "如家酒店（西湖分店）", "杭州", True, "同一家店的分店后缀差异"),
+        ("如家酒店（西湖店）", "如家酒店（杭州西湖店）", "杭州", True, "城市前缀写在候选侧"),
+        ("如家酒店（杭州西湖店）", "如家酒店（武林广场店）", "杭州", False, "不同分店"),
+        ("如家酒店（杭州西湖店）", "如家酒店（新西湖店）", "杭州", False, "新西湖不是西湖"),
+        ("如家酒店（杭州西湖店）", "如家酒店（西湖店）", "上海", False, "城市不符时不能剥前缀"),
+        ("如家酒店（杭州西湖店）", "如家酒店（西湖店）", None, False, "没有城市信息时保持拒绝"),
+        ("杭州东站", "杭州西站", "杭州", False, "东西站不因城市匹配放宽"),
+        ("首都机场T1", "首都机场T2", "北京", False, "航站楼不放宽"),
+        ("断桥残雪", "断桥", "杭州", True, "普通简称照旧"),
+        ("雷峰塔", "雷峰塔东门", "杭州", True, "景点入口照旧"),
+    ],
+)
+def test_place_name_score_city_prefix_requires_matching_city(
+    query, candidate, city, should_match, note
+):
+    score = _place_name_score(query, candidate, city)
+    if should_match:
+        assert score >= _POI_NAME_MATCH_MIN_SCORE, f"{note}: 得 {score}"
+    else:
+        assert score < _POI_NAME_MATCH_MIN_SCORE, f"{note}: 得 {score}"
+
+
+def test_search_poi_accepts_city_prefixed_same_branch():
+    """如家酒店（杭州西湖店）能匹配同一家店的“（西湖店）”，不是误拒。"""
+
+    result = _search_poi_with(
+        [_poi_response("如家酒店（西湖店）")], "如家酒店（杭州西湖店）"
+    )
+
+    assert result.name == "如家酒店（西湖店）"
+
+
+@pytest.mark.parametrize(
+    "other_branch",
+    ["如家酒店（武林广场店）", "如家酒店（新西湖店）", "如家酒店（西湖东店）"],
+)
+def test_search_poi_city_prefix_does_not_merge_other_branches(other_branch):
+    """城市前缀只剥“杭州”，武林广场/新西湖/西湖东仍是不同分店。"""
+
+    with pytest.raises(AMapError) as exc_info:
+        _search_poi_with([_poi_response(other_branch)], "如家酒店（杭州西湖店）")
+
+    assert exc_info.value.code in {"poi_mismatch", "poi_unconfirmed"}

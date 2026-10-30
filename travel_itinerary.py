@@ -85,6 +85,10 @@ SCHEDULE_CONFLICT_PREFIX = "时间冲突："
 # 下一站时间早于上一站时，仅凭 time 字符串无法确认是同日顺序写反还是跨日安排。
 # 这类情况单独用“待确认”前缀，避免把假设说成已经核实的事实。
 SCHEDULE_ORDER_PREFIX = "时间顺序或跨日待确认："
+# 路线降级提醒必须以服务端固定前缀开头。提醒正文包含站点名，而站点名来自模型
+# 输出；若名字恰好以“提醒数量已达上限，另有…”开头，提醒会被汇总行解析当成
+# 损坏摘要整条丢弃，用户看不到真实路线降级。固定前缀把提醒与汇总行区分开。
+ROUTE_DEGRADED_PREFIX = "路线降级："
 # 归一化阶段会把无法解析的 time 换成 09:00 起的默认时刻。这些值只是占位，
 # 不能当作模型确认过的真实时间。来源记录随 TripPlan 以私有属性传递（不进
 # JSON schema，也不进 model_dump / API 响应），地图增强重算冲突时据此措辞。
@@ -447,6 +451,9 @@ _MAP_DEGRADED_PREFIXES = (
     "未配置 AMAP_API_KEY",
     "地图数据超时",
     "地图数据增强失败",
+    # 路线降级提醒也是关键地图失败：正文以站点名开头，若站点名恰好伪造了
+    # 其他前缀，没有这一条会把「路线获取失败」整条归入「其他」被截断丢弃。
+    ROUTE_DEGRADED_PREFIX,
 )
 # 站点/路段级的地图降级提示措辞不固定，用片段识别，同样受上限保护。
 _MAP_DEGRADED_FRAGMENTS = (
@@ -1342,7 +1349,11 @@ def _normalize_place_name(value: Any) -> str:
 # 括号里通常是门店/分店/入口这类辨识性补充说明（如家酒店（西湖店））。
 # 归一化会把括号整段丢掉，两处不同门店因此变成同名——所以匹配前要先单独比对括号内容。
 _PAREN_SEGMENT_RE = re.compile(r"[（(]([^）)]*)[）)]")
+# 顺序很重要：长后缀在前，避免“旗舰店”先被“店”截走。
 _BRANCH_SUFFIXES = ("旗舰店", "分店", "门店", "店")
+# 门店身份确认不再维护邻字黑名单（有限黑名单挡不住“大/湖滨/美丽”这类
+# 未列入的字）。改为可证明的“品牌+core+店后缀”完整分词：
+# 见 `_branch_word_confirmed` 与 `_query_brand_key`。
 
 # 方位 + 设施名构成辨识性标识：杭州东站 / 杭州西站、西门 / 东门、西湖 / 东湖。
 # 只有方位字紧跟这些设施词时才算标识，避免把“西溪湿地”之类的名字误拆。
@@ -1421,8 +1432,146 @@ def _all_branch_markers(markers: dict[str, set[str]]) -> set[str]:
     return markers.get("branch", set()) | markers.get("store_branch", set())
 
 
+def _branch_marker_core(value: str, city: Any) -> str:
+    """去掉分店标识开头的城市限定词，便于“（杭州西湖店）”与“（西湖店）”对齐。
+
+    只在调用方明确给出目的地城市、且去掉前缀后还剩至少两个字时才动手；
+    “新西湖店”去掉城市后是“新西湖”，不会和“西湖店”混同。
+    """
+
+    core = value
+    city_name = _normalize_admin_name(city) if city else ""
+    if (
+        city_name
+        and core.startswith(city_name)
+        and len(core) - len(city_name) >= 2
+    ):
+        return core[len(city_name):]
+    return core
+
+
+def _branch_markers_match(left: set[str], right: set[str], city: Any = None) -> bool:
+    """两侧门店/分店标识是否指向同一家店。
+
+    ``city`` 为空时只认完全相同的标识；给出目的地城市后，允许一侧把城市名
+    写在分店名前（如“杭州西湖店”与“西湖店”）。这只是在城市明确的前提下
+    去掉前缀，不做包含或模糊匹配，避免把“新西湖/武林广场”等不同分店合并。
+
+    匹配是“一一对应”：一侧点名多家分店而另一侧只对上其中一部分时，
+    说明有一家无法确认，整体保守拒绝，不能靠交集放行。
+    """
+
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    if not city:
+        return False
+    left_cores = {_branch_marker_core(value, city) for value in left}
+    right_cores = {_branch_marker_core(value, city) for value in right}
+    return left_cores == right_cores
+
+
+def _branch_confirmed_by_address(
+    stop_name: Any, formatted_address: Any, city: Any = None
+) -> bool:
+    """名称兜底地理编码的返回地址，是否明确证实了用户点名的门店/分店。
+
+    返回地址里只出现行政区同名（“杭州市西湖区…”里的“西湖”）不算证据：那
+    可能是另一家店所在的区。只有地址带括号门店名，或出现“西湖店/西湖分店”
+    这类完整门店措辞，并且仍写着站点名的品牌部分时，才把坐标当成用户指定
+    分店的精确定位。站点名不含门店标识时不额外限制（景点名称照原逻辑走）。
+
+    三类括号限定词分开处理：
+    - 门店点名（“（西湖店）”）：地址必须出现“core+店后缀”的完整分词，
+      且紧邻字不能是“新/分”这类身份字——“新西湖店”证明不了“西湖店”。
+    - 行政注释（“西湖（杭州）”里的“杭州”）：地址全名整体提到即可，
+      这类注释不锁定具体门店，不应把门牌级结果误判成“分店未证实”。
+    - 入口等其他限定词（“（午门）”）：仍要求地址原样写出限定词本身，
+      不因行政注释的修复而放宽。
+    """
+
+    query_markers = _place_markers(stop_name)
+    left = _all_branch_markers(query_markers)
+    if not left:
+        # 无括号但点名了门店的查询（如“如家酒店西湖店”）：返回地址必须
+        # 完整写出同一门店，否则不能把附近地址当用户指定的那家店。
+        query_compact = re.sub(
+            r"[\W_]+",
+            "",
+            _sanitize_text(stop_name, max_length=160, allow_newlines=False).lower(),
+            flags=re.UNICODE,
+        )
+        if _marker_is_store_word(query_compact):
+            return _no_paren_store_identity_confirmed(stop_name, formatted_address, city)
+        return True
+    left_store = query_markers.get("store_branch", set())
+    text = _sanitize_text(
+        formatted_address, max_length=300, allow_newlines=False
+    ).lower()
+    compact = re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+    if not compact:
+        return False
+    base = _normalize_place_name(stop_name)
+    if base and base not in compact:
+        # 地址只写了同名的“西湖店”却没有品牌名，无法确认就是用户要的那家。
+        return False
+    right = _all_branch_markers(_place_markers(formatted_address))
+    if _branch_markers_match(left, right, city):
+        return True
+    # 地址带括号门店名却对不上时已在上面拒绝；这里处理无括号地址：
+    # 门店点名要求“core+店后缀”完整分词，注释类限定词按提及放行。
+    if left_store:
+        city_name = _normalize_admin_name(city) if city else ""
+        cores = (
+            {_branch_marker_core(value, city) for value in left_store}
+            if city_name
+            else set(left_store)
+        )
+        return all(
+            _branch_word_confirmed(core, compact, _query_brand_key(stop_name, city), city)
+            for core in cores
+        )
+    return _branch_mentioned(left, formatted_address)
+
+
+def _query_identity_confirmed_by_text(
+    query_markers: dict[str, set[str]],
+    address_markers: dict[str, set[str]],
+    address_compact: str,
+    city: Any = None,
+) -> bool:
+    """无括号查询里的方位/入口/航站楼标识是否被返回地址证实。
+
+    查询点名了某类标识（如“东门”“T1”）时，地址必须出现同一标识；
+    只写主体名（“雷峰塔”“首都机场”）的地址证明不了具体入口/航站楼。
+    """
+
+    for kind in ("direction", "entrance", "terminal", "store"):
+        left_values = query_markers.get(kind)
+        if not left_values:
+            continue
+        right_values = address_markers.get(kind)
+        if right_values and left_values & right_values:
+            continue
+        # 入口标识允许地址写出完整分词（“东门”）或原样字面。
+        if kind in ("entrance", "direction"):
+            if all(
+                value in address_compact or value in address_markers.get("entrance", set())
+                for value in left_values
+            ):
+                continue
+        return False
+    return True
+
+
 def _branch_mentioned(values: set[str], text: str) -> bool:
-    """括号限定词是否已经写在另一侧的全名里（如“西湖（杭州）”与“杭州西湖风景名胜区”）。"""
+    """括号限定词是否已经写在另一侧的全名里（如“西湖（杭州）”与“杭州西湖风景名胜区”）。
+
+    这里只服务非门店限定词（行政注释、入口等）的“提及即放行”；门店点名的
+    确认走 ``_candidate_name_confirms_branches`` / ``_branch_word_confirmed``
+    的完整分词核对，避免“新西湖店”里抠出“西湖店”。
+    """
 
     normalized = _normalize_place_name(text)
     if not normalized:
@@ -1439,22 +1588,189 @@ def _branch_mentioned(values: set[str], text: str) -> bool:
     return False
 
 
-def _marker_conflict_text(
-    kind: str, left_values: set[str], right_values: set[str]
-) -> str:
-    left_sample = "、".join(sorted(left_values))
-    right_sample = "、".join(sorted(right_values))
-    return (
-        f"{_MARKER_LABELS.get(kind, '地点')}标识不一致"
-        f"（{left_sample} vs {right_sample}）"
+def _query_brand_key(stop_name: Any, city: Any = None) -> str:
+    """从带括号门店点名的查询推导品牌锚点：去掉括号后的剩余部分。
+
+    “如家酒店（西湖店）”→“如家酒店”。不做任何后缀剥杬——品牌本身可以
+    以“店”结尾（“如家酒店”），乱剥会把品牌砍成“如家酒”。只在括号里
+    点名了门店时才有意义；无括号查询返回空串（门店身份走多切分锚定）。
+    """
+
+    text = _sanitize_text(stop_name, max_length=160, allow_newlines=False)
+    if not _PAREN_SEGMENT_RE.search(text):
+        return ""
+    compact = re.sub(r"[（(][^）)]*[）)]", "", text)
+    compact = re.sub(r"[\W_]+", "", compact.lower(), flags=re.UNICODE)
+    return compact
+
+
+def _no_paren_store_identity_confirmed(
+    query: Any, candidate: Any, city: Any = None
+) -> bool:
+    """无括号门店查询（如“如家酒店西湖店”）是否被候选全名证实。
+
+    查询去掉店类后缀后是“品牌+core”的拼接，单凭字符串无法可靠切分。
+    这里枚举后缀写法（店/分店/门店/旗舰店）：候选里必须出现“查询去后缀
+    + 某个店类后缀”的连续子串，且这个分词后面只能是结尾、括号或分隔符。
+    “如家酒店大西湖店”无论按哪个后缀切分都拼不出连续的“如家酒店西湖店”，
+    “如家酒店西湖店铺”里“西湖店”后面还跟着“铺”——都不是词尾，拒绝；
+    “如家酒店西湖店/杭州如家酒店西湖店/如家酒店西湖分店/如家酒店西湖店
+    （可停车）”都正常接受。
+    """
+
+    query_compact = re.sub(
+        r"[\W_]+",
+        "",
+        _sanitize_text(query, max_length=160, allow_newlines=False).lower(),
+        flags=re.UNICODE,
+    )
+    candidate_compact = re.sub(
+        r"[\W_]+",
+        "",
+        _sanitize_text(candidate, max_length=160, allow_newlines=False).lower(),
+        flags=re.UNICODE,
+    )
+    if not query_compact or not candidate_compact:
+        return False
+    for suffix in _BRANCH_SUFFIXES:
+        if not query_compact.endswith(suffix) or len(query_compact) <= len(suffix):
+            continue
+        rest = query_compact[: -len(suffix)]
+        for word_suffix in _BRANCH_SUFFIXES:
+            fragment = f"{rest}{word_suffix}"
+            start = 0
+            while True:
+                index = candidate_compact.find(fragment, start)
+                if index < 0:
+                    break
+                after_index = index + len(fragment)
+                if after_index >= len(candidate_compact):
+                    return True
+                after = candidate_compact[after_index]
+                # 词尾界定：分词后面只能是括号补充（可停车）或分隔符。
+                if after in "（(【[、,，;；/·-":
+                    return True
+                start = index + 1
+    return False
+
+
+def _branch_word_confirmed(
+    core: str, normalized_text: str, brand_key: str = "", city: Any = None
+) -> bool:
+    """``normalized_text`` 里是否出现可证明的“core+店类后缀”完整分词。
+
+    品牌锚定（``brand_key`` 非空，来自查询名）：core 前面必须是品牌尾本身，
+    或“城市名/城市名+市·省·区·县 + 品牌尾”。这样“大西湖店/湖滨西湖店/
+    西湖店铺”里都挖不出“西湖店”——core 前面的字既不是品牌尾也不是城市。
+    没有品牌锚点时，只承认分词出现在文本开头或行政区前缀之后的形态，
+    其余一律拒绝。这是可证明的窄规则，不是中文分词器；宁拒勿错。
+    """
+
+    brand_variants = _brand_tail_variants(brand_key, city) if brand_key else set()
+    for suffix in _BRANCH_SUFFIXES:
+        fragment = f"{core}{suffix}"
+        start = 0
+        while True:
+            index = normalized_text.find(fragment, start)
+            if index < 0:
+                break
+            if index == 0:
+                return True
+            before = normalized_text[:index]
+            after_index = index + len(fragment)
+            after = normalized_text[after_index] if after_index < len(normalized_text) else ""
+            # “西湖店铺”里“西湖店”后面还跟着“铺”，不构成完整门店词。
+            if after and after not in "（(【[、,，;；/·-":
+                start = index + 1
+                continue
+            if brand_variants:
+                if any(before.endswith(variant) for variant in brand_variants):
+                    return True
+            elif _ends_with_admin_prefix(before):
+                return True
+            start = index + 1
+    return False
+
+
+_ADMIN_TAIL_CHARS = "省市区县州"
+
+
+def _ends_with_admin_prefix(before: str) -> bool:
+    """``before`` 是否以行政区名结尾（最后一个字是“省/市/区/县/州”）。"""
+
+    return bool(before) and before[-1] in _ADMIN_TAIL_CHARS
+
+
+def _brand_tail_variants(brand_key: str, city: Any = None) -> set[str]:
+    """品牌锚点的合法前缀变体：品牌尾本身、品牌尾加城市名、加城市名+行政区后缀。
+
+    “如家酒店”→ {"如家酒店", "杭州如家酒店", "杭州市如家酒店"}（city=杭州时）。
+    """
+
+    variants = {brand_key}
+    city_name = _normalize_admin_name(city) if city else ""
+    if city_name:
+        variants.add(f"{city_name}{brand_key}")
+        for suffix in ("市", "省", "县", "区"):
+            variants.add(f"{city_name}{suffix}{brand_key}")
+    return variants
+
+
+def _marker_is_store_word(value: str) -> bool:
+    """这个括号限定词是不是门店/分店点名（结尾带“店”类后缀）。"""
+
+    return any(
+        len(value) > len(suffix) and value.endswith(suffix)
+        for suffix in _BRANCH_SUFFIXES
     )
 
 
-def _place_marker_conflict(query: Any, candidate: Any) -> str | None:
+def _candidate_name_confirms_branches(
+    cores: set[str], candidate: Any, brand_key: str = "", city: Any = None
+) -> bool:
+    """候选全名（无括号分店标识）是否完整写出查询点名的每一家分店。
+
+    只有全部 core 都以“core+店后缀”完整分词、且分词前缀是品牌尾（或
+    品牌尾+城市前缀）才放行；任何一个对不上都返回 ``False``。
+    “如家酒店新西湖店/大西湖店”对 core=西湖 返回 ``False``，
+    “如家酒店西湖店/杭州如家酒店西湖店”返回 ``True``。
+    """
+
+    normalized = _normalize_place_name(candidate)
+    if not normalized:
+        return False
+    return all(
+        _branch_word_confirmed(core, normalized, brand_key, city) for core in cores
+    )
+
+
+def _marker_conflict_text(
+    kind: str,
+    left_values: set[str],
+    right_values: set[str],
+    *,
+    branch_label: str | None = None,
+) -> str:
+    left_sample = "、".join(sorted(left_values))
+    right_sample = "、".join(sorted(right_values))
+    label = (
+        branch_label
+        if kind == "branch" and branch_label
+        else _MARKER_LABELS.get(kind, "地点")
+    )
+    return f"{label}标识不一致（{left_sample} vs {right_sample}）"
+
+
+def _place_marker_conflict(
+    query: Any, candidate: Any, city: Any = None, *, branch_label: str | None = None
+) -> str | None:
     """只在两侧都带同类标识且完全不重合时判冲突；单侧缺失不当作反对证据。
 
     返回可读原因，没有明确冲突时返回 ``None``。这里不做“地名不对就判否”的
-    粗粒度字符串假设，避免把正常简称（断桥 vs 断桥残雪）误杀。
+    粗粒度字符串假设，避免把正常简称（断桥 vs 断桥残雪）误杀。``city`` 是
+    目的地城市：只用来把“杭州西湖店”这类城市前缀从分店标识里剥掉，且必须
+    剥完后仍然完全相等才算同一家店。``branch_label`` 仅供调用方在确认两侧
+    都不是门店标识时，把「门店/分店」改成更准确的类别名（如入口）。
     """
 
     left = _place_markers(query)
@@ -1464,7 +1780,9 @@ def _place_marker_conflict(query: Any, candidate: Any) -> str | None:
 
     left_branch = _all_branch_markers(left)
     right_branch = _all_branch_markers(right)
-    if left_branch and right_branch and not (left_branch & right_branch):
+    if left_branch and right_branch and not _branch_markers_match(
+        left_branch, right_branch, city
+    ):
         # 一般括号限定词（如“杭州”）可能已经写在候选全名里；
         # 但门店/分店两侧都点名时，必须精确对上，不能用包含关系合并不同分店。
         both_store = bool(left.get("store_branch")) and bool(right.get("store_branch"))
@@ -1472,7 +1790,9 @@ def _place_marker_conflict(query: Any, candidate: Any) -> str | None:
             right_branch, query
         )
         if both_store or not contained:
-            return _marker_conflict_text("branch", left_branch, right_branch)
+            return _marker_conflict_text(
+                "branch", left_branch, right_branch, branch_label=branch_label
+            )
 
     for kind in ("direction", "entrance", "terminal", "store"):
         left_values = left.get(kind)
@@ -1483,6 +1803,320 @@ def _place_marker_conflict(query: Any, candidate: Any) -> str | None:
             continue
         return _marker_conflict_text(kind, left_values, right_values)
     return None
+
+
+_STORE_WORD_SUFFIXES = ("旗舰店", "分店", "门店", "店")
+
+
+def _named_store_brand_pairs(
+    stop_name: Any, city: Any = None
+) -> tuple[list[tuple[str, str]], set[str]]:
+    """站点名点名的门店 -> ``(品牌, core)`` 候选与 core 集合。
+
+    括号门店（如家酒店（西湖店））的切分是明确的；无括号门店
+    （如家酒店西湖店）无法可靠切分，枚举所有“品牌+core”切分供品牌锚定
+    使用。没有点名门店时返回空，调用方不能据此限制地址（纯门牌必须保留）。
+    """
+
+    markers = _place_markers(stop_name)
+    store_cores = markers.get("store_branch", set())
+    if store_cores:
+        cores = (
+            {_branch_marker_core(value, city) for value in store_cores}
+            if city
+            else set(store_cores)
+        )
+        brand = _query_brand_key(stop_name, city)
+        return [(brand, core) for core in sorted(cores)], cores
+
+    query_compact = re.sub(
+        r"[\W_]+",
+        "",
+        _sanitize_text(stop_name, max_length=160, allow_newlines=False).lower(),
+        flags=re.UNICODE,
+    )
+    if not _marker_is_store_word(query_compact):
+        return [], set()
+    rest = ""
+    for suffix in _STORE_WORD_SUFFIXES:
+        if query_compact.endswith(suffix) and len(query_compact) > len(suffix):
+            rest = query_compact[: -len(suffix)]
+            break
+    if len(rest) < 4:
+        # “如家酒店”“全聚德”这类本身以“店”结尾的品牌名不是分店点名：
+        # 没有“品牌+core”可切分，不能因此拒绝地址。
+        return [], set()
+    pairs: list[tuple[str, str]] = []
+    cores: set[str] = set()
+    for split in range(2, len(rest)):
+        brand, core = rest[:split], rest[split:]
+        if len(core) >= 2:
+            pairs.append((brand, core))
+            cores.add(core)
+    # 品牌越长锚定越具体：地址里出现“如家酒店大西湖店”时，应当按
+    # “如家酒店 + 西湖”报出另一家“大西湖店”，而不是按“如家 + 酒店西湖”。
+    pairs.sort(key=lambda pair: len(pair[0]), reverse=True)
+    return pairs, cores
+
+
+def _store_word_after(probe: str, position: int) -> tuple[str, str, str] | None:
+    """``probe`` 里 ``position`` 之后紧跟的门店词，返回 ``(core, 后缀, 整段)``。
+
+    品牌和门店词之间允许隔一层括号（“如家酒店（西湖店）”），但只越过一个
+    分隔段，避免把后面不相关的店名当成本店的一部分。没有门店词时返回 None。
+    """
+
+    if position >= len(probe):
+        return None
+    rest = probe[position:]
+    segment = rest[1:].split("|", 1)[0] if rest.startswith("|") else rest.split("|", 1)[0]
+    for index in range(len(segment)):
+        suffix = next(
+            (
+                candidate
+                for candidate in _STORE_WORD_SUFFIXES
+                if segment.startswith(candidate, index)
+            ),
+            None,
+        )
+        if suffix is None:
+            continue
+        core = segment[:index]
+        if len(core) >= 2:
+            return core, suffix, segment
+    return None
+
+
+def _store_conflict_text(core: str, found: str) -> str:
+    return f"门店/分店标识不一致（{core}店 vs {found}）"
+
+
+def _store_fragment_display(probe: str, fragment: str) -> tuple[str, bool]:
+    """地址里的 ``fragment`` 连同紧邻的品牌段 -> ``(展示文字, 是否带品牌)``。
+
+    “汉庭酒店（西湖店）”的片段单独看只是“西湖店”，带上前一段品牌才看得出
+    这是另一家店；纯门牌前缀（含数字号牌）不拼进来。
+    """
+
+    segments = probe.split("|")
+    for index, segment in enumerate(segments):
+        position = segment.find(fragment)
+        if position < 0:
+            continue
+        if position == 0 and index > 0:
+            head = re.split(r"\d+号?", segments[index - 1])[-1]
+            head = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", head)[-8:]
+            if len(head) >= 2:
+                return f"{head}{segment}", True
+        return segment[position:], False
+    return fragment, False
+
+
+# 门店词前面的品牌段在遇到这些字时截断：号牌、行政区/道路后缀、楼层栋座。
+# “100号汉庭酒店”的品牌段是“汉庭酒店”而不是“100号汉庭酒店”。
+_STORE_BRAND_BOUNDARY_CHARS = _ADMIN_TAIL_CHARS + "路街道巷村镇号幢层座栋"
+
+
+def _explicit_other_store_in_address(
+    probe: str, cores: set[str], brand_variants: set[str]
+) -> tuple[str, str] | tuple[None, str] | None:
+    """地址里是否明确写了另一家完整门店（品牌段+门店词）。
+
+    既有核对都依赖「品牌锚定」或「查询同名分店词」，地址写成与查询品牌、
+    分店都不相交的完整门店（如家酒店（西湖店） vs 汉庭酒店武林广场店）时
+    两条路都不命中，会漏放。这里补一层结构判断：地址末尾出现“core+店类
+    后缀”的门店词，门店词往前（隔着号牌/行政/道路边界或括号）还有一段
+    连续商家名，枚举“品牌+core”切分——存在某个切分的品牌是查询自己的
+    品牌时，这是同品牌另一分店，交给既有锚定路径；否则取最长品牌切分
+    作为另一家门店的证据。
+
+    商家段不足 4 字（如“武林店”拆不出可信品牌）时，返回 ``(None, 描述)``
+    表示“地址写了完整门店词但无法核对是谁的门店”——用户点名了分店、
+    地址却给出另一个裸门店词，只是降级不采用坐标，不断言它一定是
+    别家店，也不假装识别品牌。裸“西湖店”与点名 core 相同时不是无法
+    核对，交给既有“同名分店词缺品牌”路径。
+
+    故意收窄：门店词后面必须到结尾（“王家店村”“西湖店铺”不算）；
+    “酒店/旗舰店”是品牌自带后缀，不拆成门店词。匹配不上一律返回 None，
+    保持纯门牌与品牌无分店地址的原有放行行为。
+    """
+
+    for suffix in _STORE_WORD_SUFFIXES:
+        start = 0
+        while True:
+            index = probe.find(suffix, start)
+            if index < 0:
+                break
+            start = index + 1
+            after = probe[index + len(suffix) : index + len(suffix) + 1]
+            if after not in ("", "|"):
+                # 门店词后面还接着别的字（“王家店村”“西湖店铺”），不是完整门店词。
+                continue
+            if suffix == "店" and probe[:index].endswith(("酒", "旗舰")):
+                # “酒店/旗舰店”是品牌词的一部分，不是独立门店词。
+                continue
+            # 商家段：从门店词往前走，遇到号牌/行政/道路边界就停；
+            # 分段符允许跨过（“汉庭酒店（武林广场店）”分了两段）。
+            walk = index
+            while walk > 0:
+                char = probe[walk - 1]
+                if char == "|":
+                    walk -= 1
+                    continue
+                if char in _STORE_BRAND_BOUNDARY_CHARS or char.isdigit():
+                    break
+                walk -= 1
+            segment = probe[walk:index]
+            if len(segment) < 2:
+                # 没有品牌/不足可拆分长度的裸门店词，可能是村镇名的一部分，
+                # 结构判断不参与，保持原放行。
+                continue
+            # 同名 core 的裸门店词（“…280号西湖店”）不是另一家店：
+            # 与点名的分店词一致，交给既有“缺品牌→无法核对”路径。
+            if segment in cores:
+                continue
+            # 商家段里任何切分能拼出查询自己的品牌，都说明地址写的是
+            # 同品牌另一分店（或同店），交给既有锚定路径，不在这里重复报。
+            split_range = range(2, len(segment))
+            if any(segment[:split] in brand_variants for split in split_range):
+                continue
+            if len(segment) < 4:
+                # “武林店”这类不足 4 字的商家段拆不出可信品牌：门店词
+                # 真实存在但身份无法核对，降级处理而不是当纯门牌放行。
+                return None, _store_fragment_display(
+                    probe, f"{segment}{suffix}"
+                )[0]
+            # 最长品牌优先：与查询侧锚定一致，报出的门店词尽量完整。
+            for split in split_range:
+                brand, core = segment[:split], segment[split:]
+                if core in cores:
+                    continue
+                return core, _store_fragment_display(
+                    probe, f"{brand}{core}{suffix}"
+                )[0]
+    return None
+
+
+def _address_store_identity_conflict(
+    stop_name: Any, address_text: Any, city: Any = None
+) -> str | None:
+    """地址里是否**明确**写了另一家门店。
+
+    只在「用户点名了某家门店」且地址**没有**证实这家店时才继续看：地址里
+    出现同一 core 的门店词、品牌锚定后紧跟另一家门店、或点名门店词带着额外
+    字样（如“西湖店铺”），都算显式矛盾。完全没有门店词的纯街道门牌返回
+    None——缺身份标识只是没证实，不能当矛盾拒绝。
+    """
+
+    pairs, cores = _named_store_brand_pairs(stop_name, city)
+    if not cores:
+        return None
+    text = _sanitize_text(address_text, max_length=300, allow_newlines=False)
+    if not text:
+        return None
+    if _branch_confirmed_by_address(stop_name, text, city):
+        return None
+
+    # 保留分隔符，才能区分“品牌后紧跟门店词”和“纯街道号码+号牌”。
+    probe = re.sub(r"[\W_]+", "|", text.lower())
+    compact = probe.replace("|", "")
+
+    for brand, core in pairs:
+        if not brand:
+            continue
+        for variant in sorted(
+            _brand_tail_variants(brand, city), key=len, reverse=True
+        ):
+            start = 0
+            while True:
+                index = probe.find(variant, start)
+                if index < 0:
+                    break
+                found = _store_word_after(probe, index + len(variant))
+                if found is not None:
+                    found_core, suffix, word = found
+                    # 另一家分店（大西湖店/武林广场店），或点名门店词后面
+                    # 仍带着额外字样（西湖店铺）：都不是用户点名的门店。
+                    if found_core not in cores or word != f"{found_core}{suffix}":
+                        return _store_conflict_text(core, word)
+                start = index + len(variant)
+
+    # 品牌锚定不上，地址里却出现了用户点名的“core+店”分词（例如
+    # “汉庭酒店（西湖店）”）——这是另一家门店，不是「没写门店」。
+    for core in sorted(cores):
+        for suffix in _STORE_WORD_SUFFIXES:
+            fragment = f"{core}{suffix}"
+            if fragment in compact:
+                display, has_brand = _store_fragment_display(probe, fragment)
+                if not has_brand:
+                    # 只写门店名、没有品牌：不是「另一家店」，但也确认不了。
+                    return (
+                        "门店/分店标识无法核对"
+                        f"（地址只写了{display}，缺少品牌名）"
+                    )
+                return _store_conflict_text(core, display)
+
+    # 品牌锚定与同名分店词都核对不上时，地址仍可能明确写出了另一家完整
+    # 门店（品牌、分店都与查询不相交）。这时“找不到共同部分”不是“无矛盾
+    # 纯门牌”，不能把别家店的坐标拿去导航。
+    other = _explicit_other_store_in_address(
+        probe,
+        cores,
+        {
+            variant
+            for brand, _core in pairs
+            for variant in _brand_tail_variants(brand, city)
+        },
+    )
+    if other is not None:
+        found_core, display = other
+        if found_core is None:
+            # 地址确实写出了另一个完整门店词，但商家段拆不出品牌：
+            # 不采用坐标，也不断言一定是别家店。
+            return f"门店/分店标识无法核对（地址只写了{display}）"
+        named_core = pairs[0][1] if pairs else sorted(cores)[0]
+        return _store_conflict_text(named_core, display)
+    return None
+
+
+def _stop_identity_conflict_text(
+    stop_name: Any, candidate: Any, city: Any = None
+) -> str | None:
+    """站点名与另一段文字之间的显式标识冲突，返回可读原因。
+
+    括号限定词只有在两侧都不是门店时才改叫「入口/地点限定」：午门 vs 神武门
+    说成门店/分店会让用户看不懂。
+    """
+
+    has_store = bool(
+        _place_markers(stop_name).get("store_branch")
+        or _place_markers(candidate).get("store_branch")
+    )
+    return _place_marker_conflict(
+        stop_name,
+        candidate,
+        city,
+        branch_label=None if has_store else "入口/地点限定",
+    )
+
+
+def _address_identity_conflict(
+    stop_name: Any, address_text: Any, city: Any = None
+) -> str | None:
+    """地址地理编码路径的身份核对，返回可读原因或 None。
+
+    地址候选只核对显式矛盾：门店/入口/航站楼/方位标识两边都写出来却对不上。
+    这里不复用名称兜底的“门店必须被证实”条件——模型地址只写到门牌时仍然
+    是可信 fallback，不能被当成矛盾拒绝。
+    """
+
+    text = _sanitize_text(address_text, max_length=300, allow_newlines=False)
+    if not text:
+        return None
+    marker_conflict = _stop_identity_conflict_text(stop_name, text, city)
+    if marker_conflict:
+        return marker_conflict
+    return _address_store_identity_conflict(stop_name, text, city)
 
 
 def _strip_generic_place_suffix(text: str) -> str:
@@ -1503,7 +2137,9 @@ def _generic_place_category(text: str) -> str:
 _CANDIDATE_ONLY_STRICT_KINDS = ("direction", "terminal", "store")
 
 
-def _place_markers_missing(query: Any, candidate: Any) -> bool:
+def _place_markers_missing(
+    query: Any, candidate: Any, city: Any = None
+) -> bool:
     """辨识标识只出现在一侧时，无法确认是同一处，不当作可信匹配。
 
     覆盖几类真实反例：
@@ -1513,6 +2149,7 @@ def _place_markers_missing(query: Any, candidate: Any) -> bool:
     - 用户没提方位/航站楼，候选却写死了另一个（杭州站 vs 杭州东站）。
     例外：括号限定词已经写在候选全名里（西湖（杭州） vs 杭州西湖风景名胜区）；
     景点 POI 自带“(售票处)”这类补充说明；以及候选项多了“东门/西门”入口。
+    ``city`` 是目的地城市，只用于把“杭州西湖店”的城市前缀去掉后比对。
     """
 
     left = _place_markers(query)
@@ -1520,11 +2157,53 @@ def _place_markers_missing(query: Any, candidate: Any) -> bool:
     if not left and not right:
         return False
 
+    # 无括号门店查询（如“如家酒店西湖店”）提取不出括号标记，但身份规则相同：
+    # 候选全名必须完整写出查询点名的门店（“品牌+core+店后缀”连续分词）。
+    if (
+        not left
+        and right
+        and _marker_is_store_word(
+            re.sub(r"[\W_]+", "", _sanitize_text(query, max_length=160, allow_newlines=False).lower(), flags=re.UNICODE)
+        )
+    ):
+        if not _no_paren_store_identity_confirmed(query, candidate, city):
+            return True
+
     left_branch = _all_branch_markers(left)
     right_branch = _all_branch_markers(right)
-    if left_branch and not right_branch:
-        if not _branch_mentioned(left_branch, candidate):
+    left_store = left.get("store_branch", set())
+    # 无括号门店查询（如“如家酒店西湖店”）提取不出括号标记，但身份规则相同：
+    # 候选全名必须完整写出查询点名的门店（“品牌+core+店后缀”连续分词）。
+    # 注意不能用 left 是否为空来判断：查询里的“西湖”会被方位识别符提取走。
+    query_compact = re.sub(
+        r"[\W_]+",
+        "",
+        _sanitize_text(query, max_length=160, allow_newlines=False).lower(),
+        flags=re.UNICODE,
+    )
+    if right and not left_branch and _marker_is_store_word(query_compact):
+        if not _no_paren_store_identity_confirmed(query, candidate, city):
             return True
+    if left_branch and not right_branch:
+        if left_store:
+            # 查询点名了门店/分店：候选全名必须完整写出每一家分店
+            # （“core+店后缀”分词）。“如家酒店新西湖店”挖不出“西湖店”。
+            cores = (
+                {_branch_marker_core(value, city) for value in left_store}
+                if city
+                else set(left_store)
+            )
+            if not _candidate_name_confirms_branches(
+                cores, candidate, _query_brand_key(query, city), city
+            ):
+                return True
+        elif not _branch_mentioned(left_branch, candidate):
+            # 非门店括号（行政注释等）：候选全名提到该限定词即可。
+            stripped = {
+                _branch_marker_core(value, city) for value in left_branch
+            } if city else set()
+            if not stripped or not _branch_mentioned(stripped, candidate):
+                return True
     if right.get("store_branch") and not left_branch:
         # 用户只说“全聚德”，候选却是“全聚德（王府井店）”：不能替用户认定分店。
         return True
@@ -1558,7 +2237,9 @@ def _strip_entrance_markers(text: str, markers: set[str]) -> str:
     return text
 
 
-def _place_name_score(query: str, candidate: str) -> float:
+def _place_name_score(
+    query: str, candidate: str, city: str | None = None
+) -> float:
     """0..4 的名称匹配分；用于避免把搜索结果里明显无关的首条 POI 当成景点。"""
 
     left = _normalize_place_name(query)
@@ -1568,9 +2249,9 @@ def _place_name_score(query: str, candidate: str) -> float:
     # 括号归一化会把“如家酒店（西湖店）”和“如家酒店（武林广场店）”变成同名，
     # 方位/航站楼标识同理（杭州东站 vs 杭州西站、T1 vs T2）。这类明确冲突
     # 必须在同名判定之前拦下。
-    if _place_marker_conflict(query, candidate):
+    if _place_marker_conflict(query, candidate, city):
         return 0.0
-    if _place_markers_missing(query, candidate):
+    if _place_markers_missing(query, candidate, city):
         return _PLACE_MARKER_UNCONFIRMED_SCORE
     if left == right:
         return 4.0
@@ -2024,7 +2705,7 @@ class AMapClient:
                 location = _parse_location(item.get("location"))
             except AMapError:
                 continue
-            score = _place_name_score(query, poi_name)
+            score = _place_name_score(query, poi_name, city_text or None)
             if score > best_score:
                 best_score = score
                 best_item = item
@@ -2324,12 +3005,12 @@ def _poi_is_trusted(result: GeoResult, stop_name: str, destination: str) -> tupl
     """兜底校验 POI 结果；真实 AMapClient 已在候选列表里做过一次匹配。"""
 
     if result.name:
-        conflict = _place_marker_conflict(stop_name, result.name)
+        conflict = _place_marker_conflict(stop_name, result.name, destination)
         if conflict:
             return False, f"POI 搜索结果与站点名称的{conflict}"
-        if _place_markers_missing(stop_name, result.name):
+        if _place_markers_missing(stop_name, result.name, destination):
             return False, _POI_MARKER_UNCONFIRMED_REASON
-        if _place_name_score(stop_name, result.name) < _POI_NAME_MATCH_MIN_SCORE:
+        if _place_name_score(stop_name, result.name, destination) < _POI_NAME_MATCH_MIN_SCORE:
             return False, "POI 搜索结果与站点名称不符"
     if result.city and destination and not _city_names_compatible(destination, result.city):
         # 目的地也可能是“西湖”“外滩”这类区县/景区名，只要真实地址里出现就不算跑题。
@@ -2417,12 +3098,24 @@ async def _resolve_stop(
         if blocked is not None:
             return blocked
 
-        async def try_geocode(query: str, *, is_stop_name: bool = False) -> _ResolvedStop | None:
+        async def try_geocode(
+            query: str,
+            *,
+            is_stop_name: bool = False,
+            is_stop_address: bool = False,
+        ) -> _ResolvedStop | None:
             nonlocal unexpected
             if not query:
                 return None
             if guard is not None and guard.blocked:
                 return None
+            if is_stop_address:
+                # 模型地址自己就写着另一家门店/入口/航站楼时，不发这次地理编码：
+                # 它只会把矛盾候选的坐标拿回来。名称兜底仍可独立给出正确点位。
+                conflict = _address_identity_conflict(stop.name, query, destination)
+                if conflict:
+                    notes.append(f"模型地址与站点名称的{conflict}")
+                    return None
             try:
                 result = await amap.geocode(query, city=destination)
             except asyncio.CancelledError:
@@ -2440,13 +3133,51 @@ async def _resolve_stop(
             if not trusted:
                 notes.append(reason)
                 return None
-            if is_stop_name:
-                # 用名称兜底时，返回地址里出现另一家门店/另一个方位就是明确矛盾，
-                # 不能拿它当站点坐标，更不能覆盖用户写的地址。
-                conflict = _place_marker_conflict(stop.name, result.formatted_address)
+            if is_stop_address:
+                # 输入地址干净、返回地址却自行指到另一家门店/入口/航站楼时，
+                # 同样不能采用这个候选坐标，也不能覆盖用户写的地址。
+                conflict = _address_identity_conflict(
+                    stop.name, result.formatted_address, destination
+                )
                 if conflict:
                     notes.append(f"地理编码结果与站点名称的{conflict}")
                     return None
+            if is_stop_name:
+                # 用名称兜底时，返回地址里出现另一家门店/另一个方位就是明确矛盾，
+                # 不能拿它当站点坐标，更不能覆盖用户写的地址。
+                conflict = _stop_identity_conflict_text(
+                    stop.name, result.formatted_address, destination
+                )
+                if conflict:
+                    notes.append(f"地理编码结果与站点名称的{conflict}")
+                    return None
+                # 用户点名了门店/分店，返回地址却没有任何门店标识时，不能把
+                # 附近地址当成“用户指定的那家店”。行政区同名（西湖区）不算证据。
+                if not _branch_confirmed_by_address(
+                    stop.name, result.formatted_address, destination
+                ):
+                    notes.append(
+                        "地理编码返回地址没有写出站点名称里的门店/分店标识，"
+                        "无法确认是用户指定的门店"
+                    )
+                    return None
+                # 无括号但带方位/入口/航站楼标识的查询（雷峰塔东门/首都机场T1）
+                # 同样不能把“地址里只写了主体名”的结果当精准点位——旧实现
+                # 对这类查询跳过标识核对，是可能造成假导航的缺口。
+                query_markers = _place_markers(stop.name)
+                if query_markers:
+                    address_compact = re.sub(
+                        r"[\W_]+", "", result.formatted_address.lower(), flags=re.UNICODE
+                    )
+                    address_markers = _place_markers(result.formatted_address)
+                    if not _query_identity_confirmed_by_text(
+                        query_markers, address_markers, address_compact, destination
+                    ):
+                        notes.append(
+                            "地理编码返回地址没有写出站点名称里的方位/航站楼标识，"
+                            "无法确认是用户指定的点位"
+                        )
+                        return None
             return _ResolvedStop(
                 wgs=_coordinate_to_wgs(result.location),
                 gcj=result.location,
@@ -2455,7 +3186,7 @@ async def _resolve_stop(
 
         # 2. 模型地址只在通过级别/城市校验后使用。
         if stop.address:
-            resolved = await try_geocode(stop.address)
+            resolved = await try_geocode(stop.address, is_stop_address=True)
             if resolved is not None:
                 return resolved
             blocked = blocked_result()
@@ -2931,7 +3662,8 @@ async def enrich_trip_with_map(
                 guard.observe(exc)
                 reason = _describe_amap_error(exc)
                 warnings.append(
-                    f"{current.name} → {following.name} 的{mode_label}路线获取失败，已降级为直线示意。"
+                    f"{ROUTE_DEGRADED_PREFIX}{current.name} → {following.name} 的"
+                    f"{mode_label}路线获取失败，已降级为直线示意。"
                 )
                 return straight_line_leg(
                     current,
@@ -2942,7 +3674,8 @@ async def enrich_trip_with_map(
             except Exception:
                 internal_error_count += 1
                 warnings.append(
-                    f"{current.name} → {following.name} 的{mode_label}路线解析异常，已降级为直线示意。"
+                    f"{ROUTE_DEGRADED_PREFIX}{current.name} → {following.name} 的"
+                    f"{mode_label}路线解析异常，已降级为直线示意。"
                 )
                 return straight_line_leg(
                     current,
@@ -2952,7 +3685,8 @@ async def enrich_trip_with_map(
 
             if len(route.geometry) < 2:
                 warnings.append(
-                    f"{current.name} → {following.name} 的{mode_label}路线几何不足，已降级为直线示意。"
+                    f"{ROUTE_DEGRADED_PREFIX}{current.name} → {following.name} 的"
+                    f"{mode_label}路线几何不足，已降级为直线示意。"
                 )
                 return straight_line_leg(
                     current,
@@ -2963,7 +3697,8 @@ async def enrich_trip_with_map(
             distance_m = _to_int(route.distance_m)
             if distance_m is None:
                 warnings.append(
-                    f"{current.name} → {following.name} 的{mode_label}路线距离异常，已降级为直线示意。"
+                    f"{ROUTE_DEGRADED_PREFIX}{current.name} → {following.name} 的"
+                    f"{mode_label}路线距离异常，已降级为直线示意。"
                 )
                 return straight_line_leg(
                     current,
@@ -2974,7 +3709,8 @@ async def enrich_trip_with_map(
             duration_minutes = _to_finite_float(route.duration_minutes)
             if route.duration_minutes is not None and duration_minutes is None:
                 warnings.append(
-                    f"{current.name} → {following.name} 的{mode_label}路线耗时异常，已标记为未知。"
+                    f"{ROUTE_DEGRADED_PREFIX}{current.name} → {following.name} 的"
+                    f"{mode_label}路线耗时异常，已标记为未知。"
                 )
 
             return Leg(

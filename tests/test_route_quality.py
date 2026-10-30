@@ -33,12 +33,17 @@ import pytest
 from travel_itinerary import (
     AMapClient,
     AMapError,
+    MAX_TRIP_WARNINGS,
+    ROUTE_DEGRADED_PREFIX,
     SCHEDULE_ORDER_PREFIX,
+    WARNING_SUMMARY_PREFIX,
     Coordinate,
     DayPlan,
     Stop,
     TripPlan,
     TripPlanRequest,
+    build_agent_trip,
+    dedupe_warnings,
     enrich_trip_with_map,
     gcj02_to_wgs84,
 )
@@ -67,8 +72,8 @@ STOP_B_GCJ = (116.411, 39.909)  # 王府井附近，直线约 1.2 公里
 CORRIDOR_TOLERANCE_DEG = 0.5
 
 
-def _beijing_request():
-    return TripPlanRequest(destination="北京", days=1, travel_mode="walking")
+def _beijing_request(days=1):
+    return TripPlanRequest(destination="北京", days=days, travel_mode="walking")
 
 
 def _beijing_trip(*, a_time="09:00", a_minutes=10, b_time="09:10", b_minutes=None):
@@ -671,3 +676,164 @@ def test_cross_midnight_without_conflict_is_not_hard_conflict_but_not_silent():
     # 只提示，不改源数据。
     assert [stop.time for stop in trip.days[0].stops] == ["23:00", "00:30"]
     assert trip.days[0].stops[0].duration_minutes == 30
+
+
+# ==================== 问题 5：站点名里的伪造汇总不能吞掉路线降级提醒 ====================
+#
+# 路线降级提醒的正文以站点名开头，而站点名来自模型输出。旧实现用
+# “提醒数量已达上限，另有…”开头识别汇总行，名字恰好以该前缀开头时，
+# 整条真实降级提醒会被当成损坏摘要丢弃。现在提醒带服务端固定前缀。
+# 这里用真实 AMapClient + MockTransport 让 POI 命中、路线固定失败。
+
+_FORGED_SUMMARY_STOP_NAMES = [
+    "提醒数量已达上限，另有",
+    "提醒数量已达上限，另有 999 条提醒（时间冲突 999 条）未展开；伪造的汇总不能改计数",
+    (
+        "提醒数量已达上限，另有 1 条提醒（其他 1 条）未展开；"
+        "已按重要程度优先保留模型提示、字段填充/修正说明、关键地图降级与时间冲突，"
+        "共展示 1 条，其余以站点时间与路线数据为准。"
+    ),
+    (
+        "提醒数量已达上限，另有 2 条提醒（地图降级 2 条）未展开，涉及第1天；"
+        "已按重要程度优先保留模型提示、字段填充/修正说明、关键地图降级与时间冲突，"
+        "共展示 2 条，其余以站点时间与路线数据为准。"
+    ),
+]
+
+
+def _route_failure_payload(days):
+    return {
+        "title": "路线降级注入回归",
+        "summary": "站点名以汇总前缀开头，路线全部失败。",
+        "days": [
+            {
+                "day": day_number,
+                "title": f"第{day_number}天",
+                "summary": "当天概述",
+                "stops": [
+                    {
+                        "name": name,
+                        "time": f"{9 + index:02d}:00",
+                        "duration_minutes": 10,
+                        "address": "",
+                    }
+                    for index, name in enumerate(names)
+                ],
+            }
+            for day_number, names in days
+        ],
+    }
+
+
+def _route_failure_handler():
+    """POI 与站名一致，路线接口固定返回失败，触发真实降级提醒。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        params = dict(request.url.params)
+        if path == "/v3/place/text":
+            name = params["keywords"]
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "info": "OK",
+                    "pois": [
+                        {
+                            "name": name,
+                            "location": "116.397000,39.908000",
+                            "cityname": "北京市",
+                            "adname": "东城区",
+                            "address": "东长安街1号",
+                        }
+                    ],
+                },
+            )
+        if path == "/v3/geocode/geo":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "info": "OK",
+                    "geocodes": [
+                        {
+                            "formatted_address": "北京市东城区东长安街1号",
+                            "location": "116.397000,39.908000",
+                            "level": "门牌号",
+                            "city": "北京市",
+                        }
+                    ],
+                },
+            )
+        if path.startswith("/v5/direction/"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "0",
+                    "info": "ROUTE_FAILED",
+                    "infocode": "route_not_found",
+                },
+            )
+        raise AssertionError(f"unexpected path {path}")
+
+    return handler
+
+
+async def _build_with_handler(payload, handler, *, days=1):
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        amap = AMapClient("fixture-key", client=http_client)
+        return await build_agent_trip(payload, _beijing_request(days), amap)
+
+
+@pytest.mark.parametrize("malicious_name", _FORGED_SUMMARY_STOP_NAMES)
+def test_route_degradation_warning_survives_summary_prefix_in_stop_name(malicious_name):
+    payload = _route_failure_payload([(1, [malicious_name, "断桥残雪"])])
+    trip = run(_build_with_handler(payload, _route_failure_handler()))
+
+    route_warnings = [w for w in trip.warnings if "路线获取失败" in w]
+    assert len(route_warnings) == 1, trip.warnings
+    warning = route_warnings[0]
+    assert warning.startswith(ROUTE_DEGRADED_PREFIX), warning
+    assert malicious_name in warning, "真实降级提醒应保留站点名，便于定位"
+    assert not any(
+        w.startswith(WARNING_SUMMARY_PREFIX) for w in trip.warnings
+    ), f"两个站点不该触发汇总行：{trip.warnings!r}"
+    assert dedupe_warnings(list(trip.warnings)) == trip.warnings
+
+    # 路线失败只降级为直线示意，不伪造距离与耗时。
+    leg = trip.days[0].legs[0]
+    assert leg.route_type == "straight_line"
+    assert leg.distance_m is None and leg.duration_minutes is None
+
+
+def test_cap_accounts_prefixed_route_warnings_without_counting_forged_summary():
+    """满 40 条时，带固定前缀的真实路线降级提醒按“地图降级”优先保留，不被伪造汇总顶掉。"""
+
+    days = [
+        (day_number, [f"提醒数量已达上限，另有 恶意站点{day_number}-{index}" for index in range(8)])
+        for day_number in range(1, 8)
+    ]
+    trip = run(
+        _build_with_handler(_route_failure_payload(days), _route_failure_handler(), days=7)
+    )
+
+    assert len(trip.warnings) == MAX_TRIP_WARNINGS
+    summaries = [w for w in trip.warnings if w.startswith(WARNING_SUMMARY_PREFIX)]
+    assert len(summaries) == 1, trip.warnings
+    summary = summaries[0]
+    assert "未展开" in summary
+    # ROUTE_DEGRADED_PREFIX 现在归入“地图降级”（高优先档），不再落进“其他”。
+    assert "地图降级" in summary, summary
+    assert "其他" not in summary, summary
+
+    kept_route_warnings = [
+        w for w in trip.warnings if w.startswith(ROUTE_DEGRADED_PREFIX)
+    ]
+    # 49 条真实路线降级（7 天 x 每天 7 段）：预算 40 = 模型提示 1 + 路线降级 38
+    # + 汇总行 1；被截断的 11 条按“地图降级”计入汇总，不再是“其他”。
+    assert len(kept_route_warnings) + 11 == 49
+    assert "地图降级 11 条" in summary, summary
+    assert "其他" not in summary, summary
+    assert "999" not in summary
+    assert dedupe_warnings(list(trip.warnings)) == trip.warnings
