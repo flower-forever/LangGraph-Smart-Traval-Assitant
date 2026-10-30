@@ -1520,3 +1520,162 @@ textarea.field-input {
   .plan-actions { flex-wrap: wrap; }
   .plan-actions .btn { flex: 1 1 auto; }
 }
+
+/* ---------- 本地编辑（内存草稿）接线 ---------- */
+
+/* 编辑期间用 fieldset disabled 暂停规划表单：legend 只放一句暂停说明 */
+.edit-pause-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.edit-pause-fieldset:disabled {
+  opacity: 0.75;
+}
+
+.edit-pause-legend {
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+}
+
+.edit-pause-legend + * { margin-top: 0; }
+
+/* 编辑入口：出行方式选择 + 开始编辑按钮 */
+.edit-entry {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-4);
+  border: var(--rule-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-2);
+  display: grid;
+  gap: var(--space-3);
+  max-width: 72ch;
+}
+
+.edit-entry-mode { gap: var(--space-1); }
+
+.edit-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.edit-entry-actions .field-help { margin: 0; max-width: 46ch; }
+
+/* 应用草稿后的页面内提示 + 撤销应用入口 */
+.apply-result-note {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-ok);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-paper-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.apply-result-note p { margin: 0; font-size: var(--text-sm); color: var(--color-ink-2); flex: 1 1 320px; }
+
+/* 有未提交输入时日切换暂停的说明 */
+.day-switch-note {
+  margin: calc(var(--space-2) * -1) 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+}
+
+/* 草稿预览归属说明：预览不是已应用/已保存的数据 */
+.draft-preview-note {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-line-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-paper-3);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  max-width: 72ch;
+}
+
+/* 编辑期间备份/导入入口的暂停说明 */
+.edit-pause-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 640px) {
+  .edit-entry-actions { align-items: stretch; flex-direction: column; }
+  .edit-entry-actions .btn { width: 100%; }
+}
+
+/* ---------- AI 单日调整入口与面板接线 ---------- */
+
+/* 入口：当前目标日 + 打开按钮；有本地草稿时按钮禁用 */
+.ai-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  border: var(--rule-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-2);
+}
+
+.ai-entry-copy {
+  flex: 1 1 320px;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ai-entry-copy .field-label,
+.ai-entry-copy .field-help { margin: 0; }
+
+.ai-entry-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.ai-panel-slot {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  min-width: 0;
+}
+
+/* 面板打开期间的暂停说明：沿用编辑暂停条的警示样式 */
+.ai-pause-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+  max-width: 72ch;
+}
+
+@media (max-width: 640px) {
+  .ai-entry-actions,
+  .ai-entry-actions .btn { width: 100%; align-items: stretch; }
+}

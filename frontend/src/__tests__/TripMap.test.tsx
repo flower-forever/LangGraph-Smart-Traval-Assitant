@@ -153,7 +153,10 @@ describe('TripMap（真实 Leaflet）', () => {
     const text = document.body.textContent ?? ''
     expect(text).not.toContain('重新规划')
     expect(text).not.toContain('换一天')
-    expect(text).toContain('服务状态')
+    // 中性文案：不把「没有坐标」归因到后端解析失败（本地新增站点 / 导入文件都没请求过定位）
+    expect(text).toContain('尚未定位')
+    expect(text).not.toContain('后端没能解析')
+    expect(text).not.toContain('请检查后端服务状态')
   })
 
   it('部分站点缺坐标时给出缺失数量说明，与全缺、空日区分', () => {

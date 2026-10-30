@@ -11,7 +11,8 @@
 | 🧮 费用计算 | 油费估算、预算规划、货币换算、数学计算 | calculator_server.py | 5 |
 | 📝 文件管理 | 保存/读取旅行计划、文件操作；写入固定落在项目根 `outputs/` 目录（与启动目录无关） | write_server.py | 4 |
 | 🗓️ 分日行程规划 | 模型生成行程 JSON，服务端校验归一化，按需补高德坐标与路线 | travel_itinerary.py + /api/trips/plan | — |
-| 🖥️ 网页界面 | 示例行程与 AI 规划表单、逐日地图、站点弹窗与逐点讲解、本地保存与 .ics 导出 | frontend/ | — |
+| 🔁 单日 AI 重规划 | 只重生成指定一天，返回独立信封候选结果，不写原行程；服务端与前端面板均已进入仓库并通过离线测试，真实模型与浏览器联调未做 | day_replan.py + /api/trips/days/replan | — |
+| 🖥️ 网页界面 | 示例行程与 AI 规划表单、逐日地图、站点弹窗与逐点讲解、本地保存与 .ics 导出；本地编辑与「AI 调整这一天」入口代码完成并通过离线整合验证（523 项测试、tsc 与生产 build 通过），真实浏览器联调未做 | frontend/ | — |
 
 界面上的本地保存、日历导出和「停止等待」都只在浏览器这一侧工作，边界如下：
 
@@ -80,6 +81,7 @@ cp .env.example .env
 | `MODEL_NAME` | 可选 | 模型名，默认 `qwen-plus` |
 | `API_HOST` / `API_PORT` | 可选 | FastAPI 监听地址/端口，默认 `127.0.0.1:8000`（与模板一致）。服务无认证，默认只监听本机回环；需要局域网访问再改，改成非回环地址时启动日志会给出警告 |
 | `MCP_INIT_TIMEOUT` / `TRIP_PLAN_TIMEOUT` / `AMAP_TIMEOUT` | 可选 | 超时秒数，默认 20 / 180 / 6 |
+| `TRIP_REPLAN_TIMEOUT` | 可选 | 单日重规划接口里模型生成阶段的单独限时，默认 90 秒，与 `TRIP_PLAN_TIMEOUT`、地图超时互相独立；地图增强不走这个预算。缺失、非法（0、负数、非有限数）回退默认值。接口层不会自动重试整次图调用 |
 | `MAP_ENRICH_TIMEOUT` | 可选 | 地图增强（坐标/路线补全）单独限时，默认 40 秒；配置缺失、非正数或非法时回退默认值。超时只放弃地图数据，保留已生成的文字行程，并在 `warnings` 里说明坐标与路线未获取（限时与回退行为有离线单测覆盖，未实测真实高德链路） |
 | `CHAT_TIMEOUT` | 可选 | `/chat` 的模型调用单独限时，默认 120 秒；必须是正的有限数，缺失、非法（0、负数、限不住的 inf/nan）都回退默认值。超过时限返回 504 |
 | `CORS_ORIGINS` | 可选 | 允许的浏览器来源白名单。未设置时默认 6 个本机 origin（127.0.0.1 与 localhost 的 5173、5181、5182）；设置后为逗号分隔的整体覆盖而不是追加；设成空值或任一项非法都触发 fail-closed。改完需重启后端，细节见下文「浏览器来源防护（CORS 与写请求 403）」 |
@@ -171,6 +173,7 @@ VITE_API_BASE=http://127.0.0.1:8001 pnpm dev             # bash
 | `/chat/{thread_id}` | DELETE | 标记清除会话，返回 `{"thread_id": "...", "deleted": true}`；内存历史在进程重启后清空 |
 | `/api/trips/example` | GET | 内置示例行程，不需要任何 API Key |
 | `/api/trips/plan` | POST | 生成结构化分日行程 |
+| `/api/trips/days/replan` | POST | 单日 AI 重规划，只返回目标日的候选行程（见下节） |
 
 `POST /api/trips/plan` 请求体：
 
@@ -197,6 +200,60 @@ curl -X POST http://127.0.0.1:8000/api/trips/plan \
   -H "Content-Type: application/json" \
   -d '{"destination":"杭州","days":2,"travel_mode":"walking"}'
 ```
+
+### 单日 AI 重规划（POST /api/trips/days/replan）
+
+针对已有行程的某一天，用一段调整指令重新生成当天的候选行程。服务端只生成请求指定的那一天，**不写回原 Trip、不自动保存**：调用方拿到候选后自行核对并决定是否合并进自己的行程数据。
+
+行为要点：
+
+- **响应是独立信封** `{day, warnings, map_status, parent, source}`，不扩展 Trip v1。`day` 是目标日候选（站点 id 重新生成，`replan-{day}-{短id}-{序号}`）；`warnings` 保留归一化与时刻提醒的完整语义。
+- **parent 只做校验与回显**：请求里的 `parent.trip_id` + `parent.revision` 是调用方的版本令牌，服务端不存任何版本、不做 apply。回显值与请求一致，最终版本校验由客户端负责——收到响应后要确认回显的 parent 与当前本地行程一致，再把候选合并进草稿，避免覆盖期间发生的本地编辑。
+- **模型坐标一律丢弃**：`stops` 只传文字投影（id/名称/描述/地址/时间/停留时长），不传坐标与路线；可信坐标只由服务端地图增强写入。一次调用是完整的 planner graph 执行，内部可能发生多轮模型/工具调用，不是一次固定的 LLM 请求。
+- **无 Key 仍可用文字日程**：未配 `AMAP_API_KEY`、地图超时或地图异常时，文字行程照常返回，`map_status` 给出六态之一：`ready` / `partial` / `unavailable` / `no_key` / `timeout` / `failed`。客户端应按状态决定要不要画线，`no_key`/`unavailable` 下没有导航结论可画。
+
+请求体字段约束（未知字段一律 422）：
+
+| 字段 | 约束 |
+|------|------|
+| `destination` | 1–80 字 |
+| `day` | 1–7，目标日 |
+| `date` | 严格 `YYYY-MM-DD` 或 null（不接受 20261102、2026-W45-3 等其它 ISO 形状，空字符串也拒绝） |
+| `travel_mode` | `walking` 或 `driving`，默认 `walking` |
+| `instruction` | 1–500 字，必填，调整指令 |
+| `stops` | 0–8 个当前站点的文字投影；id 必填且当日不重复 |
+| `parent` | 必填：`trip_id`（1–100 字符，不清洗原样回显）+ `revision`（0 到 2^53-1 的整数） |
+| `travelers` | 可选，1–50；**不提供就不进提示词，模型不会猜人数** |
+
+示例请求（字段值仅为示例）：
+
+```json
+{
+  "destination": "杭州",
+  "day": 2,
+  "date": null,
+  "travel_mode": "walking",
+  "instruction": "第二天下午改去西溪湿地，保留早上的安排",
+  "stops": [
+    {"id": "stop-d02-01", "name": "西湖", "time": "09:00", "duration_minutes": 120, "description": "环湖漫步", "address": "龙井路1号"}
+  ],
+  "parent": {"trip_id": "local-abc123", "revision": 3}
+}
+```
+
+响应概览（`day` 内部结构与 `/api/trips/plan` 的单日结构一致，此处不展开）：
+
+```json
+{
+  "day": {"day": 2, "date": null, "stops": ["……"], "legs": ["……"]},
+  "warnings": [],
+  "map_status": "ready",
+  "parent": {"trip_id": "local-abc123", "revision": 3},
+  "source": "agent"
+}
+```
+
+错误码语义：422 参数不合法；503 未配置 `DASHSCOPE_API_KEY` 或规划 Agent 未就绪；502 模型上游失败或模型输出不是恰好一天；504 单日重规划里模型生成阶段超过 `TRIP_REPLAN_TIMEOUT`（默认 90 秒，地图增强另有独立限时）。超时与上游错误不会静默重试。
 
 ### 浏览器来源防护（CORS 与写请求 403）
 
@@ -258,7 +315,7 @@ PYTHON_DOTENV_DISABLED=1 PYTHONDONTWRITEBYTECODE=1 .venv/Scripts/python.exe -m p
 cd frontend && pnpm install --frozen-lockfile && pnpm test && pnpm build
 ```
 
-CI 的验证边界：这条工作流定义时经过 YAML 结构核对和命令与现有 README/lockfile 的核对，但还没有真正推送到 GitHub 上跑过，不能当作「CI 已绿」。全量回归测试请在自己的环境或 CI 实际运行后以真实结果为准。
+CI 已经实际建立并运行：触发条件与上面描述一致，运行状态见 [GitHub Actions 页面](https://github.com/flower-forever/LangGraph-Smart-Traval-Assitant/actions)。首批运行（初版 eaee47e 及后续 push a8a833b）均 success。需要说明的是，这条 CI 全部走离线 mock（MockTransport / 假 Agent），能证明代码契约与离线降级逻辑，不能证明真实模型、高德或天气链路的线上表现；真实链路的验证仍以本地实际配置 Key 后的联调为准。
 
 ## 💬 CLI 入口
 
@@ -332,6 +389,7 @@ LangGraph-Smart-Traval-Assitant/
 ├── mcp_runtime.py             # CLI 共用 MCP 运行时：配置/提示词定位、解释器回退、路径解析
 ├── api_server.py              # FastAPI HTTP 服务器
 ├── travel_itinerary.py        # 结构化行程领域逻辑（契约/解析/高德客户端/坐标转换/降级）
+├── day_replan.py              # 单日 AI 重规划（请求校验/提示词/归一化/地图状态）
 ├── weather_server.py          # 天气 MCP 服务器 (STDIO)
 ├── amap_server.py             # 高德地图 MCP 服务器 (STDIO)
 ├── calculator_server.py       # 计算器 MCP 服务器 (STDIO)

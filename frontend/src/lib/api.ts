@@ -403,7 +403,7 @@ async function requestJson<T>(path: string, options?: ApiOptions): Promise<T> {
   }
 }
 
-async function postJson<T>(path: string, body: unknown, options?: ApiOptions): Promise<T> {
+export async function postJson<T>(path: string, body: unknown, options?: ApiOptions): Promise<T> {
   const clock = createRequestClock(options)
   try {
     let res: Response

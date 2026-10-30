@@ -6,10 +6,28 @@ import ItineraryList from './components/ItineraryList'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
+import TripDraftEditor from './components/TripDraftEditor'
+import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPanel'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
+import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
+import {
+  MAX_REPLAN_WARNINGS,
+  applyDayReplan,
+  type DayReplanApplyResult,
+  type DayReplanRequest,
+  type DayReplanResponse,
+} from './lib/dayReplan'
+import { replanDay } from './lib/dayReplanApi'
 import { formatDateTime } from './lib/format'
-import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, Trip } from './lib/api'
+import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, TravelMode, Trip } from './lib/api'
+
+/** 站点 id / fork 行程 id 都由页面用 UUID 生成；无 crypto.randomUUID 的环境退回随机串 */
+function newUuid(): string {
+  const c = globalThis.crypto as Crypto | undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
 
 type LoadPhase = 'initial' | 'loading' | 'ready' | 'failed'
 
@@ -187,6 +205,59 @@ export default function App() {
   const itineraryTopRef = useRef<HTMLDivElement | null>(null)
   const tripTitleRef = useRef<HTMLHeadingElement | null>(null)
 
+  /* ───────── 本地编辑（内存草稿）状态 ───────── */
+
+  /**
+   * 正在编辑的本地草稿；null 表示当前没有打开编辑器。
+   * 草稿只存在于内存：不写 localStorage、不发请求；「应用」后才成为当前行程。
+   */
+  const [draft, setDraft] = useState<TripDraft | null>(null)
+  /** 新建相邻路段的出行方式，进入编辑前由用户显式选择，不猜、不混用 */
+  const [draftMode, setDraftMode] = useState<TravelMode>('walking')
+  /** 编辑草稿时出错的提示（创建草稿失败等），只在编辑区显示 */
+  const [draftError, setDraftError] = useState<string | null>(null)
+  /** 编辑器里打开了单站表单：父级据此暂停日切换等外部替换（回调同步，渲染值不直接参与布局） */
+  const [, setEditorEditing] = useState(false)
+  /** 单站表单里有未提交输入：日切换被明确挡住，避免输入被切换带走 */
+  const [editorInputDirty, setEditorInputDirty] = useState(false)
+  /** 应用草稿成功后的页面内提示；含撤销应用入口 */
+  const [appliedNotice, setAppliedNotice] = useState<string | null>(null)
+  /** 应用前的行程快照，供「撤销应用」恢复一次；只保留最近一次 */
+  const undoApplyRef = useRef<Trip | null>(null)
+  /** 「撤销应用」是否可用（快照存在且当前行程仍是应用产物） */
+  const [canUndoApply, setCanUndoApply] = useState(false)
+  /**
+   * 页面行程版本号：所有会替换当前行程的入口（示例、规划成功、恢复、导入、
+   * 本地应用、AI 候选应用、撤销应用）都会 +1。ref 同步可读，供事件处理器在
+   * 调用 applyDayReplan 时核对最新版本；state 同时传给 AI 面板，行程被外部
+   * 替换后旧候选立即失效。
+   */
+  const tripRevisionRef = useRef(0)
+  const [tripRevision, setTripRevision] = useState(0)
+  const bumpTripRevision = useCallback(() => {
+    tripRevisionRef.current += 1
+    setTripRevision(tripRevisionRef.current)
+  }, [])
+
+  /** 最新行程的同步引用：AI 候选应用必须以当前页面为准，不能读闭包里的旧值 */
+  const tripRef = useRef<Trip | null>(null)
+  tripRef.current = trip
+  /** AI 单日调整请求序号：关闭面板 / 重新生成 / 应用成功都 +1，迟到的适配器结果据此作废 */
+  const aiRequestSeqRef = useRef(0)
+  /** AI 单日调整面板是否打开；与本地草稿互斥 */
+  const [aiOpen, setAiOpen] = useState(false)
+
+  /** 当前是否处于本地编辑状态（草稿已打开） */
+  const editingDraft = draft !== null
+  /** 本地草稿或 AI 单日面板打开时，都暂停会替换行程 / 写存储的外部入口 */
+  const interactionPaused = editingDraft || aiOpen
+  /** 暂停期间的公共说明 */
+  const editPauseNote = editingDraft
+    ? '本地编辑进行中：新行程规划、保存、恢复、导出备份和导出日历已暂停。请先「应用草稿」或「放弃草稿」回到原视图，再使用这些功能。'
+    : aiOpen
+      ? 'AI 单日调整进行中：新行程规划、保存、恢复、导出备份和导出日历已暂停。请先关闭 AI 面板，再使用这些功能。'
+      : null
+
   /** 探活，可重复触发；旧结论靠序号挡住，不会盖掉新结果 */
   const runProbe = useCallback(() => {
     probeControllerRef.current?.abort()
@@ -229,6 +300,7 @@ export default function App() {
       .then((t) => {
         if (cancelled || sequence !== loadSeqRef.current) return
         setTrip(t)
+        bumpTripRevision()
         setPhase('ready')
         setOpenedFromFile(false)
         // 能拿到业务数据本身就说明后端在线；它不证明规划可用，所以 planner 仍以 health 为准
@@ -267,19 +339,43 @@ export default function App() {
     setActiveStopId(null)
   }, [activeDay])
 
-  const currentDay = trip?.days.find((d) => d.day === activeDay) ?? trip?.days[0]
+  /** 当前日：编辑时优先取草稿天数组，否则用当前行程；日签仍是唯一的导航事实 */
+  const currentDay = (() => {
+    if (draft) {
+      const fromDraft = draft.days.find((d) => d.day === activeDay)
+      if (fromDraft) return fromDraft
+      const fromTrip = trip?.days.find((d) => d.day === activeDay)
+      if (fromTrip) return fromTrip
+    }
+    return trip?.days.find((d) => d.day === activeDay) ?? trip?.days[0]
+  })()
 
   const switchDay = useCallback(
     (dayNum: number) => {
+      // AI 面板打开时目标日锁定：中途换天会让候选与当前目标日脱节。
+      if (aiOpen) return
+      // 有未提交的单站输入时明确挡住日切换：输入属于当前天，切换会把它晾在别的天。
+      // 没有表单输入时允许跨日编辑同一份草稿（草稿由父级持有，切天不丢）。
+      if (editingDraft && editorInputDirty) return
       setActiveDay(dayNum)
     },
-    [],
+    [aiOpen, editingDraft, editorInputDirty],
   )
 
   // tablist 方向键导航（WAI-APG）：左右键在日签间移动并激活
   const dayNavKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (!trip || e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      // AI 面板打开时同样锁住目标日
+      if (aiOpen) {
+        e.preventDefault()
+        return
+      }
+      // 键盘切天同样遵守「有未提交输入时暂停日切换」
+      if (editingDraft && editorInputDirty) {
+        e.preventDefault()
+        return
+      }
       e.preventDefault()
       const days = trip.days
       const idx = days.findIndex((d) => d.day === activeDay)
@@ -290,7 +386,7 @@ export default function App() {
       const el = document.getElementById(`day-tab-${nextDay}`)
       el?.focus()
     },
-    [trip, activeDay],
+    [trip, activeDay, aiOpen, editingDraft, editorInputDirty],
   )
 
   const scrollToItinerary = useCallback(() => {
@@ -323,6 +419,7 @@ export default function App() {
       const t = await planTrip(payload, { signal: controller.signal })
       if (sequence !== planSeqRef.current) return
       setTrip(t)
+      bumpTripRevision()
       setPhase('ready')
       setRestoredAt(null)
       setOpenedFromFile(false)
@@ -373,7 +470,9 @@ export default function App() {
 
   /**
    * 从本浏览器保存的副本恢复：取消未完成的规划请求与示例请求（避免旧响应覆盖恢复结果），
-   * 回到第一天，并清空选中站点和地图弹窗。
+   * 回到第一天，并清空选中站点和地图弹窗。恢复也会替换当前行程：递增 revision。
+   * 编辑草稿时该入口被禁用，正常不会走到这里；万一被调用（面板未禁用的路径），
+   * 旧草稿立即作废而不是带着新 base 应用。
    */
   const handleRestoreSavedTrip = useCallback((restored: Trip, savedAt: number) => {
     planSeqRef.current += 1
@@ -382,9 +481,20 @@ export default function App() {
     loadSeqRef.current += 1
     exampleAbortRef.current?.abort()
     exampleAbortRef.current = null
+    // 恢复同样替换当前行程：AI 面板若在开（正常已禁用）立刻作废在途候选
+    aiRequestSeqRef.current += 1
+    setAiOpen(false)
     setPlanLoading(false)
     setPlanCancelled(false)
+    setDraft(null)
+    setDraftError(null)
+    setAppliedNotice(null)
+    undoApplyRef.current = null
+    setCanUndoApply(false)
+    setEditorEditing(false)
+    setEditorInputDirty(false)
     setTrip(restored)
+    bumpTripRevision()
     setPhase('ready')
     setError(null)
     setRequestOutcome({ kind: 'none' })
@@ -410,10 +520,22 @@ export default function App() {
     loadSeqRef.current += 1
     exampleAbortRef.current?.abort()
     exampleAbortRef.current = null
+    // 打开文件同样替换当前行程：AI 面板若在开（正常已禁用）立刻作废在途候选
+    aiRequestSeqRef.current += 1
+    setAiOpen(false)
     // 等待中的规划被这次打开接管：恢复可提交状态，也不再显示「已停止等待」的旧说明
     setPlanLoading(false)
     setPlanCancelled(false)
+    // 打开文件同样替换当前行程：旧草稿作废（编辑期间此入口已被禁用，这里是兜底）
+    setDraft(null)
+    setDraftError(null)
+    setAppliedNotice(null)
+    undoApplyRef.current = null
+    setCanUndoApply(false)
+    setEditorEditing(false)
+    setEditorInputDirty(false)
     setTrip(imported)
+    bumpTripRevision()
     setPhase('ready')
     setError(null)
     setRequestOutcome({ kind: 'none' })
@@ -426,6 +548,226 @@ export default function App() {
 
   const dayTabs = trip?.days ?? []
   const tripIsExample = trip?.source === 'example'
+
+  /* ───────── 本地编辑：进入 / 应用 / 放弃 / 撤销应用 ───────── */
+
+  /**
+   * 进入本地编辑：先作废并中止当前规划与示例等待（迟到的结果不允许在编辑期间覆盖页面），
+   * 再用 UUID 创建新 fork 草稿。原行程与已保存数据完全不动。
+   * 停止等待只取消本页的等待，不保证后端停止处理。
+   */
+  const handleStartEditing = useCallback(() => {
+    if (!trip || draft || aiOpen) return
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
+    setPlanLoading(false)
+    setPlanCancelled(false)
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
+    setDraftError(null)
+    setAppliedNotice(null)
+    setCanUndoApply(false)
+    undoApplyRef.current = null
+    const result = createTripDraft(trip, { forkTripId: newUuid(), newLegMode: draftMode })
+    if (!result.ok) {
+      setDraftError(`没能开始本地编辑：${result.message}`)
+      return
+    }
+    setDraft(result.draft)
+  }, [trip, draft, aiOpen, draftMode])
+
+  /** 编辑期间用户换了出行方式：对未打开的草稿没有影响；草稿打开后选择被禁用 */
+  const handleDraftModeChange = useCallback((mode: TravelMode) => {
+    setDraftMode(mode)
+  }, [])
+
+  /**
+   * 应用草稿成功：采纳新 fork Trip 为当前行程。旧错误与请求归属提示清空；
+   * 保留仍然有效的日签；清掉已经不存在的选中站点；保留一次应用前快照供撤销应用。
+   * 应用不会写 localStorage：用户之后仍需显式保存。
+   */
+  const handleDraftApply = useCallback((result: DraftApplySuccess) => {
+    if (!result.changed) return
+    undoApplyRef.current = trip
+    setCanUndoApply(true)
+    setDraft(null)
+    setDraftError(null)
+    setEditorEditing(false)
+    setEditorInputDirty(false)
+    setTrip(result.trip)
+    bumpTripRevision()
+    setPhase('ready')
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
+    // 新副本不是本浏览器保存的那份记录，不能继续显示「从已保存副本恢复」
+    setRestoredAt(null)
+    setAppliedNotice(
+      '已把草稿应用成当前行程（新的行程副本）。这一步不会自动保存，需要保存请再点「保存当前行程」；' +
+        '导出日历会生成新副本，不会更新之前导入的日历事件。',
+    )
+    const appliedDayValid = result.trip.days.some((d) => d.day === activeDay)
+    if (!appliedDayValid) setActiveDay(result.trip.days[0]?.day ?? 1)
+    setActiveStopId((current) =>
+      current && result.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
+    )
+    scrollToItinerary()
+  }, [trip, activeDay, bumpTripRevision, scrollToItinerary])
+
+  /** 放弃草稿：回到原视图；原行程从未被改过，无需恢复 */
+  const handleDraftDiscard = useCallback(() => {
+    setDraft(null)
+    setDraftError(null)
+    setEditorEditing(false)
+    setEditorInputDirty(false)
+  }, [])
+
+  /** 撤销应用：回到应用前的那个行程。只影响当前视图，不删除用户已显式保存的副本 */
+  const handleUndoApply = useCallback(() => {
+    const snapshot = undoApplyRef.current
+    if (!snapshot || !canUndoApply) return
+    undoApplyRef.current = null
+    setCanUndoApply(false)
+    setDraft(null)
+    setDraftError(null)
+    setEditorEditing(false)
+    setEditorInputDirty(false)
+    setTrip(snapshot)
+    bumpTripRevision()
+    setPhase('ready')
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
+    setRestoredAt(null)
+    setAppliedNotice('已撤销应用，回到应用前的行程。已显式保存过的记录不受影响。')
+    const dayValid = snapshot.days.some((d) => d.day === activeDay)
+    if (!dayValid) setActiveDay(snapshot.days[0]?.day ?? 1)
+    setActiveStopId((current) =>
+      current && snapshot.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
+    )
+    scrollToItinerary()
+  }, [canUndoApply, activeDay, bumpTripRevision, scrollToItinerary])
+
+  /* ───────── AI 单日调整：打开 / 请求适配 / 应用 / 关闭 ───────── */
+
+  /**
+   * 打开 AI 单日调整面板。和进入本地编辑一样，先作废并中止在飞的规划 / 示例请求，
+   * 清掉旧错误与请求归属，避免迟到的结果在面板打开期间覆盖页面。
+   * 草稿与 AI 面板互斥：有草稿时入口按钮被禁用，草稿输入不会被清掉。
+   */
+  const handleOpenAiPanel = useCallback(() => {
+    if (!trip || draft || aiOpen) return
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
+    aiRequestSeqRef.current += 1
+    setPlanLoading(false)
+    setPlanCancelled(false)
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
+    setDraftError(null)
+    setAiOpen(true)
+  }, [trip, draft, aiOpen])
+
+  /** 关闭面板：作废在途候选请求；当前行程不变，也不代表服务端停止处理。 */
+  const handleCloseAiPanel = useCallback(() => {
+    aiRequestSeqRef.current += 1
+    setAiOpen(false)
+  }, [])
+
+  /**
+   * 面板的请求适配器：复用既有 postJson / replanDay 客户端与取消、超时、错误分类。
+   * 有效的成功响应说明模型服务确实可用，可以把 planner 记为 ready；
+   * 但只有仍是当前请求序号时才允许改后端结论——关闭面板、重新生成、应用成功后，
+   * 旧请求即使迟到也不能把更新的健康 / 失败结论翻回去。
+   */
+  const handleAiRequestDay = useCallback<DayReplanAdapter>(
+    (request, options) => {
+      const seq = aiRequestSeqRef.current + 1
+      aiRequestSeqRef.current = seq
+      const conclusionAtStart = backendConclusionSeqRef.current
+      return replanDay(request, options).then(
+        (response) => {
+          if (aiRequestSeqRef.current === seq) {
+            businessProofRef.current += 1
+            backendConclusionSeqRef.current += 1
+            probeSeqRef.current += 1
+            probeControllerRef.current?.abort()
+            probeControllerRef.current = null
+            setBackend((prev) => ({ ...markReachable(prev), planner: 'ready', probing: false }))
+          }
+          return response
+        },
+        (err: unknown) => {
+          if (aiRequestSeqRef.current === seq) {
+            const failure = requestFailureOf(err)
+            if (failure) applyRequestFailure(failure, conclusionAtStart)
+          }
+          throw err
+        },
+      )
+    },
+    [applyRequestFailure],
+  )
+
+  /**
+   * 面板里点了「应用候选」：父级用最新行程引用与 revision 重新走 applyDayReplan，
+   * 绝不直接 setTrip 旧响应。过期、容量、跨天 id 冲突等失败原样返回给面板显示，
+   * 当前行程保持不变；成功才采纳新 fork、递增统一 revision 并关闭面板。
+   * 应用快照与本地编辑共用一次「撤销应用」，但不写 localStorage。
+   */
+  const handleAiApply = useCallback(
+    (request: DayReplanRequest, response: DayReplanResponse): DayReplanApplyResult => {
+      const latestTrip = tripRef.current
+      if (!latestTrip) {
+        return { ok: false, reason: 'invalid_base', message: '当前没有可应用的行程，AI 候选未应用。' }
+      }
+      const applied = applyDayReplan({
+        baseTrip: latestTrip,
+        request,
+        response,
+        currentRevision: tripRevisionRef.current,
+        forkTripId: newUuid(),
+      })
+      if (!applied.ok) return applied
+
+      aiRequestSeqRef.current += 1
+      undoApplyRef.current = latestTrip
+      setCanUndoApply(true)
+      setTrip(applied.trip)
+      bumpTripRevision()
+      setPhase('ready')
+      setError(null)
+      setRequestOutcome({ kind: 'none' })
+      // 新副本不是本浏览器保存的那份记录，不能继续显示「从已保存副本恢复」
+      setRestoredAt(null)
+      setAiOpen(false)
+      const dayValid = applied.trip.days.some((d) => d.day === activeDay)
+      if (!dayValid) setActiveDay(applied.trip.days[0]?.day ?? 1)
+      setActiveStopId((current) =>
+        current && applied.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
+      )
+      setAppliedNotice(
+        `已把第 ${request.day} 天的 AI 候选应用到当前行程（新的行程副本）；这次应用只替换这一天，其它天和已有保存记录都没有被它改动。` +
+          '这次应用本身不会自动保存，保存仍由你显式操作；导出的日历是新副本，不会更新之前导入的事件。' +
+          (applied.omittedWarnings > 0
+            ? ` 有 ${applied.omittedWarnings} 条提醒因 ${MAX_REPLAN_WARNINGS} 条上限被省略，具体见行程提醒里的说明。`
+            : '') +
+          (openedFromFile
+            ? ' 这份行程来自导入文件：本次只替换了这一天，其余内容仍未向服务器核对。'
+            : '') +
+          (applied.trip.source === 'example' ? ' 这次应用保留了原来的示例行程身份。' : ''),
+      )
+      scrollToItinerary()
+      return applied
+    },
+    [activeDay, bumpTripRevision, openedFromFile, scrollToItinerary],
+  )
 
   /**
    * 规划请求归属说明：有失败/停止/进行中，且页面有行程可看时，
@@ -541,12 +883,19 @@ export default function App() {
       <div className="topbar-progress" data-active={planLoading || phase === 'loading'} aria-hidden="true" />
 
       <main className="app-main">
-        <PlanForm
-          onSubmit={handlePlan}
-          loading={planLoading}
-          onCancel={handleStopWaiting}
-          plannerUnavailable={plannerUnavailable}
-        />
+        {/*
+          本地编辑期间把规划表单整体包进 disabled fieldset：控件禁用且读屏会念出
+          「已暂停」的说明。不传 loading=true——那会假装 AI 正在生成。
+        */}
+        <fieldset className="edit-pause-fieldset" disabled={interactionPaused}>
+          {editPauseNote && <legend className="edit-pause-legend">{editPauseNote}</legend>}
+          <PlanForm
+            onSubmit={handlePlan}
+            loading={planLoading}
+            onCancel={handleStopWaiting}
+            plannerUnavailable={plannerUnavailable}
+          />
+        </fieldset>
 
         {planCancelled && !planLoading && (
           <p className="plan-cancel-status" role="status">
@@ -590,7 +939,7 @@ export default function App() {
 
         <div ref={itineraryTopRef} id="trip-section" />
         {trip && (
-          <section aria-label="行程安排">
+          <section aria-label="行程安排" data-trip-revision={tripRevision}>
             <header className="trip-header">
               <div className="trip-head-row">
                 <span className="trip-source-tag" data-source={trip.source}>
@@ -618,30 +967,161 @@ export default function App() {
                   </ul>
                 </div>
               )}
-              {restoredAt != null && (
+              {restoredAt != null && !editingDraft && (
                 <p className="trip-restored-note">
                   从本浏览器保存的副本恢复 · 保存于 {formatDateTime(restoredAt)}。这份副本不会同步到其他设备。
                 </p>
               )}
-              {openedFromFile && (
+              {openedFromFile && !editingDraft && (
                 /*
                  * 来源说明：source 是文件里写的内容，标签本身证明不了真实来源。
                  * 样式沿用 .trip-restored-note。
                  */
                 <p className="trip-restored-note trip-imported-note" data-note="imported-file">
-                  这份行程来自你选择的备份文件：页面没有向服务器核对过内容，也没有写入本浏览器的本地保存。
-                  上面的「示例行程 / AI 规划」标签取自文件里的 source 字段，只代表文件自己这么写，不能证明它的真实来源。
+                  这份行程来自你选择的备份文件：页面没有向服务器核对过内容。打开文件这个动作不会自动保存；
                   想把它留在这台电脑上，请在下面的「行程备份与导入」里点「保存到本地」。
+                  上面的「示例行程 / AI 规划」标签取自文件里的 source 字段，只代表文件自己这么写，不能证明它的真实来源。
                 </p>
               )}
             </header>
 
-            <SavedTripsPanel trip={trip} onRestore={handleRestoreSavedTrip} />
-            <IcsExportPanel trip={trip} key={`ics:${trip.id}`} />
+            {appliedNotice && !editingDraft && !aiOpen && (
+              <div className="apply-result-note" data-testid="apply-notice">
+                <p role="status">{appliedNotice}</p>
+                {canUndoApply && (
+                  <button type="button" className="btn btn-ghost" onClick={handleUndoApply}>
+                    撤销应用
+                  </button>
+                )}
+              </div>
+            )}
+
+            {!editingDraft && !aiOpen && (
+              <>
+                <SavedTripsPanel trip={trip} onRestore={handleRestoreSavedTrip} />
+                <IcsExportPanel trip={trip} key={`ics:${trip.id}`} />
+              </>
+            )}
+
+            {/* 本地编辑入口：行程下方、日签上方。编辑期间被现有草稿取代；AI 面板打开时收起 */}
+            {!editingDraft && !aiOpen && (
+              <div className="edit-entry" data-testid="edit-entry">
+                <div className="field edit-entry-mode">
+                  <span className="field-label" id="edit-mode-label">新增路段的出行方式</span>
+                  <div className="mode-toggle" role="radiogroup" aria-labelledby="edit-mode-label">
+                    <label className="mode-option">
+                      <input
+                        type="radio"
+                        name="draft_leg_mode"
+                        value="walking"
+                        checked={draftMode === 'walking'}
+                        onChange={() => handleDraftModeChange('walking')}
+                      />
+                      <span>步行</span>
+                    </label>
+                    <label className="mode-option">
+                      <input
+                        type="radio"
+                        name="draft_leg_mode"
+                        value="driving"
+                        checked={draftMode === 'driving'}
+                        onChange={() => handleDraftModeChange('driving')}
+                      />
+                      <span>驾车</span>
+                    </label>
+                  </div>
+                  <p className="field-help">
+                    本地编辑不会请求新路线：新增或重排站点后，涉及的新路段会标为「待重新获取」，
+                    这里选定的方式只写进那条路段的标记，不会自动补距离或耗时。
+                  </p>
+                </div>
+                <div className="edit-entry-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleStartEditing}
+                  >
+                    编辑这趟行程
+                  </button>
+                  <p className="field-help">
+                    在内存草稿里改站点文字、顺序和时间，不会自动保存，也不请求后端；应用后才替换当前显示的行程。
+                  </p>
+                </div>
+                {draftError && (
+                  <p className="field-error" role="alert">{draftError}</p>
+                )}
+              </div>
+            )}
+
+            {/*
+              AI 单日调整入口：目标固定为当前日。
+              有本地草稿时按钮禁用——先应用或放弃草稿，避免把草稿输入晾在一边。
+            */}
+            {!aiOpen && (
+              <div className="ai-entry" data-testid="ai-entry" data-day={activeDay}>
+                <div className="ai-entry-copy">
+                  <p className="field-label">
+                    AI 调整单日（目标：第 {activeDay} 天
+                    {currentDay?.date ? ` · ${currentDay.date}` : ''}）
+                  </p>
+                  <p className="field-help">
+                    只让 AI 重排这一天。候选会先和当前安排对比，你点「应用候选」之前，页面上的行程、地图和保存记录都不会变。
+                  </p>
+                  {editingDraft ? (
+                    <p className="field-help" role="note">
+                      本地草稿正在编辑：先「应用草稿」或「放弃草稿」，再让 AI 调整这一天；草稿输入不会因此丢失。
+                    </p>
+                  ) : null}
+                </div>
+                <div className="ai-entry-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleOpenAiPanel}
+                    disabled={editingDraft}
+                  >
+                    AI 调整这一天
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {aiOpen && (
+              <div className="ai-panel-slot" data-testid="ai-panel-slot">
+                <p className="ai-pause-note" role="note">
+                  AI 调整面板打开着：日期切换、规划、恢复、保存、导出与备份已暂停，关闭面板后恢复。
+                  面板里的「停止等待」只停止本页等待，不保证后端或上游模型停止处理，也不保证停止计费。
+                </p>
+                <DayReplanPanel
+                  trip={trip}
+                  dayNumber={activeDay}
+                  revision={tripRevision}
+                  plannerAvailability={backend.planner}
+                  requestDay={handleAiRequestDay}
+                  onApply={handleAiApply}
+                  onClose={handleCloseAiPanel}
+                />
+              </div>
+            )}
+
+            {editingDraft && draft && (
+              <TripDraftEditor
+                draft={draft}
+                dayNumber={currentDay?.day ?? draft.base.days[0]?.day ?? 1}
+                onDraftChange={setDraft}
+                onApply={handleDraftApply}
+                onDiscard={handleDraftDiscard}
+                createStopId={newUuid}
+                onEditingChange={setEditorEditing}
+                onInputDirtyChange={setEditorInputDirty}
+                onSelectStop={handleSelectStop}
+              />
+            )}
 
             <div className="day-nav" role="tablist" aria-label="按日切换" onKeyDown={dayNavKeyDown}>
               {dayTabs.map((d) => {
                 const selected = d.day === activeDay
+                const blocked = aiOpen || (editingDraft && editorInputDirty)
                 return (
                 <button
                   key={d.day}
@@ -652,6 +1132,14 @@ export default function App() {
                   id={`day-tab-${d.day}`}
                   className="day-tab"
                   onClick={() => switchDay(d.day)}
+                  aria-disabled={blocked || undefined}
+                  title={
+                    aiOpen
+                      ? 'AI 调整面板打开着，目标日已锁定；关闭面板后可切换日期。'
+                      : blocked
+                        ? '有未保存的站点输入，先保存到草稿或取消输入，再切换日期。'
+                        : undefined
+                  }
                 >
                   <span className="d-num">D{d.day}{d.date ? ` · ${d.date.slice(5)}` : ''}</span>
                   <span className="d-title">{d.title || `第 ${d.day} 天`}</span>
@@ -659,6 +1147,16 @@ export default function App() {
                 )
               })}
             </div>
+            {editingDraft && editorInputDirty && (
+              <p className="day-switch-note" role="status">
+                单站输入尚未保存：日期切换已暂停。输入属于当前正在编辑的天，先「保存到草稿」或「取消输入」再切换。
+              </p>
+            )}
+            {aiOpen && (
+              <p className="day-switch-note" data-testid="ai-day-lock-note" role="status">
+                AI 调整面板打开着：日期切换已暂停，目标固定为第 {activeDay} 天；关闭面板后恢复。
+              </p>
+            )}
 
             <div className="trip-layout">
               <div className="itinerary-pane" id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
@@ -681,6 +1179,12 @@ export default function App() {
                 )}
               </div>
             </div>
+            {editingDraft && (
+              <p className="draft-preview-note" data-testid="draft-preview-note" role="note">
+                上面的行程和地图显示的是内存草稿的预览，还没有应用，也没有保存；
+                当前行程的原始数据没有被修改，已保存的记录保持原样。
+              </p>
+            )}
           </section>
         )}
 
@@ -690,21 +1194,33 @@ export default function App() {
           把当前行程标题再显示一遍，收起时页面里只保留行程标题本身。
         */}
         <div className="trip-transfer-slot">
-          <button
-            type="button"
-            className="btn btn-ghost trip-transfer-toggle"
-            onClick={() => setTransferOpen((open) => !open)}
-            aria-expanded={transferOpen}
-            aria-controls={transferBodyId}
-            title="导入或导出本机 JSON 备份；没有行程时也可以先导入"
-          >
-            {transferOpen ? '收进行程备份与导入' : '行程备份与导入'}
-          </button>
-          <div id={transferBodyId}>
-            {transferOpen && (
-              <TripTransferPanel trip={trip} onOpen={handleOpenImportedTrip} />
-            )}
-          </div>
+          {editingDraft ? (
+            <p className="edit-pause-note" role="note">
+              本地编辑进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先「应用草稿」或「放弃草稿」再使用。
+            </p>
+          ) : aiOpen ? (
+            <p className="edit-pause-note" role="note">
+              AI 单日调整进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先关闭 AI 面板再使用。
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost trip-transfer-toggle"
+                onClick={() => setTransferOpen((open) => !open)}
+                aria-expanded={transferOpen}
+                aria-controls={transferBodyId}
+                title="导入或导出本机 JSON 备份；没有行程时也可以先导入"
+              >
+                {transferOpen ? '收进行程备份与导入' : '行程备份与导入'}
+              </button>
+              <div id={transferBodyId}>
+                {transferOpen && (
+                  <TripTransferPanel trip={trip} onOpen={handleOpenImportedTrip} />
+                )}
+              </div>
+            </>
+          )}
         </div>
       </main>
 

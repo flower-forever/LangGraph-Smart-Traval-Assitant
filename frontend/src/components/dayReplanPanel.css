@@ -1,0 +1,385 @@
+/* 单日 AI 重规划面板（Extension）：沿用 tokens.css 的宣纸 / 朱砂体系，
+ * 只用 .drp- 独立类名，不影响行程卡、草稿编辑器与地图。
+ */
+
+.drp {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: var(--rule-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper-2);
+  min-width: 0;
+}
+
+.drp *,
+.drp *::before,
+.drp *::after {
+  box-sizing: border-box;
+}
+
+.drp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.drp-head-main {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.drp-eyebrow {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  color: var(--color-accent-ink);
+}
+
+.drp-title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-lg);
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.drp-meta {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  min-width: 0;
+}
+
+.drp-tag {
+  padding: 1px 8px;
+  border: var(--rule-strong);
+  border-radius: 999px;
+  color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
+}
+
+.drp-btn {
+  appearance: none;
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.drp-btn:hover:not(:disabled) {
+  background: var(--color-paper-3);
+}
+
+.drp-btn:focus-visible {
+  outline: 2px solid var(--color-accent-ink);
+  outline-offset: 2px;
+}
+
+.drp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.drp-btn-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+  font-weight: 600;
+}
+
+.drp-btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-strong);
+}
+
+.drp-btn-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-accent-ink);
+  text-decoration: underline;
+}
+
+.drp-form {
+  display: grid;
+  gap: var(--space-3);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin: 0;
+  min-width: 0;
+}
+
+.drp-form:disabled {
+  opacity: 0.75;
+}
+
+.drp-form-legend {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-2);
+  padding: 0 var(--space-2);
+}
+
+.drp-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.drp-label,
+.drp-field label {
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.drp-field textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* 同行人数：单行输入，和指令 textarea 共用同一套纸底与描边 */
+.drp-field input[type="text"] {
+  width: 100%;
+  max-width: 200px;
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  padding: var(--space-2) var(--space-3);
+}
+
+.drp-field textarea:focus-visible,
+.drp-field input[type="text"]:focus-visible {
+  outline: 2px solid var(--color-accent-ink);
+  outline-offset: 1px;
+}
+
+.drp-field input[type="text"][aria-invalid="true"] {
+  border-color: var(--color-accent);
+}
+
+.drp-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  margin-right: var(--space-4);
+}
+
+.drp-radio input {
+  accent-color: var(--color-accent);
+  width: 16px;
+  height: 16px;
+}
+
+.drp-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.drp-hint {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--text-xs);
+  line-height: 1.65;
+  color: var(--color-faint);
+  overflow-wrap: anywhere;
+}
+
+.drp-notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: var(--rule);
+  border-left: 3px solid var(--color-warn-ink);
+  border-radius: var(--radius-sm);
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+}
+
+.drp-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+}
+
+.drp-error-text {
+  color: var(--color-accent-ink);
+}
+
+.drp-preview {
+  display: grid;
+  gap: var(--space-3);
+  border: var(--rule-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  min-width: 0;
+}
+
+.drp-preview-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  color: var(--color-ink);
+}
+
+.drp-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.drp-col {
+  min-width: 0;
+  border: var(--rule);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--color-paper);
+}
+
+.drp-col-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-2);
+}
+
+.drp-stops {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.drp-stop {
+  min-width: 0;
+}
+
+.drp-stop p {
+  margin: 0;
+}
+
+.drp-stop-time {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+.drp-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-2);
+}
+
+.drp-stop-name {
+  font-size: var(--text-base);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.drp-stop-note {
+  margin-top: var(--space-1) !important;
+  font-size: var(--text-xs);
+  color: var(--color-warn-ink);
+}
+
+.drp-leg {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  padding: var(--space-1) 0;
+}
+
+.drp-leg-navigation {
+  color: var(--color-ok);
+}
+
+.drp-leg-straight_line {
+  color: var(--color-muted);
+}
+
+.drp-leg-unavailable {
+  color: var(--color-warn-ink);
+}
+
+.drp-map-status {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--color-ink-2);
+}
+
+.drp-warnings {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.drp-warning-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--color-ink-2);
+}
+
+@media (max-width: 720px) {
+  .drp {
+    padding: var(--space-4);
+  }
+
+  .drp-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .drp-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .drp-actions .drp-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drp-btn {
+    transition: none;
+  }
+}
