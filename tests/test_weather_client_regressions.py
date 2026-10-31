@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""天气客户端公开行为回归测试（28 条，d17 复核结论的正式归档）。
+"""天气客户端公开行为回归测试（39 条，d17 复核结论的正式归档）。
 
 只打公开 ``fetch_day``，全部 httpx.MockTransport / async stream，零真实网络。
 覆盖：总 deadline 覆盖等待 headers 与 chunk 间隙、错误响应不消费 body、
 注入 follow_redirects=True 也不跨 host、fetched_at 语义、单位核验与数值
-约束、网格/时区/coverage 校验、超大 int 输入零网络、requested_date 各状态。
+约束、网格/时区/coverage 校验、超大 int 输入零网络、requested_date 各状态、
+并发下 provider_http_status 请求局部隔离（asyncio.Event 控制先后，不靠
+长 sleep 凑顺序）。
 
 自包含：不依赖测试收集顺序，不引用任何临时目录路径。
 """
@@ -574,3 +576,252 @@ def test_requested_date_null_on_invalid_date():
     report = run(action())
     assert report.status == "invalid_request"
     assert report.requested_date is None
+
+
+# ==================== 并发下 provider_http_status 请求局部隔离 ====================
+
+
+def test_concurrent_connect_error_does_not_inherit_inflight_status():
+    """无 HTTP 响应的失败不得继承别请求的状态。
+
+    请求 A 挂在 200 流上（headers 已到，body 未读），请求 B 连接错误。
+    修复前共享实例字段会让 B 的 unavailable 信封带上 A 的 200。
+    """
+    release_a = asyncio.Event()
+    block_a = asyncio.Event()
+    big = b"x" * (200 * 1024)  # 超过 128 KiB 上限：A 读完即 _BodyTooLarge
+
+    async def a_content():
+        release_a.set()  # A 已收到 headers 并进入 body 读取阶段
+        await block_a.wait()
+        yield big
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["latitude"] == f"{LAT}":
+            return httpx.Response(200, content=a_content())
+        raise httpx.ConnectError("connection refused")
+
+    async def action():
+        async with make_client(handler) as client:
+            task_a = asyncio.create_task(
+                client.fetch_day(LAT, LON, TARGET_DATE)
+            )
+            await release_a.wait()
+            task_b = asyncio.create_task(
+                client.fetch_day(LAT + 10.0, LON, TARGET_DATE)
+            )
+            report_b = await asyncio.wait_for(task_b, timeout=2)
+            block_a.set()
+            report_a = await asyncio.wait_for(task_a, timeout=2)
+            return report_a, report_b
+
+    report_a, report_b = run(action())
+    assert report_b.status == "unavailable"
+    assert report_b.provider_http_status is None
+    assert report_a.status == "failed"
+    assert report_a.provider_http_status == 200
+
+
+@pytest.mark.parametrize("err_status", [429, 503])
+def test_concurrent_slow_200_then_error_status_isolated(err_status):
+    """200 流挂起 + 429/5xx 先结束：两请求的状态互不串值。
+
+    请求 B 先结束并把 unavailable/4xx 口径落定；随后 A 因超 body 失败，
+    失败信封必须携带 A 自己的 200，不能读到 B 的错误状态。
+    """
+    release_a = asyncio.Event()
+    block_a = asyncio.Event()
+    big = b"x" * (200 * 1024)
+
+    async def a_content():
+        release_a.set()
+        await block_a.wait()
+        yield big
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["latitude"] == f"{LAT}":
+            return httpx.Response(200, content=a_content())
+        return httpx.Response(err_status, json={"error": "rate limited secret"})
+
+    async def action():
+        async with make_client(handler) as client:
+            task_a = asyncio.create_task(
+                client.fetch_day(LAT, LON, TARGET_DATE)
+            )
+            await release_a.wait()
+            task_b = asyncio.create_task(
+                client.fetch_day(LAT + 10.0, LON, TARGET_DATE)
+            )
+            report_b = await asyncio.wait_for(task_b, timeout=2)
+            block_a.set()
+            report_a = await asyncio.wait_for(task_a, timeout=2)
+            return report_a, report_b
+
+    report_a, report_b = run(action())
+    assert report_b.status == "unavailable"
+    assert report_b.provider_http_status == err_status
+    assert "rate limited secret" not in report_b.model_dump_json()
+    assert report_a.status == "failed"
+    assert report_a.provider_http_status == 200
+
+
+def test_concurrent_different_queries_parallel_success():
+    """不同 query 并行成功：坐标与网格各归各，不交叉。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        lat = float(request.url.params["latitude"])
+        lon = float(request.url.params["longitude"])
+        return httpx.Response(
+            200, json=make_provider_payload(grid_lat=lat + 0.5, grid_lon=lon + 0.5)
+        )
+
+    async def action():
+        async with make_client(handler) as client:
+            return await asyncio.gather(
+                client.fetch_day(10.0, 20.0, TARGET_DATE),
+                client.fetch_day(-30.0, 70.0, TARGET_DATE),
+            )
+
+    r1, r2 = run(action())
+    assert r1.status == "available"
+    assert r2.status == "available"
+    assert r1.provider_http_status == 200
+    assert r2.provider_http_status == 200
+    assert r1.coordinate.requested.lat == 10.0
+    assert r1.coordinate.grid is not None and r1.coordinate.grid.lat == 10.5
+    assert r2.coordinate.requested.lat == -30.0
+    assert r2.coordinate.grid is not None and r2.coordinate.grid.lat == -29.5
+    assert r1.forecast is not None and r1.forecast.date == TARGET_DATE
+    assert r2.forecast is not None and r2.forecast.date == TARGET_DATE
+
+
+def test_success_keeps_real_2xx_status():
+    """201/202 等非 200 的 2xx：成功信封保留真实状态，不硬写 200。"""
+
+    async def action(status: int):
+        async with make_client(
+            handler_ok(make_provider_payload(), status=status)
+        ) as client:
+            return await client.fetch_day(LAT, LON, TARGET_DATE)
+
+    for status in (200, 201, 202):
+        report = run(action(status))
+        assert report.status == "available"
+        assert report.provider_http_status == status
+
+
+def test_non_2xx_with_valid_payload_not_fake_success():
+    """404 即使 body 是合法 payload：非 2xx 不能按成功处理。"""
+
+    async def action():
+        async with make_client(
+            handler_ok(make_provider_payload(), status=404)
+        ) as client:
+            return await client.fetch_day(LAT, LON, TARGET_DATE)
+
+    report = run(action())
+    assert report.status == "failed"
+    assert report.provider_http_status == 404
+    assert report.fetched_at is None
+    assert report.forecast is None
+
+
+def test_bad_json_failed_carries_own_status():
+    """200 但 body 不是 JSON：failed 信封携带本请求自己的 200。"""
+
+    async def action():
+        async with make_client(
+            lambda request: httpx.Response(200, content=b"{not json")
+        ) as client:
+            return await client.fetch_day(LAT, LON, TARGET_DATE)
+
+    report = run(action())
+    assert report.status == "failed"
+    assert report.provider_http_status == 200
+    assert report.fetched_at is None
+
+
+def test_no_instance_shared_provider_status_attribute():
+    """结构性保证：客户端实例不保留任何共享 HTTP 状态字段。"""
+
+    async def action():
+        async with make_client(handler_ok(make_provider_payload())) as client:
+            report = await client.fetch_day(LAT, LON, TARGET_DATE)
+            return client, report
+
+    client, report = run(action())
+    assert report.status == "available"
+    assert not hasattr(client, "_last_provider_status")
+
+
+@pytest.mark.parametrize("err_status", [429, 503])
+def test_body_read_error_keeps_own_status_not_err_status(err_status):
+    """200 流中途 ReadError：失败信封携带本请求已收到的 200。
+
+    请求 A 收到 200 headers 后 body 读取中途断开（ReadError），
+    并发请求 B 以 429/503 先结束。A 的信封不得丢掉已知的 200，
+    也不得读到 B 的错误状态；B 各自携带自己的状态。
+    网络层断开折算口径维持 unavailable（与既有合同一致），只补状态归属。
+    """
+    read_error_raised = asyncio.Event()
+
+    async def a_content():
+        yield b'{"latitude": '  # headers 已到，body 读到一半
+        await read_error_raised.wait()  # 等 B 落定后再断开
+        raise httpx.ReadError("connection reset during body read")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["latitude"] == f"{LAT}":
+            return httpx.Response(200, content=a_content())
+        return httpx.Response(err_status, json={"error": "status secret"})
+
+    async def action():
+        async with make_client(handler) as client:
+            task_a = asyncio.create_task(
+                client.fetch_day(LAT, LON, TARGET_DATE)
+            )
+            await asyncio.sleep(0.05)  # A 已进入 body 读取阶段
+            task_b = asyncio.create_task(
+                client.fetch_day(LAT + 10.0, LON, TARGET_DATE)
+            )
+            report_b = await asyncio.wait_for(task_b, timeout=2)
+            read_error_raised.set()
+            report_a = await asyncio.wait_for(task_a, timeout=2)
+            return report_a, report_b
+
+    report_a, report_b = run(action())
+    assert report_a.status == "unavailable"
+    assert report_a.provider_http_status == 200
+    assert report_a.fetched_at is None
+    assert report_b.status == "unavailable"
+    assert report_b.provider_http_status == err_status
+    assert "status secret" not in report_a.model_dump_json()
+    assert "status secret" not in report_b.model_dump_json()
+
+
+def test_body_read_error_alone_still_unavailable_status_200():
+    """单请求 200 流中途 ReadError：unavailable 且携带本请求 200。
+
+    无并发干扰时同样不得丢已知状态；连接类错误（无 HTTP 响应）口径不变。
+    """
+    read_error_raised = asyncio.Event()
+
+    async def a_content():
+        yield b'{"latitude": '
+        await read_error_raised.wait()
+        raise httpx.ReadError("connection reset during body read")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=a_content())
+
+    async def action():
+        async with make_client(handler) as client:
+            task = asyncio.create_task(client.fetch_day(LAT, LON, TARGET_DATE))
+            await asyncio.sleep(0.05)
+            read_error_raised.set()
+            return await asyncio.wait_for(task, timeout=2)
+
+    report = run(action())
+    assert report.status == "unavailable"
+    assert report.provider_http_status == 200
+    assert report.fetched_at is None

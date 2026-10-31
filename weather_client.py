@@ -13,6 +13,11 @@
 - 流式读取解压后 body 上限 128 KiB；``daily.time`` 至多 16 行。
 - 所有错误折算为结果信封的状态字段，不向调用方抛 HTTP 异常；
   取消（``asyncio.CancelledError``）原样上抛。
+- ``provider_http_status`` 走请求局部传递（成功返回值或失败异常属性），
+  不存实例共享字段：并发请求各自的状态互不串值；无 HTTP 响应的失败
+  （连接错误、超时等）为 None，不沿用上一次或另一个请求的状态。
+  成功信封携带本请求真实 2xx 状态（201/202 原样保留），非 2xx 一律
+  不按成功处理。
 - ``checked_at`` 为本次调用开始处理的 UTC 时间（可注入 clock 便于测试）；
   ``fetched_at`` 只在成功收到并解析 provider 2xx 响应体后设置，失败不伪造。
 - ``requested_date`` 为调用方请求的原始日期（已规范化）；非法日期输入为 None。
@@ -234,11 +239,35 @@ class WeatherDayReport(BaseModel):
 
 
 class _BodyTooLarge(Exception):
-    pass
+    """携带本次请求 provider 状态的内部信号（供失败信封读取）。"""
+
+    def __init__(
+        self, message: str = "body too large",
+        provider_http_status: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider_http_status = provider_http_status
 
 
 class _BadResponse(Exception):
-    pass
+    """携带本次请求 provider 状态的内部信号（供失败信封读取）。"""
+
+    def __init__(
+        self, message: str = "bad response",
+        provider_http_status: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider_http_status = provider_http_status
+
+
+class _UpstreamHTTPError(httpx.HTTPError):
+    """429/5xx 等上游不可用：作为 httpx.HTTPError 传播，同时携带本次状态。"""
+
+    def __init__(
+        self, message: str, provider_http_status: int | None = None
+    ) -> None:
+        super().__init__(message)
+        self.provider_http_status = provider_http_status
 
 
 # ==================== 客户端 ====================
@@ -271,8 +300,6 @@ class WeatherClient:
         self._clock = clock
         self._now_utc = now_utc
         self._closed = False
-        # 最近一次响应的 HTTP 状态（跨异常传递用，供 provider_http_status）。
-        self._last_provider_status: int | None = None
 
     async def __aenter__(self) -> "WeatherClient":
         return self
@@ -345,19 +372,23 @@ class WeatherClient:
                 requested_date=requested_date,
                 checked_at=checked_at, coordinate=coord,
             )
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError) as exc:
+            # 状态只从本请求自己的异常读：OSError 等无 HTTP 响应的失败
+            # 不带状态属性，保持 None，不沿用别的请求写入的值。
             return WeatherDayReport(
                 status="unavailable", reason=_REASONS["unavailable"],
                 requested_date=requested_date,
                 checked_at=checked_at, coordinate=coord,
-                provider_http_status=self._last_provider_status,
+                provider_http_status=getattr(
+                    exc, "provider_http_status", None
+                ),
             )
-        except (_BodyTooLarge, _BadResponse):
+        except (_BodyTooLarge, _BadResponse) as exc:
             return WeatherDayReport(
                 status="failed", reason=_REASONS["failed"],
                 requested_date=requested_date,
                 checked_at=checked_at, coordinate=coord,
-                provider_http_status=self._last_provider_status or None,
+                provider_http_status=exc.provider_http_status,
             )
 
         coord = self._merge_grid(coord, payload)
@@ -435,7 +466,9 @@ class WeatherClient:
         """发请求、读 body、解析 JSON。
 
         返回 (payload, provider_http_status, fetched_at)。
-        失败抛内部信号异常；被上层折算成信封状态。
+        失败抛内部信号异常（异常属性携带本次请求自己的 provider 状态），
+        由上层折算成信封状态；成功时返回本请求真实 2xx 状态，不硬写 200。
+        状态一律走请求局部传递，不存实例共享字段，并发请求互不串值。
 
         总截止用 ``asyncio.wait_for`` 真实取消：覆盖等 headers、等 chunk
         之间的全部等待；到期时流上下文自动关闭，折算为 httpx 超时。
@@ -444,29 +477,52 @@ class WeatherClient:
             raise RuntimeError("WeatherClient 已关闭或未初始化 HTTP 客户端")
 
         deadline = self._clock() + self._total_deadline_seconds
-        self._last_provider_status: int | None = None
 
-        async def _do_request() -> bytes:
+        async def _do_request() -> tuple[bytes, int]:
             # follow_redirects 显式 False：外部注入的 client 可能开了 True。
             async with self._client.stream(
                 "GET", PROVIDER_ENDPOINT, params=self._build_query(lat, lon),
                 follow_redirects=False,
             ) as response:
                 status = response.status_code
-                self._last_provider_status = status
                 if response.is_redirect:
-                    raise _BadResponse("unexpected redirect")
+                    raise _BadResponse(
+                        "unexpected redirect", provider_http_status=status
+                    )
                 if status == 429 or status >= 500:
                     # 错误正文不需要解析：完全不消费并关闭，防无限错误流。
-                    raise httpx.HTTPError(
-                        f"provider unavailable: {status}"
+                    raise _UpstreamHTTPError(
+                        f"provider unavailable: {status}",
+                        provider_http_status=status,
                     )
-                if status >= 400:
-                    raise _BadResponse("provider client error")
-                return await self._bounded_read(response, deadline)
+                if not (200 <= status < 300):
+                    raise _BadResponse(
+                        "provider client error", provider_http_status=status
+                    )
+                try:
+                    body = await self._bounded_read(response, deadline)
+                except _BodyTooLarge as exc:
+                    exc.provider_http_status = status
+                    raise
+                except httpx.TimeoutException:
+                    raise
+                except TimeoutError:
+                    # _bounded_read 的假时钟/总 deadline 超时：内置 TimeoutError
+                    # 是 OSError 子类，必须先放行给外层 timeout 分支。
+                    raise
+                except (httpx.HTTPError, OSError) as exc:
+                    # headers 已收到、body 读到一半断开（ReadError 等）：
+                    # 本次状态已知，用请求局部异常包装携带，不丢也不串；
+                    # 只带异常类名，不回显原文/URL。TimeoutException 在上面
+                    # 原样放行给外层 timeout 分支（超时口径维持 status None）。
+                    raise _UpstreamHTTPError(
+                        f"body read failed: {type(exc).__name__}",
+                        provider_http_status=status,
+                    ) from exc
+                return body, status
 
         try:
-            body = await asyncio.wait_for(
+            body, status = await asyncio.wait_for(
                 _do_request(), timeout=self._total_deadline_seconds
             )
         except TimeoutError as exc:
@@ -478,10 +534,14 @@ class WeatherClient:
         try:
             payload = json.loads(body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            raise _BadResponse("not json") from None
+            raise _BadResponse(
+                "not json", provider_http_status=status
+            ) from None
         if not isinstance(payload, dict):
-            raise _BadResponse("root not object")
-        return payload, self._last_provider_status or 0, fetched_at
+            raise _BadResponse(
+                "root not object", provider_http_status=status
+            )
+        return payload, status, fetched_at
 
     async def _bounded_read(
         self, response: httpx.Response, deadline: float
