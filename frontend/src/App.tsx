@@ -9,6 +9,7 @@ import TripTransferPanel from './components/TripTransferPanel'
 import TripDraftEditor from './components/TripDraftEditor'
 import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPanel'
 import DayWeatherPanel from './components/DayWeatherPanel'
+import DayPoiSourcesPanel from './components/DayPoiSourcesPanel'
 import MapRefreshPanel from './components/MapRefreshPanel'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
@@ -196,6 +197,15 @@ export default function App() {
   const [transferOpen, setTransferOpen] = useState(false)
   /** 本日天气面板是否展开；收起后不挂载，未查询不请求 */
   const [weatherOpen, setWeatherOpen] = useState(false)
+  /** 本日公开资料面板是否展开；收起后不挂载，未查询不请求 */
+  const [poiSourcesOpen, setPoiSourcesOpen] = useState(false)
+  /**
+   * 本日公开资料面板「显式收起」标记：只有用户在面板里点了「收起」才置位，
+   * 据此在入口重新挂载后把键盘焦点送回「查资料」按钮。编辑/AI/地图面板打开
+   * 的隐式收起不置位——那不是用户在面板里的操作，不抢走当前焦点。
+   */
+  const poiSourcesExplicitCloseRef = useRef(false)
+  const poiSourcesEntryRef = useRef<HTMLDivElement | null>(null)
   const transferBodyId = useId()
   const abortRef = useRef<AbortController | null>(null)
   const exampleAbortRef = useRef<AbortController | null>(null)
@@ -252,6 +262,28 @@ export default function App() {
   /** 最新行程的同步引用：AI 候选应用必须以当前页面为准，不能读闭包里的旧值 */
   const tripRef = useRef<Trip | null>(null)
   tripRef.current = trip
+
+  /**
+   * 显式收起本日资料面板后，把键盘焦点送回重新挂载的「查资料」入口按钮。
+   * 只在显式收起标记置位时执行一次并清除标记；隐式收起（编辑/AI/地图打开）
+   * 不置位也不抢焦点，不改变旧天气面板与全局焦点行为。
+   */
+  useEffect(() => {
+    if (poiSourcesOpen) return
+    if (!poiSourcesExplicitCloseRef.current) return
+    poiSourcesExplicitCloseRef.current = false
+    const entry = poiSourcesEntryRef.current
+    if (!entry) return
+    const entryButton = entry.querySelector<HTMLButtonElement>('button')
+    entryButton?.focus()
+  }, [poiSourcesOpen])
+
+  /** 面板内点「收起」：标记显式收起，让焦点回到入口；其余行为不变 */
+  const handlePoiSourcesClose = useCallback(() => {
+    poiSourcesExplicitCloseRef.current = true
+    setPoiSourcesOpen(false)
+  }, [])
+
   /** AI 单日调整请求序号：关闭面板 / 重新生成 / 应用成功都 +1，迟到的适配器结果据此作废 */
   const aiRequestSeqRef = useRef(0)
   /** AI 单日调整面板是否打开；与本地草稿互斥 */
@@ -586,6 +618,8 @@ export default function App() {
     setAppliedNotice(null)
     setCanUndoApply(false)
     undoApplyRef.current = null
+    // 面板打开期间本日资料收起卸载：不保留旧结果，也不自动重查
+    setPoiSourcesOpen(false)
     const result = createTripDraft(trip, { forkTripId: newUuid(), newLegMode: draftMode })
     if (!result.ok) {
       setDraftError(`没能开始本地编辑：${result.message}`)
@@ -686,6 +720,8 @@ export default function App() {
     setRequestOutcome({ kind: 'none' })
     setDraftError(null)
     setAiOpen(true)
+    // 面板打开期间本日资料收起卸载：不保留旧结果，也不自动重查
+    setPoiSourcesOpen(false)
   }, [trip, draft, aiOpen])
 
   /** 关闭面板：作废在途候选请求；当前行程不变，也不代表服务端停止处理。 */
@@ -806,6 +842,8 @@ export default function App() {
     setDraftError(null)
     // 面板打开期间天气收起卸载：不保留旧的查询结果，也不自动重查
     setWeatherOpen(false)
+    // 面板打开期间本日资料收起卸载：不保留旧结果，也不自动重查
+    setPoiSourcesOpen(false)
     setMapOpen(true)
   }, [trip, currentDay, draft, aiOpen, mapOpen])
 
@@ -1318,6 +1356,42 @@ export default function App() {
                     <div className="edit-entry-actions">
                       <button type="button" className="btn" onClick={() => setWeatherOpen(true)}>
                         查天气
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/*
+              本日公开资料：独立于 AI / 规划 / 天气，按本日站点记录坐标查询
+              OpenStreetMap 公开标签候选。本地编辑或 AI / 地图面板打开时收起，
+              面板展开本身不发请求，只有点「查询附近资料」才请求一次。
+            */}
+            {!editingDraft && !aiOpen && !mapOpen && currentDay && (
+              <div className="poi-sources-slot" data-testid="poi-sources-slot">
+                {poiSourcesOpen ? (
+                  <DayPoiSourcesPanel
+                    trip={trip}
+                    day={currentDay}
+                    revision={tripRevision}
+                    openedFromFile={openedFromFile}
+                    activeStopId={activeStopId}
+                    onClose={handlePoiSourcesClose}
+                  />
+                ) : (
+                  <div className="edit-entry" data-testid="poi-sources-entry" ref={poiSourcesEntryRef}>
+                    <div>
+                      <p className="field-label">本日公开资料（第 {currentDay.day} 天）</p>
+                      <p className="field-help">
+                        按本日行程记录坐标查询附近 OpenStreetMap 公开标签候选，身份未确认。
+                        打开面板不会发请求，点「查询附近资料」才会请求一次；
+                        结果只在本页内存里，不写进行程或本地保存。
+                      </p>
+                    </div>
+                    <div className="edit-entry-actions">
+                      <button type="button" className="btn" onClick={() => setPoiSourcesOpen(true)}>
+                        查资料
                       </button>
                     </div>
                   </div>
