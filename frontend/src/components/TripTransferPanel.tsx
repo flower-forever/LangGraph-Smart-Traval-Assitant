@@ -15,6 +15,7 @@ import {
   type TripFileImportResult,
 } from '../lib/tripFile'
 import { TRIP_JSON_SHARE_NOTICE, formatTripExportedAt } from '../lib/tripTransfer'
+import TripMarkdownExport from './TripMarkdownExport'
 import './tripTransfer.css'
 
 export interface TripTransferPanelProps {
@@ -384,6 +385,7 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
         <h3 className="trip-transfer-title" id={headingId}>行程备份与导入</h3>
         <p className="trip-transfer-lead">
           备份是一份明文 JSON 文件，只在你点击时下载；导入会先预览，默认不写入本地保存，也不会覆盖已保存的行程。
+          有当前行程时，下方还提供只用于阅读分享的 Markdown 路书导出。
         </p>
       </div>
 
@@ -570,6 +572,9 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
           </div>
         )}
       </section>
+
+      {/* 可读路书（.md）导出子入口：与 JSON 备份互相独立，只服务当前行程，没有行程时不挂载 */}
+      {trip && <TripMarkdownExport trip={trip} />}
 
       <div className="trip-transfer-privacy">
         <p className="trip-transfer-privacy-title">分享前请留意</p>

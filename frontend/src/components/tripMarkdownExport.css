@@ -1,0 +1,156 @@
+/* 可读路书（Markdown）导出子面板：挂在 TripTransferPanel 的文件工具区域。
+   颜色一律取 tokens.css 的变量，不写死色值；触达目标按 44px 处理。 */
+
+.trip-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--rule);
+}
+
+.trip-md-subheading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.trip-md-lead {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.75;
+}
+
+.trip-md-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.trip-md-actions .btn {
+  min-height: 44px;
+}
+
+.trip-md-hint {
+  margin: 0;
+  max-width: 76ch;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.75;
+}
+
+.trip-md-live:empty {
+  display: none;
+}
+
+.trip-md-notice {
+  margin: 0;
+  max-width: 76ch;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-line-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+.trip-md-notice[data-tone="ok"] {
+  border-left-color: var(--color-ok);
+}
+
+.trip-md-notice[data-tone="error"] {
+  border-left-color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
+}
+
+.trip-md-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+}
+
+.trip-md-preview-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.trip-md-meta {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+/* 只读纯文本预览：等宽字体便于对照文件内容，不渲染任何 HTML / Markdown */
+.trip-md-text {
+  width: 100%;
+  min-height: 10rem;
+  max-height: 24rem;
+  padding: var(--space-3);
+  border: var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trip-md-text:focus-visible {
+  outline: 2px solid var(--color-accent-ink);
+  outline-offset: 2px;
+}
+
+.trip-md-privacy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-3);
+}
+
+.trip-md-privacy-title {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.trip-md-privacy-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: 1.1em;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .trip-md-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .trip-md-actions .btn {
+    width: 100%;
+  }
+}
