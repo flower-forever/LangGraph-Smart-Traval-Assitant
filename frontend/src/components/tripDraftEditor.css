@@ -510,6 +510,11 @@
   white-space: nowrap;
 }
 
+/* 结束时间检查的天级条目正文：内层嵌套 findings 列表，需要能容纳 ul 的块级内容。 */
+.tde-check-body {
+  min-width: 0;
+}
+
 .tde-warning-list li {
   font-size: var(--text-sm);
   line-height: 1.6;

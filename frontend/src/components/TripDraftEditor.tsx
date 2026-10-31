@@ -2,6 +2,13 @@ import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'rea
 
 import type { TripStop } from '../lib/api'
 import {
+  dailyEndTimeLimitResult,
+  formatEndTimeClock,
+  parseDailyEndTimeLimit,
+  type DailyEndTimeScope,
+  type EndTimeDayResult,
+} from '../lib/draftEndTime'
+import {
   MAX_STOP_ADDRESS_LENGTH,
   MAX_STOP_DESCRIPTION_LENGTH,
   MAX_STOP_DURATION_MINUTES,
@@ -48,6 +55,15 @@ const DAILY_STOP_LIMIT_OPTIONS: readonly number[] = Array.from(
   { length: MAX_USER_DAILY_STOP_LIMIT },
   (_, index) => index + 1,
 )
+
+const END_TIME_KIND_LABEL: Record<string, string> = {
+  start_late: '超过上限',
+  end_over_limit: '超过上限',
+  cross_day_over_limit: '跨日超限',
+  time_unreadable: '待确认',
+  duration_unknown: '待确认',
+  time_order: '待确认',
+}
 
 type FormField = 'name' | 'address' | 'time' | 'duration' | 'description'
 
@@ -256,6 +272,19 @@ export default function TripDraftEditor({
   const [dailyStopLimitEnabled, setDailyStopLimitEnabled] = useState(false)
   const [dailyStopLimit, setDailyStopLimit] = useState(4)
   const [dailyStopLimitScope, setDailyStopLimitScope] = useState<DailyStopLimitScope>('all_days')
+  /** 「每天最晚结束时间」偏好：与站点上限同路数，默认关闭，仅当前草稿会话。
+   * 文本存原始输入以保留用户的中间态；点「检查」才解析，输入非法时在区内报错。 */
+  const [endTimeEnabled, setEndTimeEnabled] = useState(false)
+  const [endTimeText, setEndTimeText] = useState('22:00')
+  const [endTimeScope, setEndTimeScope] = useState<DailyEndTimeScope>('all_days')
+  /** 点「检查」后冻结的本次检查设置；null 表示尚未执行或已被后续操作清除。
+   * 修改输入、范围或关闭开关都会清除旧结果，必须重新点「检查」；结果按当前草稿
+   * 实时重算：同草稿切天、撤销都不会丢设置或结果。 */
+  const [endTimeRun, setEndTimeRun] = useState<{
+    limit: number
+    scope: DailyEndTimeScope
+  } | null>(null)
+  const [endTimeError, setEndTimeError] = useState<string | null>(null)
 
   // 偏好设置只属于当前草稿会话：换草稿（forkTripId 变化）后回到默认禁用，
   // 避免旧草稿的上限偏好被带进新草稿的检查结果。
@@ -263,6 +292,11 @@ export default function TripDraftEditor({
     setDailyStopLimitEnabled(false)
     setDailyStopLimit(4)
     setDailyStopLimitScope('all_days')
+    setEndTimeEnabled(false)
+    setEndTimeText('22:00')
+    setEndTimeScope('all_days')
+    setEndTimeRun(null)
+    setEndTimeError(null)
   }, [draft.forkTripId])
 
   const headingRef = useRef<HTMLHeadingElement | null>(null)
@@ -285,6 +319,12 @@ export default function TripDraftEditor({
         : [],
     [draft, dailyStopLimitEnabled, dailyStopLimit, dailyStopLimitScope],
   )
+  /** 冻结设置对应的检查结果；只在开关启用时展示，草稿或冻结参数变化后自动重算。 */
+  const endTimeDays = useMemo<EndTimeDayResult[] | null>(() => {
+    if (!endTimeEnabled || !endTimeRun) return null
+    const result = dailyEndTimeLimitResult(draft, endTimeRun.limit, endTimeRun.scope)
+    return result.ok ? result.days : null
+  }, [draft, endTimeRun, endTimeEnabled])
   const warnings = draft.base.warnings
   const sessionStale =
     session !== null &&
@@ -641,6 +681,20 @@ export default function TripDraftEditor({
     setSession(null)
     setNotice('已放弃这次未保存的单站输入。')
     setFocusRequest({ kind: 'day' })
+  }
+
+  /** 点「检查」：先解析当前输入，非法就在区内报错；合法定为本次冻结设置。
+   * 修改输入 / 范围 / 关闭开关都会清除旧结果（见各 onChange），禁用状态不会
+   * 冒充已检查的结果。 */
+  function handleEndTimeCheck() {
+    if (!endTimeEnabled) return
+    const parsed = parseDailyEndTimeLimit(endTimeText.trim())
+    if (!parsed.ok) {
+      setEndTimeError(parsed.message)
+      return
+    }
+    setEndTimeError(null)
+    setEndTimeRun({ limit: parsed.minutes, scope: endTimeScope })
   }
 
   const checkPreview = checksExpanded ? checks : checks.slice(0, CHECK_PREVIEW_COUNT)
@@ -1142,6 +1196,131 @@ export default function TripDraftEditor({
         )}
       </section>
 
+      <section className="tde-checks" aria-labelledby={`${baseId}-endtime-title`}>
+        <div className="tde-section-head">
+          <h4 className="tde-section-title" id={`${baseId}-endtime-title`}>
+            每天最晚结束时间（偏好检查）
+          </h4>
+          <span className="tde-count">
+            {endTimeEnabled
+              ? endTimeRun
+                ? `上限 ${formatEndTimeClock(endTimeRun.limit)}`
+                : '已启用，待检查'
+              : '未启用'}
+          </span>
+        </div>
+        <p className="tde-section-note">
+          这是只属于当前草稿会话的界面设置：不写入行程、不保存、不发给后端，也不会自动修改任何站点；
+          草稿要改动或应用由你自己操作。修改输入或范围后旧结果会清除，需要重新点「检查」。
+          检查覆盖当天的所有站点，不是只看末站；按填写的开始时刻与停留推算结束下界，
+          未计入站间交通耗时，不代表行程不可行、不代表已核实营业或预约。
+        </p>
+        <div className="tde-limit-controls">
+          <label>
+            <input
+              type="checkbox"
+              checked={endTimeEnabled}
+              onChange={(event) => {
+                setEndTimeEnabled(event.target.checked)
+                // 关闭开关后旧结果不再属于当前状态：连结果与报错一起清掉，
+                // 重新启用后需要重新点「检查」。
+                setEndTimeRun(null)
+                setEndTimeError(null)
+              }}
+            />{' '}
+            启用每天最晚结束检查
+          </label>
+          <label>
+            最晚结束（HH:MM）{' '}
+            <input
+              type="text"
+              value={endTimeText}
+              onChange={(event) => {
+                setEndTimeText(event.target.value)
+                // 输入变化说明当前结果不再对应可见设置：清掉旧结果，等重新检查。
+                setEndTimeRun(null)
+                setEndTimeError(null)
+              }}
+              disabled={!endTimeEnabled}
+              placeholder="例如 22:00"
+              inputMode="numeric"
+              autoComplete="off"
+              aria-label="最晚结束"
+              aria-invalid={endTimeError ? true : undefined}
+              className="tde-time-input"
+            />
+          </label>
+          <label>
+            检查范围{' '}
+            <select
+              value={endTimeScope}
+              onChange={(event) => {
+                setEndTimeScope(event.target.value as DailyEndTimeScope)
+                // 范围变化同样作废旧结果，避免旧范围的结果冒充新设置。
+                setEndTimeRun(null)
+                setEndTimeError(null)
+              }}
+              disabled={!endTimeEnabled}
+              aria-label="最晚结束检查范围"
+            >
+              <option value="all_days">所有天</option>
+              <option value="changed_days">仅改动过的天</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn"
+            onClick={handleEndTimeCheck}
+            disabled={!endTimeEnabled}
+          >
+            检查
+          </button>
+        </div>
+        {endTimeError && (
+          <p className="field-error" role="alert">
+            {endTimeError}
+          </p>
+        )}
+        {endTimeEnabled && !endTimeRun && !endTimeError && (
+          <p className="tde-section-empty">
+            设置好上限与范围后点「检查」出结果；结果只按点检查时的设置展示，
+            修改输入或范围后会清除，需要重新检查。
+          </p>
+        )}
+        {endTimeDays !== null && (
+          <ul className="tde-check-list" aria-label="最晚结束时间检查结果">
+            {endTimeDays.map((dayResult) => (
+              <li key={dayResult.day} className="tde-check-item">
+                <span className="tde-check-kind">
+                  {dayResult.status === 'over_limit'
+                    ? '超限'
+                    : dayResult.status === 'unconfirmed'
+                      ? '待确认'
+                      : dayResult.status === 'empty_day'
+                        ? '空日'
+                        : '未发现超限'}
+                </span>
+                <div className="tde-check-body">
+                  {dayResult.summary}
+                  {dayResult.findings.length > 0 && (
+                    <ul className="tde-check-list">
+                      {dayResult.findings.map((finding, index) => (
+                        <li key={`${finding.stopId}-${index}`} className="tde-check-item">
+                          <span className="tde-check-kind">
+                            {END_TIME_KIND_LABEL[finding.kind] ?? '待确认'}
+                          </span>
+                          <span>{finding.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="tde-checks" aria-labelledby={`${baseId}-checks-title`}>
         <div className="tde-section-head">
           <h4 className="tde-section-title" id={`${baseId}-checks-title`}>
@@ -1150,7 +1329,8 @@ export default function TripDraftEditor({
           <span className="tde-count">{checks.length} 条</span>
         </div>
         <p className="tde-section-note">
-          按你填写的计划时间与停留计算，只覆盖草稿里改动过的天；不代表真实预约、营业状态或实测交通。
+          按你填写的计划时间与停留计算，只覆盖草稿里改动过的天；不代表真实预约、营业状态或实测交通，
+          也不是「最晚结束时间」偏好检查的结果（那在单独的区块里）。
           改时间 / 停留 / 描述不会清除已有坐标和路线；改名称 / 地址才会让该站坐标与相关路段待重新获取。
         </p>
         {checks.length === 0 ? (

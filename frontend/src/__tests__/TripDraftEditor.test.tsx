@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Trip, TripDay, TripStop, TravelMode } from '../lib/api'
 import { MAX_SAVED_TRIP_BYTES, savedTripRecordBytes } from '../lib/savedTrips'
+import { parseDailyEndTimeLimit } from '../lib/draftEndTime'
 import {
   applyDraft,
   createTripDraft,
@@ -262,7 +263,7 @@ describe('TripDraftEditor 单站编辑', () => {
     const editor = await openEdit(user, '编辑第 1 站「断桥残雪」')
     const geometryBefore = dayOf(draft, 1).legs[0].geometry.length
 
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
     const duration = within(editor).getByLabelText(/停留时长（分钟）/)
     await user.clear(time)
     await user.type(time, '09:30')
@@ -293,7 +294,7 @@ describe('TripDraftEditor 单站编辑', () => {
     )
     const editor = await openEdit(user, '编辑第 1 站「断桥残雪」')
     const name = within(editor).getByLabelText(/站点名称/)
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
 
     await user.clear(name)
     expect(name).toHaveValue('')
@@ -340,7 +341,7 @@ describe('TripDraftEditor 单站编辑', () => {
     expect(name).toHaveValue(longName)
     expect(name).not.toHaveAttribute('maxlength')
 
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
     await user.clear(time)
     await user.type(time, '09:20')
     await user.click(within(editor).getByRole('button', { name: '保存到草稿' }))
@@ -371,7 +372,7 @@ describe('TripDraftEditor 增删、重排与撤销', () => {
 
     await user.click(within(editor).getByRole('button', { name: '新增站点' }))
     expect(screen.getByTestId('editing')).toHaveTextContent('true')
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
     expect(time).toHaveValue('')
     expect(within(editor).getByLabelText(/停留时长（分钟）/)).toHaveValue('')
     expect(within(editor).queryByLabelText(/经度|纬度/)).toBeNull()
@@ -442,7 +443,7 @@ describe('TripDraftEditor 增删、重排与撤销', () => {
     const latest: { current: TripDraft | null } = { current: null }
     render(<Harness initialDraft={draft} latestRef={latest} />)
     const editor = await openEdit(user, '编辑第 1 站「断桥残雪」')
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
     await user.clear(time)
     await user.type(time, '10:30')
     await user.click(within(editor).getByRole('button', { name: '保存到草稿' }))
@@ -562,7 +563,7 @@ describe('TripDraftEditor 应用与放弃', () => {
     const onApplySpy = vi.fn()
     render(<Harness initialDraft={draft} onApplySpy={onApplySpy} />)
     const editor = await openEdit(user, '编辑第 1 站「断桥残雪」')
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
     await user.clear(time)
     await user.type(time, '09:10')
     await user.click(within(editor).getByRole('button', { name: '保存到草稿' }))
@@ -763,7 +764,7 @@ describe('TripDraftEditor 检查、可访问性与无自动副作用', () => {
     const draft = makeDraft()
     render(<Harness initialDraft={draft} />)
     const editor = await openEdit(user, '编辑第 1 站「断桥残雪」')
-    const time = within(editor).getByLabelText(/时间/)
+    const time = within(editor).getByLabelText(/^时间/)
     await user.clear(time)
     await user.type(time, '09:40')
     await user.click(within(editor).getByRole('button', { name: '保存到草稿' }))
@@ -821,7 +822,7 @@ describe('TripDraftEditor 检查、可访问性与无自动副作用', () => {
     // 但这里走 UI：勾选后通过 harness 外部按钮不可行，所以用编辑器的新增路径）。
     await user.click(within(editor).getByRole('button', { name: '新增站点' }))
     await user.type(within(editor).getByLabelText(/站点名称/), '第 9 站')
-    await user.type(within(editor).getByLabelText(/时间/), '17:00')
+    await user.type(within(editor).getByLabelText(/^时间/), '17:00')
     await user.click(within(editor).getByRole('button', { name: '保存到草稿' }))
     expect(within(limitSection).getByText(/超过你设置的每天最多 8 站上限/)).toBeInTheDocument()
     // 提醒明确区分：这是偏好提醒，不代表不可行，也没删站。
@@ -915,5 +916,253 @@ describe('TripDraftEditor 检查、可访问性与无自动副作用', () => {
       within(limitSection).getByRole('combobox', { name: '上限检查范围' }),
     ).toHaveValue('all_days')
     expect(within(limitSection).queryByText(/超过你设置的每天最多/)).toBeNull()
+  })
+
+  describe('每天最晚结束时间偏好', () => {
+    function endTimeSection(editor: HTMLElement): HTMLElement {
+      return within(editor).getByRole('region', { name: '每天最晚结束时间（偏好检查）' })
+    }
+
+    it('默认关闭，结果区不出现；启用后需显式点检查才出结果', async () => {
+      const user = userEvent.setup()
+      render(<Harness initialDraft={makeDraft()} />)
+      const editor = editorRegion()
+      const section = endTimeSection(editor)
+
+      expect(within(section).getByText('未启用')).toBeInTheDocument()
+      expect(within(section).queryByText(/不虚构结束时刻/)).toBeNull()
+      expect(
+        within(section).getByRole('textbox', { name: '最晚结束' }),
+      ).toBeDisabled()
+      expect(within(section).getByRole('button', { name: '检查' })).toBeDisabled()
+
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      expect(within(section).getByText('已启用，待检查')).toBeInTheDocument()
+      expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      // 默认上限 22:00，夹具各天都在上限内：显示保守的「未发现超限」而非无声通过。
+      expect(within(section).getAllByText(/未发现超过最晚结束时间/).length).toBeGreaterThan(0)
+      expect(within(section).getAllByText(/仍需人工确认交通/).length).toBeGreaterThan(0)
+    })
+
+    it('上限非法时区内报错且不产生结果；修正后可重新检查', async () => {
+      const user = userEvent.setup()
+      render(<Harness initialDraft={makeDraft()} />)
+      const editor = editorRegion()
+      const section = endTimeSection(editor)
+      const input = within(section).getByRole('textbox', { name: '最晚结束' })
+
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      await user.clear(input)
+      await user.type(input, '9:00')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getByRole('alert')).toHaveTextContent(/24 小时制/)
+      expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+
+      await user.clear(input)
+      await user.type(input, '10:30')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).queryByRole('alert')).toBeNull()
+      // 第 1 天 s3 11:30 开始，晚于 10:30 上限 → 明确超限；与停留无关。
+      expect(within(section).getAllByText('超过上限').length).toBeGreaterThan(0)
+      expect(within(section).getByText(/开始时刻 11:30 已晚于/)).toBeInTheDocument()
+    })
+
+    it('关闭开关清除旧结果：关→开流程回到「待检查」，不残留上一次检查的结论', async () => {
+      const user = userEvent.setup()
+      render(<Harness initialDraft={makeDraft()} />)
+      const editor = editorRegion()
+      const section = endTimeSection(editor)
+      const toggle = within(section).getByRole('checkbox', {
+        name: /启用每天最晚结束检查/,
+      })
+
+      // 检查一次，结果出现。
+      await user.click(toggle)
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getAllByText(/未发现超过最晚结束时间/).length).toBeGreaterThan(0)
+
+      // 关闭开关：结果与「已启用」标识一起消失，不能让禁用状态冒充已检查。
+      await user.click(toggle)
+      expect(within(section).getByText('未启用')).toBeInTheDocument()
+      expect(within(section).queryByText(/未发现超过最晚结束时间/)).toBeNull()
+      expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+
+      // 重新打开：回到「已启用，待检查」，需要重新点检查。
+      await user.click(toggle)
+      expect(within(section).getByText('已启用，待检查')).toBeInTheDocument()
+      expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getAllByText(/未发现超过最晚结束时间/).length).toBeGreaterThan(0)
+    })
+
+    it('修改输入或范围后旧结果清除，需重新检查；未检查的新设置不冒充已生效', async () => {
+      const user = userEvent.setup()
+      let draft = makeDraft()
+      // 第 1 天 s1 09:00 + 600 分钟 → 结束下界 19:00。
+      const edited = updateDraftStop(draft, 1, 's1', { duration_minutes: 600 })
+      if (!edited.ok) throw new Error(edited.message)
+      draft = edited.draft
+      render(<Harness initialDraft={draft} />)
+      const editor = editorRegion()
+      const section = endTimeSection(editor)
+      const input = within(section).getByRole('textbox', { name: '最晚结束' })
+      const scopeSelect = within(section).getByRole('combobox', {
+        name: '最晚结束检查范围',
+      })
+
+      // 有效检查一次：上限 23:00，第 1 天下界 19:00 未超，无证据。
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      await user.clear(input)
+      await user.type(input, '23:00')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getAllByText(/未发现超过最晚结束时间/).length).toBeGreaterThan(0)
+
+      // 改输入（仍未点检查）：旧结果立刻清除，也不能显示报错冒充检查结论。
+      await user.clear(input)
+      await user.type(input, '18:00')
+      expect(within(section).queryByText(/未发现超过最晚结束时间/)).toBeNull()
+      expect(within(section).queryByRole('alert')).toBeNull()
+      expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+
+      // 重新检查新输入：按 18:00 出结果，下界 19:00 超限。
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getAllByText(/结束不早于 19:00/).length).toBeGreaterThan(0)
+
+      // 改范围同样清除旧结果，直到重新检查。
+      await user.selectOptions(scopeSelect, 'changed_days')
+      expect(within(section).queryByText(/结束不早于 19:00/)).toBeNull()
+      expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      // 这份草稿改过第 1 天，changed_days 下该天仍按 18:00 检查并超限。
+      expect(within(section).getAllByText(/结束不早于 19:00/).length).toBeGreaterThan(0)
+    })
+
+    it('非法输入报错后修改输入即清掉报错与旧结果；重新检查合法输入恢复展示', async () => {
+      const user = userEvent.setup()
+      render(<Harness initialDraft={makeDraft()} />)
+      const section = endTimeSection(editorRegion())
+      const input = within(section).getByRole('textbox', { name: '最晚结束' })
+
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      await user.clear(input)
+      await user.type(input, '9:00')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getByRole('alert')).toHaveTextContent(/24 小时制/)
+
+      // 修改非法输入：报错与旧状态一起清除，回到「待检查」，不再显示过时报错。
+      await user.clear(input)
+      await user.type(input, '21:00')
+      expect(within(section).queryByRole('alert')).toBeNull()
+      expect(within(section).getByText('已启用，待检查')).toBeInTheDocument()
+
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).queryByRole('alert')).toBeNull()
+      expect(within(section).getAllByText(/未发现超过最晚结束时间/).length).toBeGreaterThan(0)
+    })
+
+    it('用户设置后出提醒；同草稿切天不丢设置与结果，撤销后结果仍按冻结上限展示', async () => {
+      const user = userEvent.setup()
+      let draft = makeDraft()
+      // 第 1 天 s1 09:00 + 600 分钟 → 结束下界 19:00，超 18:00 上限。
+      const edited = updateDraftStop(draft, 1, 's1', { duration_minutes: 600 })
+      if (!edited.ok) throw new Error(edited.message)
+      draft = edited.draft
+      render(<Harness initialDraft={draft} />)
+      const editor = editorRegion()
+      const section = endTimeSection(editor)
+      const input = within(section).getByRole('textbox', { name: '最晚结束' })
+
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      await user.clear(input)
+      await user.type(input, '18:00')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+
+      expect(within(section).getByText('上限 18:00')).toBeInTheDocument()
+      expect(within(section).getByText(/结束不早于 19:00/)).toBeInTheDocument()
+      expect(within(section).getAllByText('超过上限').length).toBeGreaterThan(0)
+
+      // 同草稿切到第 2 天（空日）：设置与结果都保留，不因切天误丢。
+      await user.click(screen.getByRole('button', { name: '外部切换到第 2 天' }))
+      const onDay2 = endTimeSection(editorRegion())
+      expect(within(onDay2).getByText('上限 18:00')).toBeInTheDocument()
+      expect(within(onDay2).getByText(/结束不早于 19:00/)).toBeInTheDocument()
+      // 空日的天级结论也不丢：单独标注，不虚构结束。
+      expect(within(onDay2).getByText(/没有站点，不虚构结束时刻/)).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '外部切换到第 1 天' }))
+
+      // 撤销这次停留编辑：结果按冻结上限重算，第 1 天回到未发现超限。
+      await user.click(within(editorRegion()).getByRole('button', { name: '撤销草稿操作' }))
+      const afterUndo = endTimeSection(editorRegion())
+      expect(within(afterUndo).getByText('上限 18:00')).toBeInTheDocument()
+      expect(within(afterUndo).queryByText(/结束不早于 19:00/)).toBeNull()
+    })
+
+    it('换 forkTripId 后结束时间偏好重置：开关、输入、范围与结果都回默认', async () => {
+      const user = userEvent.setup()
+      render(<Harness initialDraft={makeDraft()} />)
+      const section = endTimeSection(editorRegion())
+      const input = within(section).getByRole('textbox', { name: '最晚结束' })
+
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      await user.clear(input)
+      await user.type(input, '20:00')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getByText(/上限 20:00/)).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: '外部换 fork 草稿' }))
+      const fresh = endTimeSection(editorRegion())
+      expect(within(fresh).getByText('未启用')).toBeInTheDocument()
+      expect(within(fresh).getByRole('textbox', { name: '最晚结束' })).toHaveValue('22:00')
+      expect(
+        within(fresh).getByRole('combobox', { name: '最晚结束检查范围' }),
+      ).toHaveValue('all_days')
+      expect(within(fresh).queryByText(/第 \d+ 天/)).toBeNull()
+    })
+
+    it('结束时间检查过程不写存储、不发网络请求；解析函数与站点时间同口径', async () => {
+      const user = userEvent.setup()
+      const fetchSpy = vi.fn(() => Promise.reject(new Error('network disabled in test')))
+      vi.stubGlobal('fetch', fetchSpy)
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+      const draft = makeDraft()
+      render(<Harness initialDraft={draft} />)
+      const section = endTimeSection(editorRegion())
+      const input = within(section).getByRole('textbox', { name: '最晚结束' })
+
+      await user.click(
+        within(section).getByRole('checkbox', { name: /启用每天最晚结束检查/ }),
+      )
+      await user.type(input, '22')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getByRole('alert')).toBeInTheDocument()
+      // 修改输入会清掉报错（见关闭/清除回归）；这里直接清空重输合法值再检查。
+      await user.clear(input)
+      await user.type(input, '22:30')
+      await user.click(within(section).getByRole('button', { name: '检查' }))
+      expect(within(section).getAllByText(/未发现超过最晚结束时间/).length).toBeGreaterThan(0)
+
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(getItemSpy).not.toHaveBeenCalled()
+      expect(setItemSpy).not.toHaveBeenCalled()
+      // 与 STOP_TIME_PATTERN 同口径：24:00 不是合法站点时间，也不是合法上限。
+      expect(parseDailyEndTimeLimit('24:00').ok).toBe(false)
+      expect(parseDailyEndTimeLimit('22:30')).toEqual({ ok: true, minutes: 1350 })
+    })
   })
 })
