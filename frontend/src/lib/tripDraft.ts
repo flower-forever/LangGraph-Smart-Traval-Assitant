@@ -802,6 +802,51 @@ export function isDraftDirty(draft: TripDraft): boolean {
   return draftChangedDays(draft).length > 0
 }
 
+/**
+ * 「每天最多站点数」是用户自设的偏好检查，不是结构上限：
+ * 取值只限制界面可选范围 1–8，超过上限的天照常保留（含旧导入数据），
+ * 不会自动删站，也不影响 applyDraft 与时间/路线类本地检查。
+ */
+export const MAX_USER_DAILY_STOP_LIMIT = 8
+
+export type DailyStopLimitScope = 'all_days' | 'changed_days'
+
+export interface DailyStopLimitNotice {
+  day: number
+  stopCount: number
+  message: string
+}
+
+/**
+ * 按用户设定的每天站点上限生成提醒，只描述站点个数，不谈可行性或实际排程。
+ * 结果只供界面展示：不写入 Trip、不参与 applyDraft，上限无效时返回空数组而非抛错。
+ */
+export function dailyStopLimitNotices(
+  draft: TripDraft,
+  limit: number,
+  scope: DailyStopLimitScope,
+): DailyStopLimitNotice[] {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_USER_DAILY_STOP_LIMIT) {
+    return []
+  }
+  const changedSet = new Set(draftChangedDays(draft))
+  const targetDays =
+    scope === 'changed_days' ? draft.days.filter((day) => changedSet.has(day.day)) : draft.days
+  const notices: DailyStopLimitNotice[] = []
+  for (const day of targetDays) {
+    const stopCount = day.stops.length
+    if (stopCount <= limit) continue
+    notices.push({
+      day: day.day,
+      stopCount,
+      message:
+        `${calendarDayLabel(day.day)}现有 ${stopCount} 个站点，超过你设置的每天最多 ${limit} 站上限。` +
+        '这是你自设的偏好提醒，不代表行程不可行，也没有自动删除任何站点；旧数据原样保留。',
+    })
+  }
+  return notices
+}
+
 function displayStopName(stop: TripStop): string {
   const trimmed = stop.name.trim()
   if (trimmed.length === 0) return '未命名站点'

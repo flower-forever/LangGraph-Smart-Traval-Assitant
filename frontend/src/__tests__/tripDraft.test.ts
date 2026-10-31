@@ -20,6 +20,7 @@ import {
   addDraftStop,
   applyDraft,
   createTripDraft,
+  dailyStopLimitNotices,
   discardDraft,
   isDraftDirty,
   localChecksForDraft,
@@ -1133,5 +1134,86 @@ describe('输入校验与失败保留草稿', () => {
     } as NewDraftStop
     expect(withCoords.location).toBeDefined()
     expect(addDraftStop(draft, 2, withCoords)).toMatchObject({ ok: false, reason: 'invalid_location' })
+  })
+})
+
+describe('dailyStopLimitNotices：用户自设的每天站点上限', () => {
+  it('默认关闭由调用方控制：函数只在上限合法时产出提醒，非法上限返回空数组', () => {
+    const draft = makeDraft(cloneTrip())
+    expect(dailyStopLimitNotices(draft, 0, 'all_days')).toEqual([])
+    expect(dailyStopLimitNotices(draft, 9, 'all_days')).toEqual([])
+    expect(dailyStopLimitNotices(draft, 1.5, 'all_days')).toEqual([])
+    // 第 1 天 3 站、第 3 天 1 站，上限 2 时只有第 1 天超。
+    const notices = dailyStopLimitNotices(draft, 2, 'all_days')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].day).toBe(1)
+    expect(notices[0].stopCount).toBe(3)
+    expect(notices[0].message).toContain('超过你设置的每天最多 2 站上限')
+    expect(notices[0].message).toContain('没有自动删除')
+  })
+
+  it('8→9 站产生提醒，删回 8 站后提醒消失；旧大天数照常可读', () => {
+    const base = cloneTrip()
+    base.days[0].stops = Array.from({ length: 8 }, (_, index) => ({
+      id: `d1s${index + 1}`,
+      name: `站 ${index + 1}`,
+      time: `0${index}:00`.slice(-5),
+      duration_minutes: null,
+      description: '',
+      address: '',
+      location: null,
+    }))
+    let draft = makeDraft(base)
+    // 没改过任何天时上限检查也能覆盖旧数据（这是纯展示函数，不依赖 changedDays）。
+    expect(dailyStopLimitNotices(draft, 8, 'all_days')).toEqual([])
+
+    draft = edit(
+      addDraftStop(draft, 1, { id: 'd1s9', name: '第 9 站', time: '17:00' }),
+    )
+    const over = dailyStopLimitNotices(draft, 8, 'all_days')
+    expect(over).toHaveLength(1)
+    expect(over[0].stopCount).toBe(9)
+
+    draft = edit(removeDraftStop(draft, 1, 'd1s9'))
+    expect(dailyStopLimitNotices(draft, 8, 'all_days')).toEqual([])
+
+    // 旧导入数据 10 站也不阻止读取：提醒归提醒，站点数据还在。
+    const bigBase = cloneTrip()
+    bigBase.days[0].stops = Array.from({ length: 10 }, (_, index) => ({
+      id: `big${index + 1}`,
+      name: `旧站 ${index + 1}`,
+      time: '09:00',
+      duration_minutes: null,
+      description: '',
+      address: '',
+      location: null,
+    }))
+    const bigDraft = makeDraft(bigBase)
+    const bigNotices = dailyStopLimitNotices(bigDraft, 8, 'all_days')
+    expect(bigNotices).toHaveLength(1)
+    expect(dayOf(bigDraft, 1).stops).toHaveLength(10)
+  })
+
+  it('范围 changed_days 只检查改动过的天；提示不进入 applyDraft 结果', () => {
+    const base = cloneTrip()
+    // 第 1 天 3 站（不改）、第 2 天空（改成 0 站不超限）、第 3 天 1 站不动。
+    const draft = makeDraft(base)
+    const allScope = dailyStopLimitNotices(draft, 2, 'changed_days')
+    expect(allScope).toEqual([])
+
+    const edited = edit(updateDraftStop(draft, 3, 's4', { description: '改一下描述' }))
+    // 第 3 天只有 1 站，不超限；第 1 天虽超限但没改动，changed_days 下不提醒。
+    expect(dailyStopLimitNotices(edited, 2, 'changed_days')).toEqual([])
+    expect(dailyStopLimitNotices(edited, 2, 'all_days')).toHaveLength(1)
+
+    const withAdd = edit(addDraftStop(edited, 2, { id: 'd2s1', name: '运河站', time: '09:00' }))
+    // 上限 1：第 2 天现在 1 站不超；给第 2 天再加一站才超。
+    const withAdd2 = edit(addDraftStop(withAdd, 2, { id: 'd2s2', name: '小河直街', time: '10:00' }))
+    expect(dailyStopLimitNotices(withAdd2, 1, 'changed_days').map((item) => item.day)).toEqual([2])
+
+    // 上限检查不影响 applyDraft：结果里没有这个偏好的痕迹。
+    const applied = applyOk(withAdd)
+    expect(applied.localChecks.every((check) => check.kind !== undefined)).toBe(true)
+    expect(JSON.stringify(applied.trip)).not.toContain('超过你设置的每天最多')
   })
 })

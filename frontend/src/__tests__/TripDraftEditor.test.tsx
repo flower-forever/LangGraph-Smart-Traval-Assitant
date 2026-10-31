@@ -776,4 +776,144 @@ describe('TripDraftEditor 检查、可访问性与无自动副作用', () => {
     expect(removeItemSpy).not.toHaveBeenCalled()
     expect(applyDraft(draft).ok).toBe(true)
   })
+
+  it('每天站点上限默认关闭且不影响现有检查；启用后 8→9 站出提醒，删回 8 站取消', async () => {
+    const user = userEvent.setup()
+    const base = cloneTrip()
+    base.days[0].stops = Array.from({ length: 8 }, (_, index) => ({
+      id: `d1s${index + 1}`,
+      name: `站 ${index + 1}`,
+      time: `0${index + 1}:00`.slice(-5),
+      duration_minutes: null,
+      description: '',
+      address: '',
+      location: null,
+    }))
+    let draft = makeDraft(base)
+    render(<Harness initialDraft={draft} />)
+    const editor = editorRegion()
+    const limitSection = within(editor).getByRole('region', {
+      name: '每天最多站点数（偏好检查）',
+    })
+
+    // 默认关闭：没有提醒，也不影响本地检查区块。
+    expect(within(limitSection).getByText('未启用')).toBeInTheDocument()
+    expect(within(limitSection).queryByText(/超过你设置的每天最多/)).toBeNull()
+    expect(
+      within(editor).getByRole('region', { name: '当前本地检查' }),
+    ).toBeInTheDocument()
+
+    const toggle = within(limitSection).getByRole('checkbox', {
+      name: /启用每天站点数上限检查/,
+    })
+    const limitSelect = within(limitSection).getByRole('combobox', {
+      name: '每天站点数上限',
+    })
+    expect(limitSelect).toBeDisabled()
+    await user.click(toggle)
+    expect(limitSelect).toBeEnabled()
+
+    // 先把上限调到 8（默认值是 4），8 站时不应提醒。
+    await user.selectOptions(limitSelect, '8')
+    expect(within(limitSection).queryByText(/超过你设置的每天最多/)).toBeNull()
+
+    // 新增第 9 站（先开新增表单要经过 toolbar；直接用真实纯函数更新草稿更贴近单元口径，
+    // 但这里走 UI：勾选后通过 harness 外部按钮不可行，所以用编辑器的新增路径）。
+    await user.click(within(editor).getByRole('button', { name: '新增站点' }))
+    await user.type(within(editor).getByLabelText(/站点名称/), '第 9 站')
+    await user.type(within(editor).getByLabelText(/时间/), '17:00')
+    await user.click(within(editor).getByRole('button', { name: '保存到草稿' }))
+    expect(within(limitSection).getByText(/超过你设置的每天最多 8 站上限/)).toBeInTheDocument()
+    // 提醒明确区分：这是偏好提醒，不代表不可行，也没删站。
+    expect(within(limitSection).getByText(/不代表行程不可行/)).toBeInTheDocument()
+  })
+
+  it('上限设置是会话级 UI 状态：删除站点后提醒消失，且不触发存储或网络', async () => {
+    const user = userEvent.setup()
+    const fetchSpy = vi.fn(() => Promise.reject(new Error('network disabled in test')))
+    vi.stubGlobal('fetch', fetchSpy)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const base = cloneTrip()
+    base.days[0].stops = Array.from({ length: 9 }, (_, index) => ({
+      id: `d1s${index + 1}`,
+      name: `站 ${index + 1}`,
+      time: `0${index + 1}:00`.slice(-5),
+      duration_minutes: null,
+      description: '',
+      address: '',
+      location: null,
+    }))
+    render(<Harness initialDraft={makeDraft(base)} />)
+    const editor = editorRegion()
+    const limitSection = within(editor).getByRole('region', {
+      name: '每天最多站点数（偏好检查）',
+    })
+    await user.click(
+      within(limitSection).getByRole('checkbox', { name: /启用每天站点数上限检查/ }),
+    )
+    const limitSelect = within(limitSection).getByRole('combobox', {
+      name: '每天站点数上限',
+    })
+    await user.selectOptions(limitSelect, '8')
+    expect(within(limitSection).getByText(/超过你设置的每天最多 8 站上限/)).toBeInTheDocument()
+
+    // 旧大数据可读：9 站都显示，删除后恢复到 8，提醒取消。
+    expect(within(editor).getAllByText(/第 \d+ 站/).length).toBeGreaterThanOrEqual(9)
+    await user.click(
+      within(editor).getByRole('button', { name: '删除第 1 站「站 1」（可撤销）' }),
+    )
+    expect(within(limitSection).queryByText(/超过你设置的每天最多/)).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+  })
+
+  it('换 forkTripId 后偏好不从旧草稿泄漏：上限检查回到默认禁用', async () => {
+    const user = userEvent.setup()
+    const base = cloneTrip()
+    base.days[0].stops = Array.from({ length: 9 }, (_, index) => ({
+      id: `d1s${index + 1}`,
+      name: `站 ${index + 1}`,
+      time: `0${index + 1}:00`.slice(-5),
+      duration_minutes: null,
+      description: '',
+      address: '',
+      location: null,
+    }))
+    render(<Harness initialDraft={makeDraft(base)} />)
+    const editor = editorRegion()
+    const limitSection = within(editor).getByRole('region', {
+      name: '每天最多站点数（偏好检查）',
+    })
+
+    // 在旧草稿里启用偏好并改成非默认值：启用 + 上限 8 + 仅改动过的天。
+    await user.click(
+      within(limitSection).getByRole('checkbox', { name: /启用每天站点数上限检查/ }),
+    )
+    await user.selectOptions(
+      within(limitSection).getByRole('combobox', { name: '每天站点数上限' }),
+      '8',
+    )
+    await user.selectOptions(
+      within(limitSection).getByRole('combobox', { name: '上限检查范围' }),
+      'changed_days',
+    )
+    expect(within(limitSection).getByText('上限 8 站')).toBeInTheDocument()
+
+    // 外部换 forkTripId：偏好必须回到默认，而不是把旧草稿的设置带进新草稿。
+    await user.click(screen.getByRole('button', { name: '外部换 fork 草稿' }))
+    expect(within(limitSection).getByText('未启用')).toBeInTheDocument()
+    expect(
+      within(limitSection).getByRole('combobox', { name: '每天站点数上限' }),
+    ).toBeDisabled()
+    expect(
+      within(limitSection).getByRole('combobox', { name: '上限检查范围' }),
+    ).toBeDisabled()
+    expect(
+      within(limitSection).getByRole('combobox', { name: '每天站点数上限' }),
+    ).toHaveValue('4')
+    expect(
+      within(limitSection).getByRole('combobox', { name: '上限检查范围' }),
+    ).toHaveValue('all_days')
+    expect(within(limitSection).queryByText(/超过你设置的每天最多/)).toBeNull()
+  })
 })

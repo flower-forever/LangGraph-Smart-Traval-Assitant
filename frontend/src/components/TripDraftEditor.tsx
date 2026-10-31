@@ -6,9 +6,11 @@ import {
   MAX_STOP_DESCRIPTION_LENGTH,
   MAX_STOP_DURATION_MINUTES,
   MAX_STOP_NAME_LENGTH,
+  MAX_USER_DAILY_STOP_LIMIT,
   STOP_TIME_PATTERN,
   addDraftStop,
   applyDraft,
+  dailyStopLimitNotices,
   draftChangedDays,
   isDraftDirty,
   localChecksForDraft,
@@ -16,6 +18,7 @@ import {
   removeDraftStop,
   undoDraft,
   updateDraftStop,
+  type DailyStopLimitScope,
   type DraftApplySuccess,
   type DraftCheckKind,
   type DraftEditResult,
@@ -39,6 +42,12 @@ const CHECK_KIND_LABEL: Record<DraftCheckKind, string> = {
   time_overlap: '时段重叠',
   possible_cross_day: '可能跨日',
 }
+
+/** 「每天最多站点数」可选值：1–8 的整数。 */
+const DAILY_STOP_LIMIT_OPTIONS: readonly number[] = Array.from(
+  { length: MAX_USER_DAILY_STOP_LIMIT },
+  (_, index) => index + 1,
+)
 
 type FormField = 'name' | 'address' | 'time' | 'duration' | 'description'
 
@@ -243,6 +252,18 @@ export default function TripDraftEditor({
   const [discardConfirm, setDiscardConfirm] = useState(false)
   const [checksExpanded, setChecksExpanded] = useState(false)
   const [warningsExpanded, setWarningsExpanded] = useState(false)
+  /** 「每天最多站点数」偏好：默认关闭，只属于当前草稿会话的 UI 状态，不写入草稿、不保存。 */
+  const [dailyStopLimitEnabled, setDailyStopLimitEnabled] = useState(false)
+  const [dailyStopLimit, setDailyStopLimit] = useState(4)
+  const [dailyStopLimitScope, setDailyStopLimitScope] = useState<DailyStopLimitScope>('all_days')
+
+  // 偏好设置只属于当前草稿会话：换草稿（forkTripId 变化）后回到默认禁用，
+  // 避免旧草稿的上限偏好被带进新草稿的检查结果。
+  useEffect(() => {
+    setDailyStopLimitEnabled(false)
+    setDailyStopLimit(4)
+    setDailyStopLimitScope('all_days')
+  }, [draft.forkTripId])
 
   const headingRef = useRef<HTMLHeadingElement | null>(null)
   const addButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -257,6 +278,13 @@ export default function TripDraftEditor({
   const changedDays = useMemo(() => draftChangedDays(draft), [draft])
   const dirty = useMemo(() => isDraftDirty(draft), [draft])
   const checks = useMemo(() => localChecksForDraft(draft), [draft])
+  const dailyLimitNotices = useMemo(
+    () =>
+      dailyStopLimitEnabled
+        ? dailyStopLimitNotices(draft, dailyStopLimit, dailyStopLimitScope)
+        : [],
+    [draft, dailyStopLimitEnabled, dailyStopLimit, dailyStopLimitScope],
+  )
   const warnings = draft.base.warnings
   const sessionStale =
     session !== null &&
@@ -1046,6 +1074,73 @@ export default function TripDraftEditor({
           {session?.mode === 'add' && session.dayNumber === day.day && renderStopForm(session)}
         </>
       )}
+
+      <section className="tde-checks" aria-labelledby={`${baseId}-limit-title`}>
+        <div className="tde-section-head">
+          <h4 className="tde-section-title" id={`${baseId}-limit-title`}>
+            每天最多站点数（偏好检查）
+          </h4>
+          <span className="tde-count">{dailyStopLimitEnabled ? `上限 ${dailyStopLimit} 站` : '未启用'}</span>
+        </div>
+        <p className="tde-section-note">
+          这是只属于当前草稿会话的界面设置：不会被保存，也不写入行程或发送到后端。
+          超过上限时只给提醒，不会自动删站；旧导入数据里超过 8 站的天照常显示和编辑。
+        </p>
+        <div className="tde-limit-controls">
+          <label>
+            <input
+              type="checkbox"
+              checked={dailyStopLimitEnabled}
+              onChange={(event) => setDailyStopLimitEnabled(event.target.checked)}
+            />{' '}
+            启用每天站点数上限检查
+          </label>
+          <label>
+            上限（每天站点数）{' '}
+            <select
+              value={dailyStopLimit}
+              onChange={(event) => setDailyStopLimit(Number(event.target.value))}
+              disabled={!dailyStopLimitEnabled}
+              aria-label="每天站点数上限"
+            >
+              {DAILY_STOP_LIMIT_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            检查范围{' '}
+            <select
+              value={dailyStopLimitScope}
+              onChange={(event) => setDailyStopLimitScope(event.target.value as DailyStopLimitScope)}
+              disabled={!dailyStopLimitEnabled}
+              aria-label="上限检查范围"
+            >
+              <option value="all_days">所有天</option>
+              <option value="changed_days">仅改动过的天</option>
+            </select>
+          </label>
+        </div>
+        {dailyStopLimitEnabled && dailyLimitNotices.length === 0 ? (
+          <p className="tde-section-empty">
+            {dailyStopLimitScope === 'changed_days' && draftChangedDays(draft).length === 0
+              ? '草稿还没有改动过的天，切到「所有天」可检查整个行程。'
+              : `当前没有天超过每天 ${dailyStopLimit} 站的上限。`}
+          </p>
+        ) : null}
+        {dailyLimitNotices.length > 0 && (
+          <ul className="tde-check-list" aria-label="每天站点数上限提醒">
+            {dailyLimitNotices.map((item) => (
+              <li key={item.day} className="tde-check-item">
+                <span className="tde-check-kind">超过上限</span>
+                <span>{item.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="tde-checks" aria-labelledby={`${baseId}-checks-title`}>
         <div className="tde-section-head">
