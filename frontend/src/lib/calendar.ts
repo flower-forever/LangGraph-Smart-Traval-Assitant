@@ -23,6 +23,7 @@
  */
 
 import type { Trip, TripStop, TripDay } from './api'
+import { isSupportedIanaTimeZone, resolveZonedLocalToUtc } from './icsTimezone'
 
 /** 单场事件停留时长上限（分钟）；超过视为数据错误，不写结束时间 */
 export const MAX_STAY_MINUTES = 1440
@@ -32,6 +33,8 @@ export type IcsSkipReason =
   | 'day_date_invalid'
   | 'stop_time_invalid'
   | 'stop_name_missing'
+  | 'timezone_invalid'
+  | 'time_not_representable'
 
 export interface IcsSkip {
   day: number
@@ -50,6 +53,15 @@ export interface IcsExportOptions {
    * 只要存在任意真实日期，该选项一律被忽略，缺失的日期只跳过并提示，绝不覆盖或伪造。
    */
   firstDate?: string
+  /**
+   * 用户显式选择的目的地 IANA 时区（如 Asia/Shanghai）。缺省/空串 = 沿用旧 floating 导出，
+   * 不做任何时区换算。设置后当地日期/时刻经唯一解析输出带 Z 的 UTC DTSTART/DTEND，
+   * 不输出 TZID/VTIMEZONE。不按城市/浏览器/模型猜时区，也不写回 Trip 或 Storage。
+   * 无效或不支持的时区属于明确选项错误：整次导出以 configurationError 元数据
+   * （code: 'invalid_timezone'）报告，绝不静默回退 floating；有可遍历站点时
+   * 逐站点另记 timezone_invalid 跳过，空行程/零站点不虚构占位跳过记录。
+   */
+  timeZone?: string
 }
 
 /** 按首日与天序号推算出的一条临时日期（仅用于本次导出） */
@@ -57,6 +69,12 @@ export interface IcsProvisionalDate {
   day: number
   /** ISO 日期 YYYY-MM-DD */
   date: string
+}
+
+/** 导出级配置错误：与任何站点无关的选项/配置问题，不进入 skipped/站点计数 */
+export interface IcsConfigurationError {
+  code: 'invalid_timezone'
+  message: string
 }
 
 export interface IcsExportResult {
@@ -73,6 +91,17 @@ export interface IcsExportResult {
   firstDateUsed: boolean
   /** 推算出的临时日期，按天序号升序；firstDateUsed 为 false 时为空数组 */
   provisionalDates: IcsProvisionalDate[]
+  /**
+   * 本次导出实际使用的时区模式：null = 旧 floating 导出；非空 = 用户选定的 IANA 时区，
+   * 事件时间已换算成带 Z 的 UTC。向后兼容的新增字段。
+   */
+  exportTimeZone: string | null
+  /**
+   * 导出级配置错误（如时区名无效）。可选：为空表示本次没有配置错误。
+   * 与 skipped/skippedCount 完全分开：不构造 day=0/空 stopId 的占位记录，
+   * downloadIcs/UI 优先依据该字段判定 invalid_timezone，与有无站点/日期无关。
+   */
+  configurationError?: IcsConfigurationError
 }
 
 /** 行程的日期覆盖情况，用于决定导出前是否需要让用户明确选择首日 */
@@ -271,6 +300,21 @@ function formatTimeKey(t: IcsTimePoint): string {
   return `${pad2(t.h)}${pad2(t.m)}${pad2(t.s)}`
 }
 
+/** UTC 时刻 → ICS 的 UTC 本地格式 YYYYMMDDTHHMMSSZ（RFC 5545 §3.3.5 FORM #2）；
+ *  输入必须已由调用方校验落在 4 位年份（1000..9999，UTC）范围内，否则结果非法 */
+function formatUtcIcsKey(epochMs: number): string {
+  const d = new Date(epochMs)
+  return (
+    `${String(d.getUTCFullYear()).padStart(4, '0')}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}` +
+    `T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`
+  )
+}
+
+/** 当地时刻 → HH:MM(:SS) 展示文本（跳过原因用） */
+function formatIcsClock(t: IcsTimePoint): string {
+  return t.s > 0 ? `${pad2(t.h)}:${pad2(t.m)}:${pad2(t.s)}` : `${pad2(t.h)}:${pad2(t.m)}`
+}
+
 /** DTSTAMP 用 UTC 秒级时间戳；输入异常时的兜底值是 Unix 纪元，仅供防御性路径 */
 function formatDtStamp(now: Date): string {
   if (!(now instanceof Date) || Number.isNaN(now.getTime())) return '19700101T000000Z'
@@ -343,6 +387,22 @@ function stopLabel(stop: TripStop): string {
   return name || stop.id || '未命名站点'
 }
 
+/** UTC 时刻是否落在 ICS 的 4 位年份支持范围内（1000..9999，按 UTC 判定） */
+function isUtcInSupportedRange(epochMs: number): boolean {
+  const year = new Date(epochMs).getUTCFullYear()
+  return year >= 1000 && year <= 9999
+}
+
+/** 仅供「已确认超范围」时刻生成展示文本：用夹取后的合法 Date 生成 YYYYMMDDTHHMMSSZ 样式，
+ *  结果里可能出现 4 位以外的年份位数（如 10000），只用于跳过原因展示，不写入事件字段。 */
+function formatUtcIcsKeyClamped(epochMs: number): string {
+  const d = new Date(Math.min(Math.max(epochMs, -8.64e15), 8.64e15))
+  return (
+    `${String(d.getUTCFullYear()).padStart(4, '0')}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}` +
+    `T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`
+  )
+}
+
 function buildSkip(
   day: TripDay,
   stop: TripStop,
@@ -371,11 +431,30 @@ function buildSkip(
   }
 }
 
+/** 时区模式下的站点级结构化跳过记录：只接受遍历到的真实 day/stop，
+ *  不构造 day=0/stopId='' 的占位条目（导出级配置错误由 configurationError 承载）。 */
+function buildZoneSkip(
+  day: TripDay,
+  stop: TripStop,
+  reason: IcsSkipReason,
+  message: string,
+): IcsSkip {
+  return {
+    day: day.day,
+    stopId: stop.id,
+    stopName: stop.name,
+    reason,
+    message,
+  }
+}
+
 /**
  * 把一个 Trip 转成可被主流日历（iOS 日历 / Google Calendar / Outlook）导入的 .ics 文本。
  * 纯函数：不做 IO、不读环境变量、不访问网络，也不依赖本地时区。
  * options.now 只影响 DTSTAMP（对象创建时间），可传固定值获得确定性输出。
  * options.firstDate 只在整份行程都缺日期时生效，按天序号临时推算，不修改原行程。
+ * options.timeZone 是用户显式选择的目的地 IANA 时区：设置后事件时间换算为带 Z 的 UTC；
+ * 缺省时保持旧 floating 语义（无 Z、无 TZID）。UID 输入不变，两种模式下同一事件 UID 相同。
  */
 export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResult {
   const skipped: IcsSkip[] = []
@@ -398,6 +477,21 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
   // 只有整份行程都缺日期时才允许推算；已有任意真实日期时一律忽略首日参数
   const baseDate = coverage.allDatesMissing ? firstDatePoint : null
   const provisionalDates: IcsProvisionalDate[] = []
+
+  // 时区模式：只有非空白字符串才启用；空白/缺省都算旧 floating 导出。
+  // 有效性用 isSupportedIanaTimeZone 判定，不自行猜测；无效时区是选项错误，
+  // 全部站点按 timezone_invalid 跳过并给出可见错误，绝不回退成 floating。
+  const requestedZone = typeof options?.timeZone === 'string' ? options.timeZone.trim() : ''
+  const zoneActive = requestedZone !== ''
+  const zoneValid = zoneActive ? isSupportedIanaTimeZone(requestedZone) : false
+  const zoneInvalid = zoneActive && !zoneValid
+  // 无效时区是导出级配置错误：统一记录在返回值 configurationError 里，与有无站点/日期
+  // 无关；有站点时主循环仍逐站点记录 timezone_invalid 跳过（真实计数），空行程/零站点
+  // 不再补占位跳过记录。
+  // 时区模式下记录「起点 UTC 已超出支持范围」的站点跳过，避免下文重复构造
+  let outOfRangeCount = 0
+  /** DST 语义（不存在/重复时刻）跳过的站点数，与 UTC 年份超范围分开统计口径 */
+  let notRepresentableDstCount = 0
 
   for (const day of days) {
     if (!day) continue
@@ -429,6 +523,17 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
 
     for (const stop of stops) {
       if (!stop) continue
+      if (zoneInvalid) {
+        skipped.push(
+          buildZoneSkip(
+            day,
+            stop,
+            'timezone_invalid',
+            `导出时区「${requestedZone}」不是当前运行环境支持的 IANA 时区，未创建任何日历事件；请修正时区或改回默认模式。`,
+          ),
+        )
+        continue
+      }
       const timePoint = parseIcsTime(stop.time ?? '')
       if (timePoint === null) {
         const rawTime = typeof stop.time === 'string' ? stop.time.trim() : ''
@@ -450,19 +555,105 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
         continue
       }
 
+      // 时区模式：先把当地日期/时刻唯一解析为 UTC；重复/不存在时刻结构化跳过，
+      // 不自选第一/第二个解，不挪时间。UID 输入仍用当地日朠时刻键，与 floating 模式一致。
+      let startUtcMs: number | null = null
+      if (zoneActive) {
+        const resolution = resolveZonedLocalToUtc(
+          requestedZone,
+          datePoint.y,
+          datePoint.m,
+          datePoint.d,
+          timePoint.h,
+          timePoint.m,
+          timePoint.s,
+        )
+        if (resolution.kind === 'nonexistent') {
+          notRepresentableDstCount += 1
+          skipped.push(
+            buildZoneSkip(
+              day,
+              stop,
+              'time_not_representable',
+              `站点「${stopLabel(stop)}」的当地时间 ${toIsoDate(datePoint)} ${formatIcsClock(timePoint)} 在时区 ${requestedZone} 中不存在（夏令时切换跳过了该时刻），无法转换为唯一的 UTC 时间，已跳过；请调整该站点的开始时间后重新导出。`,
+            ),
+          )
+          continue
+        }
+        if (resolution.kind === 'ambiguous') {
+          notRepresentableDstCount += 1
+          const candidates = resolution.epochMsList.map((ms) => formatUtcIcsKey(ms)).join(' / ')
+          skipped.push(
+            buildZoneSkip(
+              day,
+              stop,
+              'time_not_representable',
+              `站点「${stopLabel(stop)}」的当地时间 ${toIsoDate(datePoint)} ${formatIcsClock(timePoint)} 在时区 ${requestedZone} 中出现两次（夏令时结束回拨），可能对应多个 UTC 时刻（${candidates}）；为避免凭空选定，已跳过；请调整该站点的开始时间后重新导出。`,
+            ),
+          )
+          continue
+        }
+        if (resolution.kind === 'invalid_input') {
+          skipped.push(
+            buildZoneSkip(
+              day,
+              stop,
+              'time_not_representable',
+              `站点「${stopLabel(stop)}」的当地时间 ${toIsoDate(datePoint)} ${formatIcsClock(timePoint)} 无法在时区 ${requestedZone} 中表示，已跳过。`,
+            ),
+          )
+          continue
+        }
+        startUtcMs = resolution.epochMs
+        // 起点 UTC 也必须落在 4 位年份（UTC）内：如 1000-01-01 上海 00:00 的 UTC
+        // 在 999 年、9999-12-31 纽约晚间的 UTC 在 10000 年。当地分量合法不代表
+        // UTC 输出可表示；有无停留时长不能决定起点是否非法。
+        if (!isUtcInSupportedRange(startUtcMs)) {
+          outOfRangeCount += 1
+          skipped.push(
+            buildZoneSkip(
+              day,
+              stop,
+              'time_not_representable',
+              `站点「${stopLabel(stop)}」的当地时间 ${toIsoDate(datePoint)} ${formatIcsClock(timePoint)} ` +
+                `换算为 UTC 后（${formatUtcIcsKeyClamped(startUtcMs)}）超出 4 位年份支持范围，无法写入日历，已跳过。`,
+            ),
+          )
+          continue
+        }
+      }
+
       const duration: unknown = stop.duration_minutes
       const hasKnownDuration = isKnownDuration(duration)
       let endKey: string | null = null
       if (hasKnownDuration) {
-        const end = computeEnd(datePoint, timePoint, duration)
-        if (end === null) {
-          // 4 位年份的极端边界，正常数据到不了这里
-          skipped.push(
-            buildSkip(day, stop, 'stop_time_invalid', `站点「${stopLabel(stop)}」结束时间超出 4 位年份范围，已跳过`),
-          )
-          continue
+        if (zoneActive && startUtcMs !== null) {
+          // 时区模式：停留时长是实际经过的分钟数，直接从已解析的 UTC 开始时刻加；
+          // UTC 时间轴上无 DST 概念，跨日/跨月/跨年由毫秒加法自然进位。
+          const endMs = startUtcMs + duration * 60_000
+          if (!isUtcInSupportedRange(endMs)) {
+            skipped.push(
+              buildZoneSkip(
+                day,
+                stop,
+                'stop_time_invalid',
+                `站点「${stopLabel(stop)}」结束时间超出 4 位年份范围，已跳过`,
+              ),
+            )
+            continue
+          }
+          endKey = formatUtcIcsKey(endMs)
+        } else {
+          const end = computeEnd(datePoint, timePoint, duration)
+          if (end === null) {
+            // 4 位年份的极端边界，正常数据到不了这里
+            skipped.push(
+              buildSkip(day, stop, 'stop_time_invalid', `站点「${stopLabel(stop)}」结束时间超出 4 位年份范围，已跳过`),
+            )
+            continue
+          }
+          endKey = `${formatDateKey(end.date)}T${formatTimeKey(end.time)}`
         }
-        endKey = `${formatDateKey(end.date)}T${formatTimeKey(end.time)}`
       }
 
       const startKey = `${formatDateKey(datePoint)}T${formatTimeKey(timePoint)}`
@@ -487,7 +678,7 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
       lines.push('BEGIN:VEVENT')
       lines.push(`UID:${uid}`)
       lines.push(`DTSTAMP:${stamp}`)
-      lines.push(`DTSTART:${startKey}`)
+      lines.push(`DTSTART:${zoneActive && startUtcMs !== null ? formatUtcIcsKey(startUtcMs) : startKey}`)
       // 只有已知时长才写 DTEND；时长未知时保持时刻事件，不用 DURATION 或默认值补一个结束时间
       if (endKey !== null) lines.push(`DTEND:${endKey}`)
       lines.push(`SUMMARY:${escapeIcsText(summaryRaw)}`)
@@ -503,18 +694,46 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
 
   lines.push('END:VCALENDAR')
   const ics = lines.map(foldIcsLine).join('\r\n') + '\r\n'
+  // 导出级配置错误只进元数据，不进 skipped：不虚构 day=0/stopId='' 的占位站点
+  const configurationError: IcsConfigurationError | undefined = zoneInvalid
+    ? {
+        code: 'invalid_timezone',
+        message:
+          `导出时区「${requestedZone}」不是当前运行环境支持的 IANA 时区，本次导出未创建任何日历事件；` +
+          '请修正时区名称（如 Asia/Shanghai、America/New_York），或改回默认的 floating 本地时间模式。',
+      }
+    : undefined
 
   const notices: string[] = []
-  if (eventCount > 0) {
+  if (zoneInvalid) {
+    notices.push(
+      `导出时区「${requestedZone}」不是当前运行环境支持的 IANA 时区，本次导出未创建任何日历事件；` +
+        '请修正时区名称（如 Asia/Shanghai、America/New_York），或改回默认的 floating 本地时间模式。',
+    )
+  } else if (eventCount > 0 && zoneActive) {
+    notices.push(
+      `已按你选择的目的地时区 ${requestedZone} 把当地开始时间（以及已知的结束时间）换算为带 Z 的 UTC 固定时刻：` +
+        '同一时刻在任意设备的日历上都显示为该设备本地时间，不会随设备时区漂移；' +
+        '未写入 TZID/VTIMEZONE。该转换尚未在真实日历客户端上逐个验收，导入后请抽查第一场事件的时间。',
+    )
+  } else if (eventCount > 0) {
     notices.push(
       '开始时间（以及已知的结束时间）不带时区（floating local time）：日历导入后按导入设备的本地时区解释这些时刻，' +
         '跨时区出行或设备时区与行程地不同时，日历上的时间会随设备时区变化，导入后请抽查第一场事件的开始时间。',
     )
+  }
+  if (!zoneInvalid && eventCount === 0) {
+    if (skipped.some((entry) => entry.reason === 'time_not_representable')) {
+      // 站点已有合法日期/时刻，只是被时区语义（DST 或年份范围）拒绝，不能误报缺少日期或时刻
+      notices.push('没有可导出的站点：站点的当地时间无法按当前时区设置表示为日历事件（原因见跳过清单），未生成任何日历事件。')
+    } else {
+      notices.push('没有可导出的站点：所有站点都缺少合法的日期或开始时刻，未生成任何日历事件。')
+    }
+  }
+  if (eventCount > 0 && !zoneInvalid) {
     notices.push(
       '坐标（WGS84）不是 .ics 文本字段能表达的内容，LOCATION 一律使用站点地址；地址或讲解为空的站点会省略对应字段，不做填充。',
     )
-  } else {
-    notices.push('没有可导出的站点：所有站点都缺少合法的日期或开始时刻，未生成任何日历事件。')
   }
   if (eventCount > 0 && trip.source === 'example') {
     notices.push('本行程属于示例源：事件标题带【示例】前缀，描述注明未含真实预约，避免被误认成已确认安排。')
@@ -559,6 +778,21 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
     notices.push('这份行程已有真实日期，选择的首日被忽略；已有日期不会被覆盖，缺失日期只跳过。')
   }
 
+  // 「无法唯一确定」提示只覆盖 DST 语义的跳过（不存在/重复时刻）；
+  // UTC 年份超范围用 outOfRangeCount 单独提示，两条口径不混在一起。
+  if (notRepresentableDstCount > 0) {
+    notices.push(
+      `有 ${notRepresentableDstCount} 个站点的当地时间在所选时区 ${requestedZone} 中无法唯一确定（夏令时切换造成的重复或不存在时刻），` +
+        '已明确跳过，不会自动选择其一或挪动时间；请调整这些站点的开始时间后重新导出。',
+    )
+  }
+  if (outOfRangeCount > 0) {
+    notices.push(
+      `有 ${outOfRangeCount} 个站点的当地时间在时区 ${requestedZone} 中换算出的 UTC 时刻超出了 4 位年份（1000..9999）支持范围，` +
+        '这些站点已跳过，未写入任何事件。',
+    )
+  }
+
   return {
     ics,
     eventCount,
@@ -568,5 +802,7 @@ export function tripToIcs(trip: Trip, options?: IcsExportOptions): IcsExportResu
     notices,
     firstDateUsed,
     provisionalDates: provisionalDates.sort((a, b) => a.day - b.day),
+    exportTimeZone: zoneActive && !zoneInvalid ? requestedZone : null,
+    configurationError,
   }
 }

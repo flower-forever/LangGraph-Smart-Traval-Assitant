@@ -87,7 +87,7 @@ export interface IcsDownloadOptions extends IcsExportOptions {
 
 export type IcsDownloadOutcome =
   | { ok: true; filename: string; result: IcsExportResult; blob: Blob }
-  | { ok: false; reason: 'no_events'; filename: string; result: IcsExportResult }
+  | { ok: false; reason: 'no_events' | 'invalid_timezone'; filename: string; result: IcsExportResult }
   | {
       ok: false
       reason: 'unsupported' | 'error'
@@ -110,12 +110,29 @@ export function downloadIcs(trip: Trip, options: IcsDownloadOptions = {}): IcsDo
     schedule,
     now,
     firstDate,
+    timeZone,
   } = options
-  const result = tripToIcs(trip, { now, firstDate })
+  // 时区选项必须显式转发，否则预览与下载会用不同的时区模式生成两份不一致的文件
+  const result = tripToIcs(trip, { now, firstDate, timeZone })
   const filename = safeIcsFilename(trip)
 
+  if (result.configurationError?.code === 'invalid_timezone') {
+    // 导出级配置错误（无效时区）优先于有无站点/日期判定，不创建 Blob URL；
+    // 判定依据是 calendar 层的 configurationError 元数据，不再扫描占位跳过记录
+    return {
+      ok: false,
+      reason: 'invalid_timezone',
+      filename,
+      result,
+    }
+  }
   if (result.eventCount === 0) {
-    return { ok: false, reason: 'no_events', filename, result }
+    return {
+      ok: false,
+      reason: 'no_events',
+      filename,
+      result,
+    }
   }
   if (!doc) {
     return {

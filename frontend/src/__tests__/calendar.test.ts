@@ -715,3 +715,273 @@ describe('tripToIcs：空导出与文件骨架', () => {
 function firstTripIcs(): string {
   return tripToIcs(MOCK_TRIP, { now: FIXED_NOW }).ics
 }
+
+/* ---------- 显式目的地时区导出（UTC DTSTART/DTEND） ---------- */
+
+describe('tripToIcs：显式目的地 IANA 时区（UTC 输出）', () => {
+  it('上海 2026-11-01 09:00 → 01:00Z；已知停留从 UTC 加 90 分钟 → 02:30Z', () => {
+    const trip = buildTrip({
+      id: 'trip-sh',
+      days: [mkDay(1, '2026-11-01', [mkStop('a', '09:00', 90, '上海站')])],
+    })
+    const result = tripToIcs(trip, { now: FIXED_NOW, timeZone: 'Asia/Shanghai' })
+    expect(result.eventCount).toBe(1)
+    expect(result.exportTimeZone).toBe('Asia/Shanghai')
+    const lineList = splitIcsLines(result.ics)
+    expect(lineList).toContain('DTSTART:20261101T010000Z')
+    expect(lineList).toContain('DTEND:20261101T023000Z')
+    expect(result.ics).not.toContain('TZID')
+    for (const line of lineList) {
+      if (line.startsWith('DTSTART:') || line.startsWith('DTEND:')) {
+        expect(line.slice(line.indexOf(':') + 1)).toMatch(/^\d{8}T\d{6}Z$/)
+      }
+    }
+  })
+
+  it('纽约夏/冬同当地时刻不同 UTC 偏移：07-15 09:00→13:00Z，12-15 09:00→14:00Z', () => {
+    const summer = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-07-15', [mkStop('a', '09:00', null, '夏令站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    const winter = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-12-15', [mkStop('a', '09:00', null, '夏令站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(summer.ics).toContain('DTSTART:20260715T130000Z')
+    expect(winter.ics).toContain('DTSTART:20261215T140000Z')
+  })
+
+  it('加德满都非整小时偏移 +5:45：09:00 → 03:15Z', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-05-01', [mkStop('a', '09:00', null, '尼站')])] }),
+      { now: FIXED_NOW, timeZone: 'Asia/Kathmandu' },
+    )
+    expect(result.ics).toContain('DTSTART:20260501T031500Z')
+  })
+
+  it('DST 不存在时刻（纽约 2026-03-08 02:30）结构化跳过并给出可见原因', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-03-08', [mkStop('a', '02:30', 30, '空档站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(result.eventCount).toBe(0)
+    expect(result.skippedCount).toBe(1)
+    expect(result.skipped[0].reason).toBe('time_not_representable')
+    expect(result.skipped[0].message).toContain('不存在')
+    expect(result.notices.join('\n')).toContain('无法唯一确定')
+  })
+
+  it('DST 重复时刻（纽约 2026-11-01 01:30）跳过，两个候选 UTC 都列在原因里', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-11-01', [mkStop('a', '01:30', 30, '回拨站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(result.eventCount).toBe(0)
+    expect(result.skipped[0].reason).toBe('time_not_representable')
+    expect(result.skipped[0].message).toContain('20261101T053000Z')
+    expect(result.skipped[0].message).toContain('20261101T063000Z')
+  })
+
+  it('Lord Howe 半小时 DST 空档与 Apia 跨日跳变同样结构化拒绝', () => {
+    const lordHowe = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-10-04', [mkStop('a', '02:15', null, '豪站')])] }),
+      { now: FIXED_NOW, timeZone: 'Australia/Lord_Howe' },
+    )
+    expect(lordHowe.eventCount).toBe(0)
+    expect(lordHowe.skipped[0].reason).toBe('time_not_representable')
+
+    const apia = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2011-12-30', [mkStop('b', '09:00', null, '阿皮亚站')])] }),
+      { now: FIXED_NOW, timeZone: 'Pacific/Apia' },
+    )
+    expect(apia.eventCount).toBe(0)
+    expect(apia.skipped[0].reason).toBe('time_not_representable')
+  })
+
+  it('有效停留的 UTC 时间差、UTC 跨午夜与跨年；缺停留不写 DTEND', () => {
+    // 上海 07:00 = 前一日 23:00Z；+60 分钟跨 UTC 午夜
+    const crossMidnight = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-04-03', [mkStop('a', '07:00', 60, '跨午夜站')])] }),
+      { now: FIXED_NOW, timeZone: 'Asia/Shanghai' },
+    )
+    expect(crossMidnight.ics).toContain('DTSTART:20260402T230000Z')
+    expect(crossMidnight.ics).toContain('DTEND:20260403T000000Z')
+
+    // 纽约 2026-12-31 19:00 (EST -5) = 2027-01-01 00:00Z，本地跨年 + UTC 跨年同时发生
+    const crossYear = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-12-31', [mkStop('b', '19:00', 60, '跨年站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(crossYear.ics).toContain('DTSTART:20270101T000000Z')
+    expect(crossYear.ics).toContain('DTEND:20270101T010000Z')
+
+    // 缺停留：只有带 Z 的 DTSTART，没有 DTEND
+    const noStay = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-11-01', [mkStop('c', '09:00', null, '无时长站')])] }),
+      { now: FIXED_NOW, timeZone: 'Asia/Shanghai' },
+    )
+    expect(noStay.ics).toContain('DTSTART:20261101T010000Z')
+    expect(noStay.ics).not.toContain('DTEND:')
+    expect(noStay.missingDurationCount).toBe(1)
+  })
+
+  it('无效时区：不产出事件、全部站点 timezone_invalid 跳过、可见错误、不回退 floating', () => {
+    const trip = buildTrip({
+      id: 't',
+      days: [mkDay(1, '2026-11-01', [mkStop('a', '09:00', 60, '某站')])],
+    })
+    const result = tripToIcs(trip, { now: FIXED_NOW, timeZone: 'Not/AZone' })
+    expect(result.eventCount).toBe(0)
+    expect(result.exportTimeZone).toBeNull()
+    // 唯一的跳过记录来自真实站点（day/stopId 都是真实值），配置错误单独放在元数据里
+    expect(result.skippedCount).toBe(1)
+    expect(result.skipped[0].reason).toBe('timezone_invalid')
+    expect(result.skipped[0].day).toBe(1)
+    expect(result.skipped[0].stopId).toBe('a')
+    expect(result.configurationError?.code).toBe('invalid_timezone')
+    expect(result.configurationError?.message).toContain('Not/AZone')
+    expect(result.ics).not.toContain('BEGIN:VEVENT')
+    expect(result.ics).not.toMatch(/DTSTART:\d{8}T\d{6}$/)
+    expect(result.notices.join('\n')).toContain('Not/AZone')
+    expect(result.notices.join('\n')).toContain('不是当前运行环境支持的 IANA 时区')
+  })
+
+  it('无效时区是导出级配置错误：空行程/零站点时 skippedCount=0，不虚构 day=0 占位跳过', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 'trip-empty-zone', days: [] }),
+      { now: FIXED_NOW, timeZone: 'Not/AZone' },
+    )
+    expect(result.eventCount).toBe(0)
+    expect(result.exportTimeZone).toBeNull()
+    // 配置错误不进 skipped/站点计数：不构造 day=0、stopId='' 的伪站点记录
+    expect(result.skippedCount).toBe(0)
+    expect(result.skipped).toEqual([])
+    expect(result.configurationError?.code).toBe('invalid_timezone')
+    expect(result.configurationError?.message).toContain('Not/AZone')
+    expect(result.notices.join('\n')).toContain('不是当前运行环境支持的 IANA 时区')
+    expect(result.ics).not.toContain('BEGIN:VEVENT')
+
+    // 对照：合法时区的空行程没有配置错误，只是普通的无事件导出
+    const validZone = tripToIcs(
+      buildTrip({ id: 'trip-empty-zone', days: [] }),
+      { now: FIXED_NOW, timeZone: 'Asia/Shanghai' },
+    )
+    expect(validZone.eventCount).toBe(0)
+    expect(validZone.skippedCount).toBe(0)
+    expect(validZone.configurationError).toBeUndefined()
+  })
+
+  it('真站点全缺日期 + 无效时区：skip 不超过真实站点数且全是真实 stopId，配置错误并存', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, null, [mkStop('real-a', '09:00', null, '真站')])] }),
+      { now: FIXED_NOW, timeZone: 'Not/AZone' },
+    )
+    expect(result.eventCount).toBe(0)
+    // 唯一一条 skip 是真实站点的 day_date_missing，不是 day=0 的占位条目
+    expect(result.skippedCount).toBe(1)
+    expect(result.skipped[0].day).toBe(1)
+    expect(result.skipped[0].stopId).toBe('real-a')
+    expect(result.skipped[0].reason).toBe('day_date_missing')
+    // 配置错误同时以元数据形式存在，两者互不污染
+    expect(result.configurationError?.code).toBe('invalid_timezone')
+  })
+
+  it('站点被 DST/年份范围拒绝时零事件提示不误报缺少日期或时刻', () => {
+    // 9999-12-31 19:00 纽约：日期时刻都合法，只是 UTC 换算超出支持范围
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '9999-12-31', [mkStop('a', '19:00', null, '跨年尾站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(result.eventCount).toBe(0)
+    const joined = result.notices.join('\n')
+    expect(joined).toContain('无法按当前时区设置表示')
+    expect(joined).not.toContain('所有站点都缺少合法的日期或开始时刻')
+  })
+
+  it('默认（不传 timeZone/空白）保持旧 floating 输出，exportTimeZone 为 null，UID 不变', () => {
+    const trip = buildTrip({
+      id: 't',
+      days: [mkDay(1, '2026-11-01', [mkStop('a', '09:00', 60, '同站')])],
+    })
+    const floating = tripToIcs(trip, { now: FIXED_NOW })
+    const blankZone = tripToIcs(trip, { now: FIXED_NOW, timeZone: '   ' })
+    const zoned = tripToIcs(trip, { now: FIXED_NOW, timeZone: 'Asia/Shanghai' })
+
+    expect(floating.ics).toContain('DTSTART:20261101T090000')
+    expect(splitIcsLines(floating.ics)
+      .filter((line) => line.startsWith('DTSTART:') || line.startsWith('DTEND:'))
+      .every((line) => !line.endsWith('Z'))).toBe(true)
+    expect(blankZone.ics).toBe(floating.ics)
+    expect(floating.exportTimeZone).toBeNull()
+    expect(blankZone.exportTimeZone).toBeNull()
+    // UID 只绑定 (行程, 当地日期, 当地开始, stopId)，与导出时区模式无关
+    expect(icsUids(zoned.ics)).toEqual(icsUids(floating.ics))
+    expect(zoned.ics).toContain('DTSTART:20261101T010000Z')
+  })
+
+  it('时区名先去首尾空白再使用；exportTimeZone 返回归一化后的名称', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '2026-11-01', [mkStop('a', '09:00', null, '空白站')])] }),
+      { now: FIXED_NOW, timeZone: '  Asia/Shanghai  ' },
+    )
+    expect(result.exportTimeZone).toBe('Asia/Shanghai')
+    expect(result.ics).toContain('DTSTART:20261101T010000Z')
+  })
+
+  it('时区模式不修改原行程对象；与首日推算可叠加', () => {
+    const trip = buildTrip({
+      id: 't',
+      days: [mkDay(1, null, [mkStop('a', '09:00', 60, '临时日站')])],
+    })
+    const snapshot = JSON.parse(JSON.stringify(trip))
+    const result = tripToIcs(trip, { now: FIXED_NOW, firstDate: '2026-11-01', timeZone: 'Asia/Shanghai' })
+    expect(trip).toEqual(snapshot)
+    expect(result.firstDateUsed).toBe(true)
+    expect(result.ics).toContain('DTSTART:20261101T010000Z')
+  })
+
+  it('年份边界：UTC 换算超出 4 位年份的起点被拒绝，不写 5 位年份 DTSTART（未知/有效时长两分支）', () => {
+    // 9999-12-31 19:00 纽约 = UTC 10000-01-01T00:00Z：当地分量合法，UTC 超范围。
+    // 未知时长分支（此前只检查 endYear，起点会写出 5 位年份的 100000101T000000Z）
+    const unknownStay = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '9999-12-31', [mkStop('a', '19:00', null, '跨年尾站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(unknownStay.eventCount).toBe(0)
+    expect(unknownStay.skipped[0].reason).toBe('time_not_representable')
+    expect(unknownStay.skipped[0].message).toContain('超出 4 位年份')
+    expect(unknownStay.ics).not.toMatch(/^DTSTART:\d{9,}T/m)
+
+    // 有效时长分支同样拒绝
+    const knownStay = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '9999-12-31', [mkStop('a', '19:00', 60, '跨年尾站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(knownStay.eventCount).toBe(0)
+    expect(knownStay.skipped[0].reason).toBe('time_not_representable')
+    expect(knownStay.ics).not.toMatch(/^DTSTART:\d{9,}T/m)
+  })
+
+  it('年份边界：1000 年起点 UTC 落到前一年（999）同样拒绝，不做 5 位补零伪装', () => {
+    // 1000-01-01 00:00 上海（当时 LMT +8:05:43）= UTC 0999-12-31T15:54:17Z
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '1000-01-01', [mkStop('a', '00:00', null, '年初站')])] }),
+      { now: FIXED_NOW, timeZone: 'Asia/Shanghai' },
+    )
+    expect(result.eventCount).toBe(0)
+    expect(result.skipped[0].reason).toBe('time_not_representable')
+    expect(result.skipped[0].message).toContain('09991231T155417Z')
+    expect(result.ics).not.toMatch(/^DTSTART:/m)
+    expect(result.notices.join('\n')).toContain('超出了 4 位年份')
+  })
+
+  it('年份边界：1999-12-31 19:00 纽约 = UTC 2000-01-01T00:00Z，正常跨年不受影响', () => {
+    const result = tripToIcs(
+      buildTrip({ id: 't', days: [mkDay(1, '1999-12-31', [mkStop('a', '19:00', 60, '千禧站')])] }),
+      { now: FIXED_NOW, timeZone: 'America/New_York' },
+    )
+    expect(result.eventCount).toBe(1)
+    expect(result.ics).toContain('DTSTART:20000101T000000Z')
+    expect(result.ics).toContain('DTEND:20000101T010000Z')
+  })
+})
