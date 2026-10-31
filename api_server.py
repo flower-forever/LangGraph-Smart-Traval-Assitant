@@ -61,6 +61,7 @@ from travel_itinerary import (
     refresh_day_map,
 )
 from weather_api import weather_router_factory
+from poi_sources_api import poi_sources_router_factory
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -1017,6 +1018,9 @@ app = FastAPI(
 # 天气日预报路由自带上/下文 lifespan；include_router 会把两者合并执行，
 # 不需要改写上面的 app lifespan，也不参与模型/MCP 初始化。
 app.include_router(weather_router_factory())
+
+# POI 公开资料候选路由同样自带上/下文 lifespan，与模型/MCP 初始化无关。
+app.include_router(poi_sources_router_factory())
 
 # 只信任显式 origin；allow_credentials=True 时绝不能再配 allow_origins=["*"]。
 app.add_middleware(
