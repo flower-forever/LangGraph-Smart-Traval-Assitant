@@ -128,6 +128,16 @@ const FIXED_RADIUS_M = 100
 const MAX_CANDIDATES = 8
 /** 标签字段原文上限：后端 _MAX_TAG_VALUE_CHARS=300，超出记 unknown 不截断 */
 const MAX_TAG_VALUE_CHARS = 300
+/**
+ * 后端 len() 按 Unicode 码点计数；一个 astral 码点占 2 个 UTF-16 code units，
+ * 所以合法的 300 码点最多占 600 units，>600 必然 >300：先拒超长巨串
+ * 避免为明显超限的值分配整大数组，≤600 的再精确数码点。 */
+const MAX_TAG_VALUE_UTF16_UNITS = MAX_TAG_VALUE_CHARS * 2
+/**
+ * 与后端同口径的字符计数：按 Unicode 码点（Python len），不是 UTF-16 code
+ * units。"\u{1F680}".length 是 2 但 Python len 是 1，只看 .length 会把合法
+ * 原文错拒。组合音标与 ZWJ 序列不合并：Python len 对它们分别计数，这里一致。
+ */
 
 /**
  * 后端 PoiSourceMeta 是固定常量（PROVIDER_*），与 docs/POI_SOURCES.md 的
@@ -193,14 +203,22 @@ function isCoordinateLike(value: unknown, check: (v: unknown) => boolean): value
   return isRecord(value) && check(value.lat) && check(value.lon)
 }
 
-/** 标签原文：非空白、≤300（后端 _tag_field 同口径）；允许首尾空格并原样保留 */
+/** 标签原文：非空白、≤300 码点（后端 _tag_field 同口径）；允许首尾空格并原样保留 */
 function isTagRawValue(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length > 0 &&
-    value.length <= MAX_TAG_VALUE_CHARS &&
+    value.length <= MAX_TAG_VALUE_UTF16_UNITS &&
+    unicodeCodePointLength(value) <= MAX_TAG_VALUE_CHARS &&
     value.trim() !== ''
   )
+}
+
+/** 字符串的 Unicode 码点数（等价 Python len(str)），不用 Intl/通用 Unicode 库。 */
+function unicodeCodePointLength(value: string): number {
+  let count = 0
+  for (const _char of value) count += 1
+  return count
 }
 
 function matchesRequestedCoordinate(

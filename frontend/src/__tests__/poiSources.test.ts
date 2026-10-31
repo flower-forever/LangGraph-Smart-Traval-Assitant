@@ -277,6 +277,121 @@ describe('validatePoiSourceReport', () => {
     }
   })
 
+  it('标签原文计数与后端一致：按 Unicode 码点，不是 UTF-16 code units', () => {
+    // astral 码点（emoji）在 JS 里 length 是 2，Python len 是 1：
+    // 151 码点 → UTF-16 长度 302，旧实现会错拒合法 source_only 原文
+    const emoji151 = '\u{1F680}'.repeat(151)
+    expect(emoji151.length).toBe(302)
+    expect([...emoji151].length).toBe(151)
+    const emojiReport = makePoiSourceReport(QUERY)
+    ;(emojiReport.candidates[0] as unknown as Record<string, unknown>).opening_hours = {
+      state: 'source_only',
+      value: emoji151,
+    }
+    const emojiResult = validatePoiSourceReport(emojiReport, QUERY)
+    expect(emojiResult.ok).toBe(true)
+    if (emojiResult.ok) {
+      expect(emojiResult.report.candidates[0].opening_hours.value).toBe(emoji151)
+    }
+
+    // 150 码点 astral：两种计数都 ≤300，必须通过
+    const emoji150 = '\u{1F680}'.repeat(150)
+    const emoji150Report = makePoiSourceReport(QUERY)
+    ;(emoji150Report.candidates[0] as unknown as Record<string, unknown>).fee = {
+      state: 'source_only',
+      value: emoji150,
+    }
+    expect(validatePoiSourceReport(emoji150Report, QUERY).ok).toBe(true)
+
+    // 300 码点 astral（UTF-16 长度 600）：Python 合法，前端必须接受
+    const emoji300 = '\u{1F680}'.repeat(300)
+    expect(emoji300.length).toBe(600)
+    const emoji300Report = makePoiSourceReport(QUERY)
+    ;(emoji300Report.candidates[0] as unknown as Record<string, unknown>).charge = {
+      state: 'source_only',
+      value: emoji300,
+    }
+    const emoji300Result = validatePoiSourceReport(emoji300Report, QUERY)
+    expect(emoji300Result.ok).toBe(true)
+    if (emoji300Result.ok) {
+      expect(emoji300Result.report.candidates[0].charge.value).toBe(emoji300)
+    }
+
+    // 301 码点 astral（UTF-16 长度 602）：Python 也拒绝，前端同拒
+    const emoji301 = '\u{1F680}'.repeat(301)
+    const emoji301Report = makePoiSourceReport(QUERY)
+    ;(emoji301Report.candidates[0] as unknown as Record<string, unknown>).fee = {
+      state: 'source_only',
+      value: emoji301,
+    }
+    expect(validatePoiSourceReport(emoji301Report, QUERY).ok).toBe(false)
+  })
+
+  it('标签原文计数：CJK/BMP 逐码点、混合串与组合码点/ZWJ 不合并', () => {
+    // CJK BMP：码点数即 UTF-16 长度，300/301 边界与 Python 同口径
+    const cjk300 = '汉'.repeat(300)
+    const cjk300Report = makePoiSourceReport(QUERY)
+    ;(cjk300Report.candidates[0] as unknown as Record<string, unknown>).opening_hours = {
+      state: 'source_only',
+      value: cjk300,
+    }
+    expect(validatePoiSourceReport(cjk300Report, QUERY).ok).toBe(true)
+
+    const cjk301 = '汉'.repeat(301)
+    const cjk301Report = makePoiSourceReport(QUERY)
+    ;(cjk301Report.candidates[0] as unknown as Record<string, unknown>).opening_hours = {
+      state: 'source_only',
+      value: cjk301,
+    }
+    expect(validatePoiSourceReport(cjk301Report, QUERY).ok).toBe(false)
+
+    // 混合 ASCII + CJK + astral，总码点 ≤300：按码点数接受
+    const mixed = `${'a'.repeat(100)}${'汉'.repeat(24)}${'\u{1F680}'.repeat(60)}`
+    expect([...mixed].length).toBe(184)
+    const mixedReport = makePoiSourceReport(QUERY)
+    ;(mixedReport.candidates[0] as unknown as Record<string, unknown>).opening_hours = {
+      state: 'source_only',
+      value: mixed,
+    }
+    expect(validatePoiSourceReport(mixedReport, QUERY).ok).toBe(true)
+
+    // 组合音标：e + U+0301 两个码点（一个 grapheme），Python len = 2，前端一致
+    const composed = 'e\u0301'.repeat(150)
+    expect(composed.length).toBe(300)
+    expect([...composed].length).toBe(300)
+    const composedReport = makePoiSourceReport(QUERY)
+    ;(composedReport.candidates[0] as unknown as Record<string, unknown>).fee = {
+      state: 'source_only',
+      value: composed,
+    }
+    expect(validatePoiSourceReport(composedReport, QUERY).ok).toBe(true)
+
+    // ZWJ 家庭 emoji：U+1F468 U+200D U+1F469 U+200D U+1F466，5 码点 / 8 UTF-16 units
+    const zwj = '\u{1F468}\u200D\u{1F469}\u200D\u{1F466}'
+    expect(zwj.length).toBe(8)
+    expect([...zwj].length).toBe(5)
+    const zwj300 = zwj.repeat(60) // 300 码点，合法
+    const zwj300Report = makePoiSourceReport(QUERY)
+    ;(zwj300Report.candidates[0] as unknown as Record<string, unknown>).charge = {
+      state: 'source_only',
+      value: zwj300,
+    }
+    const zwjResult = validatePoiSourceReport(zwj300Report, QUERY)
+    expect(zwjResult.ok).toBe(true)
+    if (zwjResult.ok) {
+      expect(zwjResult.report.candidates[0].charge.value).toBe(zwj300)
+    }
+
+    // ZWJ 序列按码点计满 301 时拒绝（Python len 同口径）
+    const zwj301 = zwj300 + '\u{1F468}' // 301 码点
+    const zwj301Report = makePoiSourceReport(QUERY)
+    ;(zwj301Report.candidates[0] as unknown as Record<string, unknown>).charge = {
+      state: 'source_only',
+      value: zwj301,
+    }
+    expect(validatePoiSourceReport(zwj301Report, QUERY).ok).toBe(false)
+  })
+
   it('radius_m 固定 100（后端 _RADIUS_M），其它值拒绝', () => {
     for (const radius of [50, 101, 500, 1000]) {
       const report = makePoiSourceReport(QUERY, { radius_m: radius })
