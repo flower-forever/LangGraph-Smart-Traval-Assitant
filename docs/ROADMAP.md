@@ -92,6 +92,8 @@
 
 本阶段导出格式扩展的第一批（可读路书 Markdown 导出）已实现并通过离线验证：行程备份与导入面板新增「导出可读路书（Markdown）」子入口，只投影 Trip v1 已知字段，0/null 保守语义、纯文本转义、1 MiB UTF-8 字节门禁、预览后才显式下载同一份文本、同 id 内容变化渲染期作废；详见 `docs/TRIP_MARKDOWN_EXPORT.md`。该功能只做了离线模拟验证，未做真实浏览器验收。
 
+第二批（费用草稿文件备份与导入）已实现并通过离线验证：费用估算面板内新增默认收起的「费用文件备份与导入」子区域，点预览才生成独立 `travel-assistant.budget` envelope（trip 只投影 id/title 自述、原字符串草稿含空/0/非法金额、256 KiB UTF-8 门禁、32 行沿用），下载同一份已预览字节；选择文件只本地预览，内联两步确认后才用既有 createBudgetForTrip 建立当前 owner 并替换 rows/budgetRaw（result 清空、一层 undo 可恢复替换前费用）；确认绑定 Trip id+revision+内容快照+费用输入快照，期间任何变化作废 pending 且 A→B→A 不复活；无法验证当前 Trip 快照时只能查看不能应用。文件自述不是来源证明；无自动读取/下载/存储，不新增 localStorage。详见 `docs/TRIP_BUDGET_TRANSFER.md`。同样只做了离线模拟验证，未做真实浏览器验收。
+
 验收条件：
 - 跨时区行程导出的 ICS 在主流日历中按目的地时间显示；旧 floating 数据导入不报错。
 - 配置自检能在常见错误（Key 缺失、端口冲突、CORS 未配）下给出可操作的修复提示。

@@ -13,8 +13,9 @@
  * - 行程 / 版本 / 内容变化导致 owner 失配：输入只读保留，禁止编辑与计算，
  *   旧计算结果不渲染，须显式「沿用」或「新建」后重新计算；无法验证快照时
  *   整块锁定（fail closed）。
- * - 不发请求、不写存储、不下载、不动 Trip；名称 / 金额是手填输入，
- *   不是服务提供者报价；不声称已保存。
+ * - 不发请求、不写存储、不下载、不动 Trip；名称 / 金额是手填或确认导入的
+ *   记录，不是服务提供者报价；不声称已保存。费用文件备份与导入在子组件
+ *   TripBudgetTransfer 内（同样不发请求、不写存储）。
  * - 文本一律 React 文本节点渲染，不使用 dangerouslySetInnerHTML。
  */
 import { useEffect, useId, useState } from 'react'
@@ -44,6 +45,7 @@ import {
   type BudgetTripContext,
 } from '../lib/tripBudget'
 import './tripBudgetPanel.css'
+import TripBudgetTransfer from './TripBudgetTransfer'
 
 export interface TripBudgetPanelProps {
   /** 当前页面正在显示的行程；面板只读，不修改。 */
@@ -64,7 +66,7 @@ export interface TripBudgetPanelOptions {
 }
 
 function memoryNotice(): string {
-  return '费用草稿只在当前页面内存里：不随行程保存或导出，刷新页面会丢失。'
+  return '费用草稿只在当前页面内存里：不随行程保存或导出，刷新页面会丢失。可以展开「费用文件备份」把草稿下载成备份文件，之后导入恢复。'
 }
 
 export default function TripBudgetPanel({
@@ -205,7 +207,7 @@ export default function TripBudgetPanel({
       <p className="tbg-note">
         手动填写费用做估算：人民币 CNY 是这里的固定输入单位，金额按整项总费用填，
         不按人数或天数自动乘算，也不会去查询真实价格、库存或汇率。
-        名称和金额都是你自己填的记录，不是任何服务提供者的报价。
+        名称和金额都是你输入或此前确认导入的记录，不是任何服务提供者的报价。
       </p>
       <p className="tbg-memory-note" role="note">{memoryNotice()}</p>
 
@@ -419,6 +421,17 @@ export default function TripBudgetPanel({
           <p className="tbg-hint">{result.notice}</p>
         </div>
       )}
+
+      {/*
+        费用文件备份与导入子区域：默认收起，展开/挂载不生成文件或 Blob URL。
+        导出允许备份旧 owner 草稿救回输入；「替换」仍严格当前上下文守卫。
+      */}
+      <TripBudgetTransfer
+        trip={trip}
+        revision={revision}
+        session={session}
+        onSessionChange={onSessionChange}
+      />
     </section>
   )
 }
