@@ -11,6 +11,8 @@ import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPan
 import DayWeatherPanel from './components/DayWeatherPanel'
 import DayPoiSourcesPanel from './components/DayPoiSourcesPanel'
 import MapRefreshPanel from './components/MapRefreshPanel'
+import TripBudgetPanel from './components/TripBudgetPanel'
+import { emptyBudgetSession, type BudgetSessionState } from './lib/tripBudget'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
@@ -263,6 +265,26 @@ export default function App() {
   const tripRef = useRef<Trip | null>(null)
   tripRef.current = trip
 
+  /* ───────── 费用估算（手动 CNY，内存草稿）状态 ───────── */
+
+  /**
+   * 费用草稿 session：归 App 层所有，面板只是受控视图。
+   * 关闭面板或临时打开地图 / AI / 编辑导致子组件卸载时，金额输入仍在这里，不丢钱数。
+   * 不写 Storage、不发请求；刷新页面会丢失，界面有固定说明。
+   */
+  const [budgetSession, setBudgetSession] = useState<BudgetSessionState>(emptyBudgetSession)
+  /** 费用估算面板是否展开；默认收起，收起不清草稿 */
+  const [budgetOpen, setBudgetOpen] = useState(false)
+  /** 显式收起费用面板的标记：置位后焦点回「费用估算」入口按钮；隐式隐藏不置位不抢焦点 */
+  const budgetExplicitCloseRef = useRef(false)
+  const budgetEntryRef = useRef<HTMLDivElement | null>(null)
+
+  /** 面板内点「收起」：标记显式收起，让焦点回到入口；其余行为不变 */
+  const handleBudgetClose = useCallback(() => {
+    budgetExplicitCloseRef.current = true
+    setBudgetOpen(false)
+  }, [])
+
   /**
    * 显式收起本日资料面板后，把键盘焦点送回重新挂载的「查资料」入口按钮。
    * 只在显式收起标记置位时执行一次并清除标记；隐式收起（编辑/AI/地图打开）
@@ -303,6 +325,18 @@ export default function App() {
       : mapOpen
         ? '仅刷新地图进行中：新行程规划、保存、恢复、导入导出、撤销和日期切换已暂停。请先关闭面板，再使用这些功能。'
         : null
+
+  /**
+   * 显式收起费用面板后，把键盘焦点送回重新挂载的「费用估算」入口按钮。
+   * 只在显式收起标记置位时执行一次并清除标记；隐式隐藏（编辑 / AI / 地图打开）
+   * 不置位也不抢焦点，不改变其它面板的焦点行为。
+   */
+  useEffect(() => {
+    if (editingDraft || aiOpen || mapOpen) return
+    if (!budgetExplicitCloseRef.current) return
+    budgetExplicitCloseRef.current = false
+    budgetEntryRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+  }, [budgetOpen, editingDraft, aiOpen, mapOpen])
 
   /** 探活，可重复触发；旧结论靠序号挡住，不会盖掉新结果 */
   const runProbe = useCallback(() => {
@@ -1392,6 +1426,40 @@ export default function App() {
                     <div className="edit-entry-actions">
                       <button type="button" className="btn" onClick={() => setPoiSourcesOpen(true)}>
                         查资料
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/*
+              费用估算：整趟 Trip 级的手动工具，独立于 AI / 规划 / 天气 / 资料。
+              session 在 App 层：面板收起或临时打开地图 / AI / 编辑卸载后，输入不丢。
+              编辑 / AI / 地图面板打开时收起入口，不动草稿。
+            */}
+            {!editingDraft && !aiOpen && !mapOpen && trip && (
+              <div className="budget-slot" data-testid="budget-slot">
+                {budgetOpen ? (
+                  <TripBudgetPanel
+                    trip={trip}
+                    revision={tripRevision}
+                    session={budgetSession}
+                    onSessionChange={setBudgetSession}
+                    onClose={handleBudgetClose}
+                  />
+                ) : (
+                  <div className="edit-entry" data-testid="budget-entry" ref={budgetEntryRef}>
+                    <div>
+                      <p className="field-label">费用估算（手动填写）</p>
+                      <p className="field-help">
+                        手动填费用算已知合计与分类小计，人民币 CNY 是固定输入单位；不查真实价格，不换汇。
+                        草稿只在当前页面内存里：不随行程保存或导出，刷新会丢失。
+                      </p>
+                    </div>
+                    <div className="edit-entry-actions">
+                      <button type="button" className="btn" onClick={() => setBudgetOpen(true)}>
+                        费用估算
                       </button>
                     </div>
                   </div>

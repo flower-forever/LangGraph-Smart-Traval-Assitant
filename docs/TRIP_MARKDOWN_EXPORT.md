@@ -58,7 +58,7 @@
 
 ## 测试
 
-`frontend/src/__tests__/` 新增 4 文件（收尾修订后 88 项），全部离线（fake Blob / anchor / URL / clock / DOM，无真实下载、网络、存储）：
+`frontend/src/__tests__/` 新增 4 文件（勘误：本节此前误写为 88 项，实际为 72 项——29+17+20+6），全部离线（fake Blob / anchor / URL / clock / DOM，无真实下载、网络、存储）：
 
 - `tripMarkdown.test.ts`（29 项）：字段投影、0/null、旧宽字段时间、重复名不同 id、缺路段、三种 route_type、extra 字段不输出、深冻结、转义（中文 / 多行 / Markdown / HTML / 反斜杠 / 控制字符无损记号 / 硬换行）、原记录营业票价天气说法原样保留、bad_limit 门禁、UTF-8 字节门禁、确定性输出、文件名。
 - `tripMarkdownFile.test.ts`（17 项）：显式下载一次点击、MIME 与内容一致、延迟回收、Blob / createObjectURL / 属性设置 / appendChild / click 各抛错分支的固定文案与回收清理、schedule 抛错不逃逸且默认调度兜底后 revoke 最终发生、先回调后抛错的幂等回收、正常注入路径行为不变、unsupported / missing_text / revoke 异常、不写存储不发请求。
