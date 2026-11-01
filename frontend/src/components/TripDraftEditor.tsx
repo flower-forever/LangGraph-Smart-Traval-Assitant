@@ -9,6 +9,14 @@ import {
   type EndTimeDayResult,
 } from '../lib/draftEndTime'
 import {
+  MAX_DAILY_WALKING_DISTANCE_METERS,
+  WALKING_DISTANCE_DISCLAIMER,
+  dailyWalkingDistanceResult,
+  formatWalkingMeters,
+  parseDailyWalkingDistanceLimit,
+  type DailyWalkingDistanceScope,
+} from '../lib/draftWalkingDistance'
+import {
   MAX_STOP_ADDRESS_LENGTH,
   MAX_STOP_DESCRIPTION_LENGTH,
   MAX_STOP_DURATION_MINUTES,
@@ -285,9 +293,62 @@ export default function TripDraftEditor({
     scope: DailyEndTimeScope
   } | null>(null)
   const [endTimeError, setEndTimeError] = useState<string | null>(null)
+  /** 「每天步行距离上限」偏好：与最晚结束时间同路数，默认关闭，仅当前草稿会话。
+   * 文本存原始输入以保留中间态；点「检查」才解析，空 / 非法在区内明示（空不等于 0），
+   * 仅此检查非法不阻断原编辑与应用。 */
+  const [walkingDistanceEnabled, setWalkingDistanceEnabled] = useState(false)
+  const [walkingDistanceText, setWalkingDistanceText] = useState('3000')
+  const [walkingDistanceScope, setWalkingDistanceScope] =
+    useState<DailyWalkingDistanceScope>('all_days')
+  /** 点「检查」后冻结的本次检查设置；null 表示尚未执行或已被后续操作清除。
+   * 修改输入、范围或关闭开关都会清除旧结果，必须重新点「检查」；结果按当前草稿
+   * 实时重算：同草稿切天、编辑、撤销都会基于当前 legs 重读（新增 / 改地址让路段
+   * 失效后自然变未知，不残留旧距离合计）。 */
+  const [walkingDistanceRun, setWalkingDistanceRun] = useState<{
+    limit: number
+    scope: DailyWalkingDistanceScope
+  } | null>(null)
+  const [walkingDistanceError, setWalkingDistanceError] = useState<string | null>(null)
 
-  // 偏好设置只属于当前草稿会话：换草稿（forkTripId 变化）后回到默认禁用，
-  // 避免旧草稿的上限偏好被带进新草稿的检查结果。
+  /** 步行距离检查的 owner 身份：forkTripId + base 身份/内容签名。
+   * 任一变化都意味着旧偏好 / 旧 run 不再属于当前草稿。签名序列化失败时返回
+   * null（failclosed）：无法核对归属就一律按「已切换」处理，结果不渲染。 */
+  const walkingOwner = useMemo(() => {
+    const base = draft.base
+    let baseSignature: string | null
+    try {
+      baseSignature = JSON.stringify([
+        base?.id ?? null,
+        base?.source ?? null,
+        base?.title ?? null,
+        base?.destination ?? null,
+        (base?.days ?? []).map((item) => item.day),
+      ])
+    } catch {
+      baseSignature = null
+    }
+    if (typeof draft.forkTripId !== 'string' || draft.forkTripId === '' || baseSignature === null) {
+      return null
+    }
+    return { forkTripId: draft.forkTripId, baseSignature }
+  }, [draft.base, draft.forkTripId])
+  const walkingOwnerKey =
+    walkingOwner === null ? null : `${walkingOwner.forkTripId}\u0000${walkingOwner.baseSignature}`
+
+  /** owner 变化推进单调 epoch；owner 为 null（无法核对归属）时也推进，
+   * 保证 A-B-A 回到旧 key 也不会复用旧 run。 */
+  const walkingOwnerEpochRef = useRef(0)
+  const walkingLastOwnerKeyRef = useRef<string | null | undefined>(undefined)
+  if (walkingLastOwnerKeyRef.current !== walkingOwnerKey) {
+    walkingOwnerEpochRef.current += 1
+    walkingLastOwnerKeyRef.current = walkingOwnerKey
+  }  /** 与当前可见 run 绑定的 owner epoch：run 在某次 owner 时代里点「检查」产生，
+   * owner 变化后 epoch 不匹配的 run 一律视为过期，不会套到新草稿上渲染。 */
+  const walkingRunEpochRef = useRef(0)
+
+  /** 偏好设置只属于当前草稿会话：owner（forkTripId + base 身份）变化后回到默认
+   * 禁用，避免旧草稿的上限偏好被带进新草稿的检查结果。旧 run / 旧结论在这轮
+   * effect 之前也不会被渲染：结果 useMemo 只认与当前 owner epoch 同期的 run。 */
   useEffect(() => {
     setDailyStopLimitEnabled(false)
     setDailyStopLimit(4)
@@ -297,7 +358,14 @@ export default function TripDraftEditor({
     setEndTimeScope('all_days')
     setEndTimeRun(null)
     setEndTimeError(null)
-  }, [draft.forkTripId])
+    setWalkingDistanceEnabled(false)
+    setWalkingDistanceText('3000')
+    setWalkingDistanceScope('all_days')
+    setWalkingDistanceRun(null)
+    setWalkingDistanceError(null)
+    // 重置完成后把当前 run 标成与新 owner 同期；下一次 owner 变化前不再重复重置。
+    walkingRunEpochRef.current = walkingOwnerEpochRef.current
+  }, [draft.forkTripId, walkingOwnerKey])
 
   const headingRef = useRef<HTMLHeadingElement | null>(null)
   const addButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -325,6 +393,23 @@ export default function TripDraftEditor({
     const result = dailyEndTimeLimitResult(draft, endTimeRun.limit, endTimeRun.scope)
     return result.ok ? result.days : null
   }, [draft, endTimeRun, endTimeEnabled])
+  /** 冻结设置对应的步行距离汇总。两条硬约束：
+   * 1. owner 绑定：run 只在与它同期的 owner epoch 里有效；换草稿（含同 fork
+   *    换 base）后、effect 重置生效前，旧 run / 旧结论不渲染，不闪现。
+   * 2. 当前内容：这里刻意不用 useMemo——useMemo 按依赖（对象引用）缓存，
+   *    同一个 draft 对象被原地改 legs 后重渲染会命中旧缓存。每轮渲染都基于
+   *    当前 draft 的 legs 重新汇总，编辑 / 撤销 / 切天 / 原地变更都读新值。 */
+  const walkingDistanceDays = (() => {
+    if (!walkingDistanceEnabled || !walkingDistanceRun) return null
+    if (walkingRunEpochRef.current !== walkingOwnerEpochRef.current) return null
+    if (walkingOwnerKey === null) return null
+    const result = dailyWalkingDistanceResult(
+      draft,
+      walkingDistanceRun.limit,
+      walkingDistanceRun.scope,
+    )
+    return result.ok ? result.days : null
+  })()
   const warnings = draft.base.warnings
   const sessionStale =
     session !== null &&
@@ -695,6 +780,27 @@ export default function TripDraftEditor({
     }
     setEndTimeError(null)
     setEndTimeRun({ limit: parsed.minutes, scope: endTimeScope })
+  }
+
+  /** 点「检查」：先解析当前输入，空 / 非法就在区内明示（空不等于 0，不静默裁值）；
+   * 合法定为本次冻结设置，并绑定当前 owner epoch。修改输入 / 范围 / 关闭开关都会
+   * 清除旧结果（见各 onChange）；owner 切换后旧 run 因 epoch 不匹配不会渲染。 */
+  function handleWalkingDistanceCheck() {
+    if (!walkingDistanceEnabled) return
+    if (walkingOwnerKey === null) {
+      setWalkingDistanceError(
+        '当前草稿无法核对归属，步行距离检查不可用；请换草稿后重试。',
+      )
+      return
+    }
+    const parsed = parseDailyWalkingDistanceLimit(walkingDistanceText)
+    if (!parsed.ok) {
+      setWalkingDistanceError(parsed.message)
+      return
+    }
+    setWalkingDistanceError(null)
+    walkingRunEpochRef.current = walkingOwnerEpochRef.current
+    setWalkingDistanceRun({ limit: parsed.meters, scope: walkingDistanceScope })
   }
 
   const checkPreview = checksExpanded ? checks : checks.slice(0, CHECK_PREVIEW_COUNT)
@@ -1314,6 +1420,133 @@ export default function TripDraftEditor({
                       ))}
                     </ul>
                   )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="tde-checks" aria-labelledby={`${baseId}-walking-title`}>
+        <div className="tde-section-head">
+          <h4 className="tde-section-title" id={`${baseId}-walking-title`}>
+            每天步行距离上限（偏好检查）
+          </h4>
+          <span className="tde-count">
+            {walkingDistanceEnabled
+              ? walkingDistanceRun
+                ? `上限 ${formatWalkingMeters(walkingDistanceRun.limit)}`
+                : '已启用，待检查'
+              : '未启用'}
+          </span>
+        </div>
+        <p className="tde-section-note">
+          这是只属于当前草稿会话的界面设置：不写入行程、不保存、不发给后端，也不会自动修改任何站点。
+          {WALKING_DISTANCE_DISCLAIMER}
+          修改输入或范围后旧结果会清除，需要重新点「检查」；仅此检查的输入非法不会阻断原来的编辑与应用。
+        </p>
+        <div className="tde-limit-controls">
+          <label>
+            <input
+              type="checkbox"
+              checked={walkingDistanceEnabled}
+              onChange={(event) => {
+                setWalkingDistanceEnabled(event.target.checked)
+                // 关闭开关后旧结果不再属于当前状态：连结果与报错一起清掉。
+                setWalkingDistanceRun(null)
+                setWalkingDistanceError(null)
+              }}
+            />{' '}
+            启用每天步行距离检查
+          </label>
+          <label>
+            每天步行距离上限（米，0–{MAX_DAILY_WALKING_DISTANCE_METERS}）{' '}
+            <input
+              type="text"
+              value={walkingDistanceText}
+              onChange={(event) => {
+                setWalkingDistanceText(event.target.value)
+                // 输入变化说明当前结果不再对应可见设置：清掉旧结果，等重新检查。
+                // 留空保留中间态，不静默变成 0。
+                setWalkingDistanceRun(null)
+                setWalkingDistanceError(null)
+              }}
+              disabled={!walkingDistanceEnabled}
+              placeholder="例如 3000"
+              inputMode="numeric"
+              autoComplete="off"
+              aria-label="每天步行距离上限"
+              aria-invalid={walkingDistanceError ? true : undefined}
+              className="tde-time-input"
+            />
+          </label>
+          <label>
+            检查范围{' '}
+            <select
+              value={walkingDistanceScope}
+              onChange={(event) => {
+                setWalkingDistanceScope(event.target.value as DailyWalkingDistanceScope)
+                // 范围变化同样作废旧结果，避免旧范围的结果冒充新设置。
+                setWalkingDistanceRun(null)
+                setWalkingDistanceError(null)
+              }}
+              disabled={!walkingDistanceEnabled}
+              aria-label="步行距离检查范围"
+            >
+              <option value="all_days">所有天</option>
+              <option value="changed_days">仅改动过的天</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn"
+            onClick={handleWalkingDistanceCheck}
+            disabled={!walkingDistanceEnabled}
+          >
+            检查
+          </button>
+        </div>
+        {walkingDistanceError && (
+          <p className="field-error" role="alert">
+            {walkingDistanceError}
+          </p>
+        )}
+        {walkingDistanceEnabled && !walkingDistanceRun && !walkingDistanceError && (
+          <p className="tde-section-empty">
+            设置好上限与范围后点「检查」出结果；结果只按点检查时的设置展示，
+            修改输入或范围后会清除，需要重新检查。
+          </p>
+        )}
+        {walkingDistanceDays !== null && walkingDistanceDays.length === 0 && (
+          <p className="tde-section-empty">
+            {walkingDistanceScope === 'changed_days'
+              ? '没有已改动过的天可检查；切到「所有天」可查看整个行程的已记录步行距离。'
+              : '草稿里没有天可检查。'}
+          </p>
+        )}
+        {walkingDistanceDays !== null && walkingDistanceDays.length > 0 && (
+          <ul className="tde-check-list" aria-label="每天步行距离检查结果">
+            {walkingDistanceDays.map((dayResult) => (
+              <li key={dayResult.day} className="tde-check-item">
+                <span className="tde-check-kind">
+                  {dayResult.status === 'over_limit'
+                    ? '已记录超限'
+                    : dayResult.status === 'no_data'
+                      ? '暂无数据'
+                      : dayResult.status === 'unsafe_sum'
+                        ? '合计异常'
+                        : '未发现超限'}
+                </span>
+                <div className="tde-check-body">
+                  {dayResult.summary}
+                  <p className="tde-walking-detail">
+                    纳入 {dayResult.includedLegCount} 段导航步行
+                    {dayResult.includedTotalMeters !== null
+                      ? `，合计 ${formatWalkingMeters(dayResult.includedTotalMeters)}`
+                      : '，合计未知'}
+                    ；{dayResult.unknownWalkingLegCount} 段步行距离未知或示意；
+                    {dayResult.drivingLegCount} 段驾车不计入步行。
+                  </p>
                 </div>
               </li>
             ))}

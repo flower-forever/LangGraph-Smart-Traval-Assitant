@@ -515,6 +515,15 @@
   min-width: 0;
 }
 
+/* 步行距离检查的天级明细行：独立小字段落，与天级结论分开，不挤在一段里。 */
+.tde-walking-detail {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-faint);
+  overflow-wrap: anywhere;
+}
+
 .tde-warning-list li {
   font-size: var(--text-sm);
   line-height: 1.6;
