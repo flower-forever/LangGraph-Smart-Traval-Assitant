@@ -17,23 +17,10 @@ import {
 } from '../lib/tripBudgetTransfer'
 import {
   emptyBudgetSession,
-  addBudgetRow,
-  updateBudgetRow,
-  updateBudgetTotal,
   type BudgetSessionState,
-  type BudgetTripContext,
 } from '../lib/tripBudget'
 import type { Trip } from '../lib/api'
 import { MOCK_TRIP } from './fixtures/trip'
-
-function ctxFor(trip: Trip, revision = 1): BudgetTripContext {
-  return {
-    tripId: trip.id,
-    revision,
-    snapshot: JSON.stringify(trip),
-    tripTitle: trip.title,
-  }
-}
 
 function envelopeOf(input: Partial<BudgetExportInput>): string {
   const result = createBudgetBackup({
@@ -197,11 +184,9 @@ describe('导出：预览与下载', () => {
   })
 
   it('有 owner 的草稿导出：备份自述写 owner 的行程标题；无 owner 时明确说不记录归属', async () => {
-    // 先造一个绑定 owner 的 session
+    // 先造一个绑定 owner 的 session。直接在空 session 上用 addBudgetRow 会因
+    // no_owner 失败，所以手动构造（与 App 持有的真实结构一致）。
     let session = emptyBudgetSession()
-    const ctx = ctxFor(MOCK_TRIP)
-    const created = emptyBudgetSession()
-    void created
     // 直接通过 updateBudgetRow 在空 session 上操作会因 no_owner 失败，所以先手动构造：
     // 用面板语义模拟：owner 由导入应用建立。这里用 addBudgetRow 不行（no_owner），
     // 因此用 applyBudgetImport 语义等价物：直接构造 session（与 App 持有的真实结构一致）。
@@ -438,10 +423,12 @@ describe('导入：选择文件只预览', () => {
   })
 
   it('旧文件晚回不覆盖新候选（序号守卫）：第二次选择的结果胜出', async () => {
-    let releaseFirst: ((text: string) => void) | null = null
+    // 第一次选择：挂起。release 用 ref 对象装：直接用 let 会被 TS 控制流
+    // 收窄成 null（闭包内赋值不参与流分析），晚回调用报 never 不可调用
+    const releaseRef: { current: ((text: string) => void) | null } = { current: null }
     const slowFirst = () =>
       new Promise<string>((resolve) => {
-        releaseFirst = resolve
+        releaseRef.current = resolve
       })
     const firstJson = envelopeOf({ budgetRaw: '111', rows: [{ id: 'f1', category: 'other', name: '慢的第一份', amountRaw: '1' }] })
     const { user } = setup()
@@ -457,7 +444,7 @@ describe('导入：选择文件只预览', () => {
     await screen.findByTestId('budget-import-preview')
     expect(within(transfer()).getByTestId('budget-import-preview').textContent).toContain('快的第二份')
     // 旧文件晚回：被忽略
-    releaseFirst?.(firstJson)
+    releaseRef.current?.(firstJson)
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(within(transfer()).getByTestId('budget-import-preview').textContent).toContain('快的第二份')
     expect(within(transfer()).getByTestId('budget-import-preview').textContent).not.toContain('慢的第一份')
@@ -608,8 +595,10 @@ describe('导入确认与应用', () => {
     )
     const user = userEvent.setup()
     await user.click(within(transfer()).getByRole('button', { name: '展开费用文件备份' }))
-    let release: ((text: string) => void) | null = null
-    const slowText = () => new Promise<string>((resolve) => { release = resolve })
+    // release 用 ref 对象装：直接用 let 会被 TS 控制流收窄成 null（闭包内赋值
+    // 不参与流分析），晚回调用报 never 不可调用
+    const releaseRef: { current: ((text: string) => void) | null } = { current: null }
+    const slowText = () => new Promise<string>((resolve) => { releaseRef.current = resolve })
     const fileInput = within(transfer()).getByLabelText('选择费用备份文件（.budget.json）') as HTMLInputElement
     await user.upload(fileInput, {
       name: 'a.budget.json',
@@ -623,7 +612,7 @@ describe('导入确认与应用', () => {
     )
     expect(within(transfer()).queryByRole('status')).toBeNull()
     // 旧文件晚回：不落地、不出错误提示
-    release?.(IMPORT_JSON)
+    releaseRef.current?.(IMPORT_JSON)
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(within(transfer()).queryByTestId('budget-import-preview')).toBeNull()
     expect(within(transfer()).queryByTestId('budget-import-notice')).toBeNull()
@@ -721,8 +710,10 @@ describe('窄收尾：目标 ctx 与候选守卫', () => {
     )
     const user = userEvent.setup()
     await user.click(within(transfer()).getByRole('button', { name: '展开费用文件备份' }))
-    let release: ((text: string) => void) | null = null
-    const slowText = () => new Promise<string>((resolve) => { release = resolve })
+    // release 用 ref 对象装：直接用 let 会被 TS 控制流收窄成 null（闭包内赋值
+    // 不参与流分析），晚回调用报 never 不可调用
+    const releaseRef: { current: ((text: string) => void) | null } = { current: null }
+    const slowText = () => new Promise<string>((resolve) => { releaseRef.current = resolve })
     const fileInput = within(transfer()).getByLabelText('选择费用备份文件（.budget.json）') as HTMLInputElement
     await user.upload(fileInput, {
       name: 'a.budget.json',
@@ -734,7 +725,7 @@ describe('窄收尾：目标 ctx 与候选守卫', () => {
       <TripBudgetTransfer trip={MOCK_TRIP} revision={1} session={emptyBudgetSession()} onSessionChange={() => {}} />,
     )
     // 旧文件晚回：目标已变，不落地、不出提示
-    release?.(IMPORT_JSON)
+    releaseRef.current?.(IMPORT_JSON)
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(within(transfer()).queryByTestId('budget-import-preview')).toBeNull()
     expect(within(transfer()).queryByTestId('budget-import-notice')).toBeNull()
