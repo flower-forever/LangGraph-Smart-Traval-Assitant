@@ -23,6 +23,11 @@ import {
   type DayReplanRequest,
   type DayReplanResponse,
 } from './lib/dayReplan'
+import {
+  applyDayReplanTail,
+  type DayReplanTailApplyResult,
+  type DayReplanTailScope,
+} from './lib/dayReplanTail'
 import { replanDay } from './lib/dayReplanApi'
 import {
   applyMapRefresh,
@@ -806,18 +811,35 @@ export default function App() {
    * 应用快照与本地编辑共用一次「撤销应用」，但不写 localStorage。
    */
   const handleAiApply = useCallback(
-    (request: DayReplanRequest, response: DayReplanResponse): DayReplanApplyResult => {
+    (
+      request: DayReplanRequest,
+      response: DayReplanResponse,
+      tailScope?: DayReplanTailScope,
+    ): DayReplanApplyResult | DayReplanTailApplyResult => {
       const latestTrip = tripRef.current
       if (!latestTrip) {
         return { ok: false, reason: 'invalid_base', message: '当前没有可应用的行程，AI 候选未应用。' }
       }
-      const applied = applyDayReplan({
-        baseTrip: latestTrip,
-        request,
-        response,
-        currentRevision: tripRevisionRef.current,
-        forkTripId: newUuid(),
-      })
+      // 只有 scope === undefined 才走旧整天应用；任何有参（含非法 falsy 值）都走后段
+      // 应用路径并由 verifyTailScope 做类型化失败，绝不降级成整天替换。
+      // 传入 request 供指纹核对：预览组合与应用用的必须是同一份生成时请求。
+      const applied =
+        tailScope === undefined
+          ? applyDayReplan({
+              baseTrip: latestTrip,
+              request,
+              response,
+              currentRevision: tripRevisionRef.current,
+              forkTripId: newUuid(),
+            })
+          : applyDayReplanTail({
+              baseTrip: latestTrip,
+              scope: tailScope,
+              request,
+              response,
+              currentRevision: tripRevisionRef.current,
+              forkTripId: newUuid(),
+            })
       if (!applied.ok) return applied
 
       aiRequestSeqRef.current += 1
@@ -837,7 +859,17 @@ export default function App() {
         current && applied.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
       )
       setAppliedNotice(
-        `已把第 ${request.day} 天的 AI 候选应用到当前行程（新的行程副本）；这次应用只替换这一天，其它天和已有保存记录都没有被它改动。` +
+        tailScope !== undefined
+          ? `已把第 ${request.day} 天锚点之后的 AI 后段候选应用到当前行程（新的行程副本）；前 ${tailScope.keptCount} 站与站间路线原样保留，其它天和已有保存记录都没有被它改动，锚点衔接路线未重算。` +
+          '这次应用本身不会自动保存，保存仍由你显式操作；导出的日历是新副本，不会更新之前导入的事件。' +
+          (applied.omittedWarnings > 0
+            ? ` 有 ${applied.omittedWarnings} 条提醒因 ${MAX_REPLAN_WARNINGS} 条上限被省略，具体见行程提醒里的说明。`
+            : '') +
+          (openedFromFile
+            ? ' 这份行程来自导入文件：本次只替换了这一天，其余内容仍未向服务器核对。'
+            : '') +
+          (applied.trip.source === 'example' ? ' 这次应用保留了原来的示例行程身份。' : '')
+          : `已把第 ${request.day} 天的 AI 候选应用到当前行程（新的行程副本）；这次应用只替换这一天，其它天和已有保存记录都没有被它改动。` +
           '这次应用本身不会自动保存，保存仍由你显式操作；导出的日历是新副本，不会更新之前导入的事件。' +
           (applied.omittedWarnings > 0
             ? ` 有 ${applied.omittedWarnings} 条提醒因 ${MAX_REPLAN_WARNINGS} 条上限被省略，具体见行程提醒里的说明。`

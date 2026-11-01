@@ -161,8 +161,9 @@
   padding: var(--space-2) var(--space-3);
 }
 
-/* 同行人数：单行输入，和指令 textarea 共用同一套纸底与描边 */
-.drp-field input[type="text"] {
+/* 同行人数与锚点选择：单行控件，和指令 textarea 共用同一套纸底与描边 */
+.drp-field input[type="text"],
+.drp-field select {
   width: 100%;
   max-width: 200px;
   border: var(--rule-strong);
@@ -176,7 +177,8 @@
 }
 
 .drp-field textarea:focus-visible,
-.drp-field input[type="text"]:focus-visible {
+.drp-field input[type="text"]:focus-visible,
+.drp-field select:focus-visible {
   outline: 2px solid var(--color-accent-ink);
   outline-offset: 1px;
 }

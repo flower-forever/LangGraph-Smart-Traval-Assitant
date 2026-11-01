@@ -25,6 +25,12 @@ import {
   type MapStatus,
 } from '../lib/dayReplan'
 import { replanDay } from '../lib/dayReplanApi'
+import {
+  buildDayReplanTailRequest,
+  composeTailPreviewDay,
+  type DayReplanTailApplyResult,
+  type DayReplanTailScope,
+} from '../lib/dayReplanTail'
 import './dayReplanPanel.css'
 
 export type DayReplanAdapter = (
@@ -49,7 +55,11 @@ export interface DayReplanPanelProps {
    * 用户显式点击「应用候选」时调用。父级负责生成 fork id、用最新 trip/revision
    * 调 applyDayReplan 并采纳结果；面板只按同步返回结果显示成功或失败。
    */
-  onApply: (request: DayReplanRequest, response: DayReplanResponse) => DayReplanApplyResult
+  onApply: (
+    request: DayReplanRequest,
+    response: DayReplanResponse,
+    scope?: DayReplanTailScope,
+  ) => DayReplanApplyResult | DayReplanTailApplyResult
   /** 关闭面板：只放弃候选 / 停止等待，不改旧行程。 */
   onClose: () => void
 }
@@ -89,6 +99,36 @@ function formatDistance(value: number | null): string {
 
 function isApiError(err: unknown): err is ApiError {
   return err instanceof Error && (err as { kind?: unknown }).kind !== undefined
+}
+
+/**
+ * 生成候选时的上下文签名（只留在客户端内存，不进请求 / 日志 / Storage）：
+ * 行程完整内容（render 期安全序列化，同对象内容修改也会改变签名）+ 原始输入
+ * （指令 / 方式 / 人数 / 范围 / 锚点）+ trip id / revision / day 绑定。
+ * 序列化失败返回 null：不可验证的上下文一律按已变化处理（fail closed）。
+ */
+function contextSignature(
+  trip: Trip,
+  dayNumber: number,
+  revision: number,
+  inputs: {
+    instruction: string
+    mode: TravelMode | ''
+    travelers: string
+    rangeMode: 'whole' | 'tail'
+    anchorId: string
+  },
+): string | null {
+  try {
+    return JSON.stringify({
+      trip: JSON.stringify(trip),
+      dayNumber,
+      revision,
+      inputs: [inputs.instruction, inputs.mode, inputs.travelers, inputs.rangeMode, inputs.anchorId],
+    })
+  } catch {
+    return null
+  }
 }
 
 /** 与请求一致的 day 条目；找不到返回 null（构造阶段已经挡住，防御性兜底）。 */
@@ -133,6 +173,8 @@ export default function DayReplanPanel({
   const modeGroupId = useId()
   const travelersId = useId()
   const travelersErrorId = `${travelersId}-error`
+  const rangeGroupId = useId()
+  const anchorSelectId = useId()
 
   const day = targetDay(trip, dayNumber)
   const plannerUnavailable = plannerAvailability === 'unavailable'
@@ -147,6 +189,10 @@ export default function DayReplanPanel({
 
   const [instruction, setInstruction] = useState('')
   const [mode, setMode] = useState<TravelMode | ''>(initialMode)
+  /** 范围模式：whole=整天（默认，旧行为）；tail=某站之后（显式选择）。 */
+  const [rangeMode, setRangeMode] = useState<'whole' | 'tail'>('whole')
+  /** 后段模式下的锚点站 id；空串表示未选。 */
+  const [anchorId, setAnchorId] = useState('')
   /**
    * 同行人数（选填）：用字符串保存输入，留空就完全不往请求里写。
    * 不从旧行程或规划表单猜人数，也不默认 1。
@@ -154,13 +200,57 @@ export default function DayReplanPanel({
   const [travelers, setTravelers] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<PanelError | null>(null)
-  const [candidate, setCandidate] = useState<{ request: DayReplanRequest; response: DayReplanResponse } | null>(null)
+  const [candidate, setCandidate] = useState<{
+    request: DayReplanRequest
+    response: DayReplanResponse
+    /** 整天候选为 null；后段候选记录生成时的 scope。 */
+    scope: DayReplanTailScope | null
+    /** 生成时的输入指纹序号；之后任何输入变化都使候选过期。 */
+    inputEpoch: number
+    /** 生成时的上下文内容版本；之后行程内容 / revision / day / 输入渲染值变化都使候选过期。 */
+    contentEpoch: number
+  } | null>(null)
   const [candidateInvalid, setCandidateInvalid] = useState<string | null>(null)
   const [applyError, setApplyError] = useState<ApplyError | null>(null)
   const [showAllWarnings, setShowAllWarnings] = useState(false)
 
   const seqRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  /** 输入指纹的单调序号：指令/方式/人数/范围/锚点任何变化都 +1，旧候选永久作废（A-B-A 不复活）。 */
+  const [inputEpoch, setInputEpoch] = useState(0)
+  /**
+   * 渲染期计算上下文内容签名：行程完整内容（同对象内容修改也会改变签名）+ 原始输入
+   * + trip id / revision / day 绑定。只留在客户端内存，不进请求 / 日志 / Storage。
+   * 序列化失败为 null：不可验证的上下文一律 fail closed（生成前拒绝、迟到结果丢弃）。
+   */
+  const signature = contextSignature(trip, dayNumber, revision, {
+    instruction,
+    mode,
+    travelers,
+    rangeMode,
+    anchorId,
+  })
+  /**
+   * 上下文内容版本（单调）：渲染时与上一渲染的签名比较，任一变化 +1。
+   * 同对象内容修改、effect 尚未运行的输入变化都在这里被抓住；A→B→A 签名回到旧值
+   * 也会再次 +1，永不复活。签名 null（不可序列化）同样计入版本变化，fail closed。
+   */
+  const contentEpochRef = useRef(0)
+  const prevSignatureRef = useRef<string | null>(signature)
+  if (prevSignatureRef.current !== signature) {
+    prevSignatureRef.current = signature
+    contentEpochRef.current += 1
+  }
+  /**
+   * 最新上下文（每次渲染同步更新，捕获基元版本号，不自比旧对象）：
+   * 迟到的成功/失败即使赶在 effect 之前返回，也必须与生成时捕获的内容版本与输入序号
+   * 一致；inputEpoch 由 effect 单调递增，内容等值也不会复活。
+   */
+  const ctxRef = useRef<{ contentEpoch: number; epoch: number }>({
+    contentEpoch: contentEpochRef.current,
+    epoch: inputEpoch,
+  })
+  ctxRef.current = { contentEpoch: contentEpochRef.current, epoch: inputEpoch }
 
   // trip 对象 / revision / day 变化：abort 在途请求、作废候选；指令保留供核对。
   useEffect(() => {
@@ -181,6 +271,18 @@ export default function DayReplanPanel({
   }, [trip, revision, dayNumber])
 
   useEffect(() => {
+    setInputEpoch((epoch) => epoch + 1)
+  }, [instruction, mode, travelers, rangeMode, anchorId])
+
+  // 范围模式或锚点变化：直接清掉旧候选与预览——后段候选不能被当成整天候选继续用，
+  // 反之亦然；换锚点后的旧后段候选也作废。
+  useEffect(() => {
+    setCandidate(null)
+    setCandidateInvalid(null)
+    setApplyError(null)
+  }, [rangeMode, anchorId])
+
+  useEffect(() => {
     setMode(initialMode)
   }, [initialMode])
 
@@ -192,6 +294,16 @@ export default function DayReplanPanel({
   const travelersInvalid =
     travelersText !== '' &&
     (travelersValue === null || travelersValue < 1 || travelersValue > MAX_REPLAN_TRAVELERS)
+  // 后段模式额外要求锚点已选且不是末站；整天模式不看锚点。
+  const anchorIndexSelected =
+    rangeMode === 'whole'
+      ? 0
+      : day
+        ? day.stops.findIndex((stop) => stop.id === anchorId)
+        : -1
+  const tailAnchorReady =
+    rangeMode === 'whole' ||
+    (anchorIndexSelected >= 0 && day !== null && anchorIndexSelected < day.stops.length - 1)
   const canGenerate =
     Boolean(day) &&
     !plannerUnavailable &&
@@ -199,7 +311,8 @@ export default function DayReplanPanel({
     !instructionEmpty &&
     !instructionTooLong &&
     !travelersInvalid &&
-    mode !== ''
+    mode !== '' &&
+    tailAnchorReady
 
   function stopWaiting() {
     // 作废在途请求：seq 递增后，即使 adapter 忽略 abort 迟迟不落定，
@@ -217,9 +330,33 @@ export default function DayReplanPanel({
       parentRevision: revision,
       travelers: travelersValue,
     }
+    // 整天走旧 build；后段走新 build（含固定范围说明合并与 scope 记录）。
+    if (rangeMode === 'tail') {
+      const builtTail = buildDayReplanTailRequest(trip, dayNumber, instruction, anchorIndexSelected, options)
+      if (!builtTail.ok) {
+        setError({ kind: 'build', message: builtTail.message })
+        return
+      }
+      await runGenerate(builtTail.request, builtTail.scope)
+      return
+    }
     const built = buildDayReplanRequest(trip, dayNumber, instruction, options)
     if (!built.ok) {
       setError({ kind: 'build', message: built.message })
+      return
+    }
+    await runGenerate(built.request, null)
+  }
+
+  async function runGenerate(request: DayReplanRequest, scope: DayReplanTailScope | null) {
+    const epochAtGenerate = inputEpoch
+    const ctxAtGenerate = ctxRef.current
+    // 上下文不可序列化（签名 null）时 fail closed：不发起请求。
+    if (signature === null) {
+      setError({
+        kind: 'build',
+        message: '当前行程数据无法安全核对，不能生成调整候选。请检查行程内容后重试。',
+      })
       return
     }
     const seq = seqRef.current + 1
@@ -233,17 +370,35 @@ export default function DayReplanPanel({
     setCandidateInvalid(null)
     setShowAllWarnings(false)
     try {
-      const response = await (requestDay ?? replanDay)(built.request, { signal: controller.signal })
+      const response = await (requestDay ?? replanDay)(request, { signal: controller.signal })
       if (seqRef.current !== seq || controller.signal.aborted) return
+      // 最新上下文核对（render 期内容版本 + 输入序号）：行程内容（含同对象修改）/
+      // revision / day / 原始输入任一渲染变化都作废，即使变化还没来得及触发 effect。
+      const ctxNow = ctxRef.current
+      if (
+        ctxNow.contentEpoch !== ctxAtGenerate.contentEpoch ||
+        ctxNow.epoch !== ctxAtGenerate.epoch
+      ) {
+        return
+      }
       // 展示前再核对一次完整契约：不过关的响应不进预览。
-      const validated = validateDayReplanResponse(response, built.request)
+      const validated = validateDayReplanResponse(response, request)
       if (!validated.ok) {
         setError({ kind: 'bad_payload', message: '返回的结果没有通过完整性检查，本次未生成候选。可以重新生成试试。' })
         return
       }
-      setCandidate({ request: built.request, response: validated.response })
+      setCandidate({ request, response: validated.response, scope, inputEpoch: epochAtGenerate, contentEpoch: ctxAtGenerate.contentEpoch })
     } catch (err) {
       if (seqRef.current !== seq || controller.signal.aborted) return
+      // 失败提示同样只落在生成时的上下文上：内容版本或输入序号已变化就静默丢弃，
+      // 不覆盖新状态。
+      const ctxNow = ctxRef.current
+      if (
+        ctxNow.contentEpoch !== ctxAtGenerate.contentEpoch ||
+        ctxNow.epoch !== ctxAtGenerate.epoch
+      ) {
+        return
+      }
       if (isApiError(err)) {
         switch (err.kind) {
           case 'timeout':
@@ -283,7 +438,7 @@ export default function DayReplanPanel({
 
   function handleApply() {
     if (!candidate || candidateInvalid) return
-    const result = onApply(candidate.request, candidate.response)
+    const result = onApply(candidate.request, candidate.response, candidate.scope ?? undefined)
     if (result.ok) {
       // 成功由父级关面板 / 换行程；这里不重复提示，也不再改状态。
       return
@@ -312,12 +467,16 @@ export default function DayReplanPanel({
   const hiddenWarningCount = warnings.length - visibleWarnings.length
   const canApply = currentCandidate !== null && candidateInvalid === null && !pending
 
-  // 新输入、模式或同行人数改变后，旧候选基于旧条件，不能再用。
+  // 生成之后任何变化都使候选永久过期（A-B-A 不复活）：
+  // - inputEpoch 单调序号：指令/方式/人数/范围/锚点变化 +1（effect），不做内容等值判断；
+  // - contentEpoch 单调版本：行程完整内容（含同对象修改）/ revision / day / 原始输入
+  //   渲染值与生成时不一致即过期——effect 尚未运行的窗口由它兜住；A→B→A 签名回到
+  //   旧值也再 +1，永不复活；签名 null（不可序列化）同样计入版本变化。
   const candidateStale =
+    candidate !== null &&
     currentRequest !== null &&
-    (currentRequest.instruction !== instruction ||
-      currentRequest.travel_mode !== mode ||
-      (currentRequest.travelers ?? null) !== travelersValue ||
+    (candidate.inputEpoch !== inputEpoch ||
+      candidate.contentEpoch !== contentEpochRef.current ||
       currentRequest.parent.revision !== revision)
 
   return (
@@ -346,6 +505,56 @@ export default function DayReplanPanel({
 
       <fieldset className="drp-form" disabled={pending || plannerUnavailable}>
         <legend className="drp-form-legend">想怎么调整这一天</legend>
+        <div className="drp-field" role="radiogroup" aria-labelledby={rangeGroupId}>
+          <span id={rangeGroupId} className="drp-label">调整范围</span>
+          <label className="drp-radio">
+            <input
+              type="radio"
+              name="drp-range"
+              value="whole"
+              checked={rangeMode === 'whole'}
+              onChange={() => setRangeMode('whole')}
+              disabled={pending || plannerUnavailable}
+            />
+            整天（默认：整日按候选替换）
+          </label>
+          <label className="drp-radio">
+            <input
+              type="radio"
+              name="drp-range"
+              value="tail"
+              checked={rangeMode === 'tail'}
+              onChange={() => setRangeMode('tail')}
+              disabled={pending || plannerUnavailable || day.stops.length < 2}
+            />
+            某站之后（保留该站及之前，替换之后的部分）
+          </label>
+        </div>
+        {rangeMode === 'tail' ? (
+          <div className="drp-field">
+            <label htmlFor={anchorSelectId}>保留到哪一站（锚点）</label>
+            <select
+              id={anchorSelectId}
+              value={anchorId}
+              onChange={(event) => setAnchorId(event.target.value)}
+              disabled={pending || plannerUnavailable}
+            >
+              <option value="">请选择锚点站</option>
+              {day.stops.slice(0, -1).map((stop, index) => (
+                <option key={stop.id} value={stop.id}>
+                  {`第 ${index + 1} 站：${stop.name}（保留第 1–${index + 1} 站）`}
+                </option>
+              ))}
+            </select>
+            {day.stops.length >= 2 ? (
+              <p className="drp-hint">
+                {`选中的锚点站及之前的 ${anchorId && anchorIndexSelected >= 0 ? anchorIndexSelected + 1 : 'N'} 站与站间路线会原样保留；之后的部分由 AI 候选替换，锚点到新后段第一站的衔接路线不会重算。`}
+              </p>
+            ) : (
+              <p className="drp-hint">{`这一天只有 ${day.stops.length} 个站点，没有可替换的后段；后段模式至少需要 2 个站点。`}</p>
+            )}
+          </div>
+        ) : null}
         <div className="drp-field">
           <label htmlFor={instructionId}>调整指令（1–500 字）</label>
           <textarea
@@ -447,7 +656,27 @@ export default function DayReplanPanel({
         </p>
       ) : null}
 
-      {currentCandidate ? (
+      {currentCandidate && candidate?.scope && !candidateStale ? (
+        <TailPreview
+          trip={trip}
+          scope={candidate.scope}
+          response={currentCandidate}
+          currentRevision={revision}
+          currentDay={day}
+          warnings={warnings}
+          visibleWarnings={visibleWarnings}
+          hiddenWarningCount={hiddenWarningCount}
+          onShowAllWarnings={() => setShowAllWarnings(true)}
+          applyError={applyError}
+          canApply={canApply && !candidateStale}
+          onApply={handleApply}
+          onDiscard={() => {
+            setCandidate(null)
+            setCandidateInvalid(null)
+            setApplyError(null)
+          }}
+        />
+      ) : currentCandidate ? (
         <div className="drp-preview" aria-label="候选预览">
           <h4 className="drp-preview-title">候选预览（尚未应用到行程）</h4>
           <div className="drp-columns">
@@ -513,7 +742,7 @@ export default function DayReplanPanel({
               放弃候选
             </button>
           </div>
-          <p className="drp-hint">应用候选只替换这一天，其余天不变；应用前当前行程不会被改动，也不会自动保存。</p>
+          <p className="drp-hint">应用候选只替换这一天的全部安排，其余天不变；应用前当前行程不会被改动，也不会自动保存。</p>
         </div>
       ) : null}
     </section>
@@ -559,5 +788,131 @@ function RouteSummary({ day }: { day: TripDay }) {
       路线概况：{day.legs.length} 段中 {navigable.length} 段有路线数据
       {unavailable > 0 ? `，${unavailable} 段待获取` : ''}。时刻与耗时为计划值，不代表实测交通或预约结果。
     </p>
+  )
+}
+
+/**
+ * 后段候选预览：区分冻结前段（原记录）与 AI 新后段（候选），
+ * 展示衔接未知与数据来源边界；组合日由 composeTailPreviewDay 统一计算，
+ * 与应用路径同一套检查与拼装。
+ */
+function TailPreview({
+  trip,
+  scope,
+  response,
+  currentRevision,
+  currentDay,
+  warnings,
+  visibleWarnings,
+  hiddenWarningCount,
+  onShowAllWarnings,
+  applyError,
+  canApply,
+  onApply,
+  onDiscard,
+}: {
+  trip: Trip
+  scope: DayReplanTailScope
+  response: DayReplanResponse
+  /** 界面当前 revision：预览前用它（而非 scope 自带 revision）核对范围仍有效。 */
+  currentRevision: number
+  currentDay: TripDay
+  warnings: string[]
+  visibleWarnings: string[]
+  hiddenWarningCount: number
+  onShowAllWarnings: () => void
+  applyError: ApplyError | null
+  canApply: boolean
+  onApply: () => void
+  onDiscard: () => void
+}) {
+  const composed = composeTailPreviewDay(trip, scope, response, currentRevision)
+  if (!composed.ok) {
+    return (
+      <p className="drp-error" role="alert">
+        {composed.message}
+      </p>
+    )
+  }
+  const keptDay: TripDay = {
+    day: currentDay.day,
+    date: currentDay.date,
+    title: currentDay.title,
+    summary: currentDay.summary,
+    stops: currentDay.stops.slice(0, scope.keptCount),
+    legs: currentDay.legs.slice(0, Math.max(scope.keptCount - 1, 0)),
+  }
+  return (
+    <div className="drp-preview" aria-label="候选预览">
+      <h4 className="drp-preview-title">后段候选预览（尚未应用到行程）</h4>
+      <p className="drp-hint">
+        {`本日前 ${composed.keptCount} 站原样保留（冻结段），之后 ${composed.tailStopCount} 站来自 AI 候选（新后段）；下面的组合方案只用于预览，不代表已应用。`}
+      </p>
+      <div className="drp-columns">
+        <div className="drp-col">
+          <h5 className="drp-col-title">{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
+          <StopTable day={keptDay} />
+        </div>
+        <div className="drp-col">
+          <h5 className="drp-col-title">组合方案（冻结段 + AI 新后段）</h5>
+          <StopTable day={composed.day} candidate />
+        </div>
+      </div>
+      {composed.notices.map((notice, index) => (
+        <p key={index} className="drp-notice" role="note">
+          {notice}
+        </p>
+      ))}
+      <p className="drp-map-status">
+        <strong>组合后地图数据：</strong>
+        {MAP_STATUS_TEXT[composed.mapStatus]}
+      </p>
+      <p className="drp-map-status">
+        <strong>原始后段地图数据（AI 返回时）：</strong>
+        {MAP_STATUS_TEXT[response.map_status]}
+      </p>
+      <RouteSummary day={composed.day} />
+      {warnings.length > 0 ? (
+        <div className="drp-warnings">
+          <h5 className="drp-col-title">{`本次返回提醒（${warnings.length} 条）`}</h5>
+          <ul className="drp-warning-list">
+            {visibleWarnings.map((warning, index) => (
+              <li key={index}>{warning}</li>
+            ))}
+          </ul>
+          {hiddenWarningCount > 0 ? (
+            <button
+              type="button"
+              className="drp-btn drp-btn-link"
+              onClick={onShowAllWarnings}
+              aria-expanded={false}
+            >
+              {`展开其余 ${hiddenWarningCount} 条提醒`}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {applyError ? (
+        <p className="drp-error" role="alert">
+          {applyError.message}
+        </p>
+      ) : null}
+      <div className="drp-actions">
+        <button
+          type="button"
+          className="drp-btn drp-btn-primary"
+          onClick={onApply}
+          disabled={!canApply}
+        >
+          应用后段候选
+        </button>
+        <button type="button" className="drp-btn" onClick={onDiscard}>
+          放弃候选
+        </button>
+      </div>
+      <p className="drp-hint">
+        应用后段候选只替换锚点之后的部分：前段站点、时刻与站间路线原样保留，其它天不变；锚点衔接路线未重算。应用前当前行程不会被改动，也不会自动保存。
+      </p>
+    </div>
   )
 }
