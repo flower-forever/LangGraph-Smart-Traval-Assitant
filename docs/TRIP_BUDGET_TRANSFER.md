@@ -75,7 +75,7 @@
 | `frontend/src/components/TripBudgetPanel.tsx` | 仅挂载子区域、透传 props、来源与备份说明 |
 | `frontend/src/__tests__/tripBudgetTransfer.test.ts` | 纯函数测试（34 项） |
 | `frontend/src/__tests__/tripBudgetFile.test.ts` | adapter 测试（24 项） |
-| `frontend/src/__tests__/TripBudgetTransfer.test.tsx` | 面板 DOM 测试（36 项） |
+| `frontend/src/__tests__/TripBudgetTransferPanel.test.tsx` | 面板 DOM 测试（36 项；原 `TripBudgetTransfer.test.tsx`，为消除与纯函数测试的大小写折叠冲突更名为此，见 `docs/FRONTEND_TYPECHECK.md`） |
 | `frontend/src/__tests__/AppBudgetTransferIntegration.test.tsx` | App 接线集成测试（7 项） |
 
 文档同步：本文件、`docs/TRIP_BUDGET.md`（来源口径与内存说明）、`docs/ROADMAP.md`（阶段 E 小批）、`README.md`（功能表与边界段）。App.tsx、tripBudget.ts、旧 helpers / 夹具 / 后端 / API / schema / 依赖均未改动。

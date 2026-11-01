@@ -19,6 +19,21 @@
 - ~~未提交修复由独立验收员全量回归通过~~（已完成独立复核，并已随首批修复提交进入仓库）。
 - 端到端回归脚本进仓库，本地一条命令可跑；模拟测试与真实联调在文档里分开表述。
 
+### 小批：前端跨平台类型检查门禁（代码与离线验证完成，待独立验收）
+
+费用文件批次在 Linux CI 暴露过 7 处本地 `tsc` 假绿的真实错误：Windows 大小写不敏感
+文件系统上，同目录仅大小写风格不同的 `.tsx`（UI 测试）与 `.ts`（纯函数测试）会被
+TypeScript 排除出编译程序。本批把两组 UI 测试更名为 `SavedTripsPanel.test.tsx` /
+`TripBudgetTransferPanel.test.tsx`（断言与数量原样），并新增零依赖源路径守卫
+`frontend/sourcePathGuard.mjs` + `check-source-paths.mjs`：扫描 `src` 内 `.ts/.tsx`
+相对路径的去扩展名大小写折叠冲突，冲突/扫描失败均非零退出（扫描根自身是链接时
+fail closed，不跟随目标）；CLI 薄入口不做任何 main 检测，经 alias/junction 路径调用
+也不会被静默跳过；`pnpm build` 前置守卫
+（CI 自动生效），另有 `check:source-paths` 与 `typecheck`（守卫 + `tsc -b --force`）。
+第 7 行的「后端 846 / 前端 646」是当时的验证快照，不是当前数；本批与后续批次的实际
+测试数、`--listFilesOnly` program 覆盖核对以仓库外实现报告与 CI 实跑为准，详见
+`docs/FRONTEND_TYPECHECK.md`。
+
 ## 阶段 B：可编辑行程与约束（进行中，首批开发重点）
 
 用户能改行程，改完地图和文字不再自相矛盾。本地编辑代码完成并通过离线整合验证（前端 25 个文件 523 项测试、强制 tsc 与生产 build 全部通过），与真实服务的联调和浏览器验收未做。首迭代范围（供 Lead 拆解）：

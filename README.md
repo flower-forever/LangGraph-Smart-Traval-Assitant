@@ -382,7 +382,9 @@ HTTP 语义：
 cd frontend
 pnpm test          # vitest run
 pnpm test:watch    # watch 模式
-pnpm build         # tsc -b && vite build
+pnpm check:source-paths  # 源路径大小写折叠冲突守卫（详见 docs/FRONTEND_TYPECHECK.md）
+pnpm typecheck     # 守卫 + tsc -b --force --pretty false
+pnpm build         # 守卫 + tsc -b && vite build
 pnpm preview       # 本地预览 dist 产物
 ```
 
