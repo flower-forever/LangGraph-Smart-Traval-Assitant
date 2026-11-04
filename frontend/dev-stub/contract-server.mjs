@@ -1,7 +1,8 @@
 /**
  * E2E 专用契约桩（仅 runner 创建，不提供 CLI 入口）：
  * - 默认 dev-stub/server.mjs 保持 example + 503 不变；本模块只服务浏览器验收，
- *   提供 plan / replan / map-refresh / weather / poi-sources / web-sources 的当前契约信封。
+ *   提供 plan / replan / map-refresh / leg-refresh / weather / poi-sources / web-sources
+ *   的当前契约信封。
  * - 场景（scenario）与延迟门（gate）由 runner 持有的内存 control 控制，
  *   不暴露任何 HTTP 控制端点：控制面与数据面同进程，外部无法触碰。
  * - 每个请求记录在 requests 数组里，runner 结束时核对路径与请求体。
@@ -17,6 +18,13 @@ import {
   buildWebSearchReport,
   parseWebSearchRequestBody,
 } from './webSourcesFixtures.mjs'
+import {
+  buildLegRefreshInvalidResponse,
+  buildLegRefreshResponse,
+  buildTailReplanResponse,
+  parseLegRefreshRequestBody,
+  TAIL_REPLAN_INSTRUCTION_PREFIX,
+} from './tailBoundaryFixtures.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = JSON.parse(readFileSync(resolve(here, 'contractFixtures.json'), 'utf-8'))
@@ -35,6 +43,13 @@ export function createContractState() {
     webSourcesMode: null,
     /** 网页资料 deferred gate：null 直通；非 null 时请求挂起直到 release（供关闭迟到场景） */
     webSourcesDelay: null,
+    /**
+     * 衔接路线模式：null = 默认 ready；'ready_zero_distance' | 'no_key' | 'timeout' |
+     * 'unavailable' | 'failed'（tailBoundaryFixtures.TAIL_LEG_REFRESH_MODES）
+     */
+    legRefreshMode: null,
+    /** 衔接路线 deferred gate：null 直通；非 null 时请求挂起直到 release */
+    legRefreshDelay: null,
     /** 每条 { path, method, body, seq, settled }；校验与定序用 */
     requests: [],
     /** 每条 { path, status, seq }；审计用 */
@@ -48,6 +63,10 @@ function nowIso() {
 
 function nextSeq(control) {
   return control.requests.length
+}
+
+function isPlainBody(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** 固定 1×1 蓝色 PNG（Leaflet 只要求是合法图片即可标记 tile-loaded） */
@@ -262,10 +281,19 @@ export function createContractServer(control) {
       try {
         body = await readBody(req)
       } catch {
-        // 网页资料路由沿后端合同把坏 JSON 折成同一固定 422；其余路由保持原 400 行为
+        // 网页资料路由沿后端合同把坏 JSON 折成同一固定 422；leg-refresh 的坏 JSON
+        // 在后端也是 RequestValidationError → 固定 422（_SafeLegRefreshRoute）；
+        // 其余路由保持原 400 行为
         if (method === 'POST' && path === '/api/web-sources/search') {
           const invalid = buildWebSearchInvalidResponse()
           sendJson(res, invalid.status, invalid.body, invalid.headers)
+          control.requests.push({ path, method, body: undefined, seq, settled: Promise.resolve('bad_json') })
+          control.responses.push({ path, status: invalid.status, seq })
+          return
+        }
+        if (method === 'POST' && path === '/api/trips/days/leg-refresh') {
+          const invalid = buildLegRefreshInvalidResponse()
+          sendJson(res, invalid.status, invalid.body)
           control.requests.push({ path, method, body: undefined, seq, settled: Promise.resolve('bad_json') })
           control.responses.push({ path, status: invalid.status, seq })
           return
@@ -330,13 +358,44 @@ export function createContractServer(control) {
           if (control.replanDelay) {
             await new Promise((resolveGate) => control.replanDelay.waiters.push(resolveGate))
           }
-          sendJson(res, 200, buildReplanResponse(body))
+          // 【后段重规划】走专用尾段候选：首站时刻满足冻结段下界，否则 knownTailLowerBound
+          // 会以 time_conflict 拒绝组合、E2E 到不了衔接路线按钮；整日请求原样走既有 fixture。
+          const isTailReplan =
+            isPlainBody(body) &&
+            typeof body.instruction === 'string' &&
+            body.instruction.startsWith(TAIL_REPLAN_INSTRUCTION_PREFIX)
+          const built = isTailReplan ? buildTailReplanResponse(body) : buildReplanResponse(body)
+          sendJson(res, 200, built)
           record(200)
           return
         }
 
         if (method === 'POST' && path === '/api/trips/days/map-refresh') {
           sendJson(res, 200, buildMapRefreshResponse(body))
+          record(200)
+          return
+        }
+
+        if (method === 'POST' && path === '/api/trips/days/leg-refresh') {
+          // 本地形状不符：固定 422，0 次上游尝试，绝不回显 input / 原始 body。
+          const parsed = parseLegRefreshRequestBody(body)
+          if (!parsed) {
+            const invalid = buildLegRefreshInvalidResponse()
+            sendJson(res, invalid.status, invalid.body)
+            record(invalid.status)
+            return
+          }
+          if (control.legRefreshDelay) {
+            await new Promise((resolveGate) => control.legRefreshDelay.waiters.push(resolveGate))
+          }
+          // 离线 fixture：不调用真实高德；一次显式请求只记录一次、只产出一个信封。
+          const built = buildLegRefreshResponse(control.legRefreshMode ?? 'ready', parsed.request)
+          if (built.error) {
+            sendJson(res, 500, { detail: built.error })
+            record(500)
+            return
+          }
+          sendJson(res, 200, built.report)
           record(200)
           return
         }
