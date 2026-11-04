@@ -19,14 +19,25 @@ import {
 } from '../lib/dayReplan'
 import {
   TAIL_AI_REPLAN_WARNING_PREFIX,
+  TAIL_APPLY_NOTICE,
+  TAIL_BOUNDARY_APPLIED_NOTICE,
   TAIL_BOUNDARY_LEG_DESCRIPTION,
   applyDayReplanTail,
+  bindTailBoundaryResponse,
   buildDayReplanTailRequest,
+  buildTailBoundaryRequest,
   composeTailPreviewDay,
   knownTailLowerBound,
   verifyTailScope,
   type DayReplanTailScope,
+  type TailBoundaryCurrent,
+  type TailBoundarySelection,
 } from '../lib/dayReplanTail'
+import {
+  MAX_LEG_REFRESH_STOP_ID_LENGTH,
+  type LegRefreshRequest,
+  type LegRefreshResponse,
+} from '../lib/legRefresh'
 
 // ==================== 夹具 ====================
 
@@ -513,6 +524,13 @@ describe('applyDayReplanTail', () => {
     expect(result.changedDays).toEqual([2])
     expect(result.tail.keptCount).toBe(2)
     expect(result.tail.combinedMapStatus).toBe('partial')
+    // R2 回归：旧 unknown 路径 notice 必须逐字 = 旧 TAIL_APPLY_NOTICE 原文
+    // （含「衔接路线未重算」字样），不得被 navigation 文案替换或改写。
+    expect(result.notices[0]).toBe(TAIL_APPLY_NOTICE)
+    expect(result.notices[0]).toBe(
+      'AI 后段候选只应用到当前副本：前段站点与路线原样保留，衔接路线未重算；不会自动保存，也不代表已核实预约、营业状态或实时交通。',
+    )
+    expect(result.notices).not.toContain(TAIL_BOUNDARY_APPLIED_NOTICE)
   })
 
   it('oldResponse warnings 超上限时省略计数准确（旧提醒整段省略是既有行为）', () => {
@@ -902,3 +920,768 @@ describe('applyDayReplanTail', () => {
 
 // 静态检查：确保 validateDayReplanResponse 被显式引用（后段路径依赖它）
 expect(typeof validateDayReplanResponse).toBe('function')
+
+// ==================== 边界衔接路线（Wave 2：owner + 纯组合） ====================
+
+const BOUNDARY_EPOCHS = { contentEpoch: 1, inputEpoch: 2, boundaryEpoch: 3 }
+
+/** 与生成时 state 一致的 current（独立于 owner，模拟 Panel/App 实时读值）。 */
+function boundaryCurrent(
+  base: Trip,
+  built: ReturnType<typeof buildTail>,
+  response: DayReplanResponse,
+  overrides: Partial<TailBoundaryCurrent> = {},
+): TailBoundaryCurrent {
+  return {
+    trip: base,
+    candidate: response,
+    scope: built.scope,
+    revision: REVISION,
+    contentEpoch: BOUNDARY_EPOCHS.contentEpoch,
+    inputEpoch: BOUNDARY_EPOCHS.inputEpoch,
+    boundaryEpoch: BOUNDARY_EPOCHS.boundaryEpoch,
+    ...overrides,
+  }
+}
+
+/** 构造一个有效的边界请求 owner（请求时刻基准）。 */
+function buildBoundary(
+  base: Trip,
+  built: ReturnType<typeof buildTail>,
+  response: DayReplanResponse,
+  currentOverrides: Partial<TailBoundaryCurrent> = {},
+) {
+  const result = buildTailBoundaryRequest(
+    base,
+    built.scope,
+    response,
+    REVISION,
+    boundaryCurrent(base, built, response, currentOverrides),
+  )
+  if (!result.ok) throw new Error(`buildTailBoundaryRequest 应成功：${result.message}`)
+  return result
+}
+
+/** 构造与请求精确 echo 的 ready LegRefreshResponse（形状由 F validator 保证）。 */
+function legReadyResponse(
+  request: LegRefreshRequest,
+  overrides: {
+    distance?: number
+    duration?: number | null
+    geometry?: Array<{ lng: number; lat: number }>
+    description?: string
+  } = {},
+): LegRefreshResponse {
+  const geometry = overrides.geometry ?? [
+    { lng: request.from_stop.location.lng, lat: request.from_stop.location.lat },
+    { lng: request.to_stop.location.lng, lat: request.to_stop.location.lat },
+  ]
+  return {
+    parent: { ...request.parent },
+    day: request.day,
+    date: request.date,
+    travel_mode: request.travel_mode,
+    from_stop: { id: request.from_stop.id, location: { ...request.from_stop.location } },
+    to_stop: { id: request.to_stop.id, location: { ...request.to_stop.location } },
+    map_status: 'ready',
+    leg: {
+      from_stop_id: request.from_stop.id,
+      to_stop_id: request.to_stop.id,
+      mode: request.travel_mode,
+      route_type: 'navigation',
+      distance_m: overrides.distance ?? 900,
+      duration_minutes: overrides.duration !== undefined ? overrides.duration : 12,
+      geometry,
+      description:
+        overrides.description ??
+        '按两端记录的 WGS84 坐标向高德地图查询步行衔接段；未重新核对地址或地点身份，几何为路网吸附结果，端点坐标未改写。',
+    },
+    reason: null,
+    source: { provider: 'amap', coordinate_system: 'WGS84', endpoint: '/v5/direction/walking' },
+    checked_at: '2026-11-04T15:00:00+00:00',
+  }
+}
+
+/** 绑定一个有效 selection（请求 + ready 响应）。 */
+function bindBoundary(
+  base: Trip,
+  built: ReturnType<typeof buildTail>,
+  response: DayReplanResponse,
+  legOverrides?: Parameters<typeof legReadyResponse>[1],
+): TailBoundarySelection {
+  const { owner, request } = buildBoundary(base, built, response)
+  const bound = bindTailBoundaryResponse(
+    owner,
+    request,
+    legReadyResponse(request, legOverrides),
+    boundaryCurrent(base, built, response),
+  )
+  if (!bound.ok) throw new Error(`bindTailBoundaryResponse 应成功：${bound.message}`)
+  return bound.selection
+}
+
+describe('buildTailBoundaryRequest', () => {
+  it('构造六字段白名单请求：parent=scope、day/date/mode=scope、两端 id 与 WGS84 原值；owner 捕获快照与引用', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bd1', '13:00')
+    const snapshot = JSON.stringify(base)
+    const result = buildBoundary(base, built, response)
+
+    const request = result.request
+    expect(Object.keys(request).sort()).toEqual(
+      ['date', 'day', 'from_stop', 'parent', 'to_stop', 'travel_mode'].sort(),
+    )
+    expect(request.parent).toEqual({ trip_id: built.scope.tripId, revision: built.scope.revision })
+    expect(request.day).toBe(built.scope.day)
+    expect(request.date).toBe(built.scope.date)
+    expect(request.travel_mode).toBe(built.scope.travelMode)
+    // 锚点 = 冻结段最后一站实际 id/坐标；首站 = 候选首站实际 id/坐标（恒等映射，不改名）
+    expect(request.from_stop.id).toBe('s2')
+    expect(request.from_stop.location).toEqual(base.days[1].stops[1].location)
+    expect(request.to_stop.id).toBe('new-bd1')
+    expect(request.to_stop.location).toEqual(response.day.stops[0].location)
+    // owner 捕获当前引用与完整快照（trip / 候选 / scope 三份）
+    expect(result.owner.trip).toBe(base)
+    expect(result.owner.candidate).toBe(response)
+    expect(result.owner.scope).toBe(built.scope)
+    expect(result.owner.anchorStop).toBe(base.days[1].stops[1])
+    expect(result.owner.tailFirstStop).toBe(response.day.stops[0])
+    expect(result.owner.tripSnapshot).toBe(snapshot)
+    expect(result.owner.candidateSnapshot).toBe(JSON.stringify(response))
+    expect(result.owner.scopeSnapshot).toBe(JSON.stringify(built.scope))
+    expect(result.owner.request).toBe(request)
+    expect(result.owner.captured).toEqual(BOUNDARY_EPOCHS)
+    expect(JSON.stringify(base)).toBe(snapshot)
+  })
+
+  it('current 形状非法/负数/NaN/非安全整数 epoch 拒绝（fail closed，不跳过）', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bd2')
+    const badEpochs: Array<Partial<TailBoundaryCurrent>> = [
+      { contentEpoch: -1 },
+      { inputEpoch: Number.NaN },
+      { boundaryEpoch: 1.5 },
+      { contentEpoch: Number.POSITIVE_INFINITY },
+      { revision: -2 },
+      { revision: Number.NaN },
+    ]
+    for (const overrides of badEpochs) {
+      const result = buildTailBoundaryRequest(
+        base,
+        built.scope,
+        response,
+        REVISION,
+        boundaryCurrent(base, built, response, overrides),
+      )
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.reason).toBe('invalid_boundary_input')
+    }
+    // 缺失 current / current 断裂（与实参不是同一对象）都拒绝
+    for (const brokenCurrent of [
+      undefined,
+      null,
+      {},
+      boundaryCurrent(deepClone(base), built, response),
+      boundaryCurrent(base, built, deepClone(response)),
+    ] as unknown[]) {
+      const result = buildTailBoundaryRequest(
+        base,
+        built.scope,
+        response,
+        REVISION,
+        brokenCurrent as TailBoundaryCurrent,
+      )
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.reason).toBe('invalid_boundary_input')
+    }
+  })
+
+  it('缺坐标不能查询（null 不是 0）：锚点/首站任一缺都明确失败；合法 0 可用', () => {
+    // 锚点缺坐标：候选响应需与缺坐标组合日自洽（candidate map_status=unavailable 且坐标 null）
+    const noAnchor = deepClone(makeBase())
+    noAnchor.days[1].stops[1] = { ...noAnchor.days[1].stops[1], location: null }
+    const builtNoAnchor = buildTail(noAnchor, 'x', 1)
+    const respNoAnchor = tailCandidate(builtNoAnchor.request, 'new-bd3', '13:00', 'unavailable')
+    respNoAnchor.day.stops[0] = { ...respNoAnchor.day.stops[0], location: null }
+    respNoAnchor.day.legs = []
+    const r1 = buildTailBoundaryRequest(
+      noAnchor, builtNoAnchor.scope, respNoAnchor, REVISION,
+      boundaryCurrent(noAnchor, builtNoAnchor, respNoAnchor),
+    )
+    expect(r1.ok).toBe(false)
+    if (!r1.ok) {
+      expect(r1.reason).toBe('missing_boundary_location')
+      expect(r1.message).toContain('寒山寺')
+    }
+
+    // 首站缺坐标：组合仍合法（unavailable 链），只是查询被禁
+    const noTail = deepClone(makeBase())
+    const builtNoTail = buildTail(noTail, 'x', 1)
+    const respNoTail = tailCandidate(builtNoTail.request, 'new-bd3', '13:00', 'unavailable')
+    respNoTail.day.stops[0] = { ...respNoTail.day.stops[0], location: null }
+    respNoTail.day.legs = []
+    const r2 = buildTailBoundaryRequest(
+      noTail, builtNoTail.scope, respNoTail, REVISION,
+      boundaryCurrent(noTail, builtNoTail, respNoTail),
+    )
+    expect(r2.ok).toBe(false)
+    if (!r2.ok) expect(r2.reason).toBe('missing_boundary_location')
+
+    // 合法 0 坐标可用
+    const zero = deepClone(makeBase())
+    const builtZero = buildTail(zero, 'x', 1)
+    const respZero = tailCandidate(builtZero.request, 'new-bd3')
+    respZero.day.stops[0] = { ...respZero.day.stops[0], location: { lng: 0, lat: 0 } }
+    const r3 = buildTailBoundaryRequest(
+      zero, builtZero.scope, respZero, REVISION,
+      boundaryCurrent(zero, builtZero, respZero),
+    )
+    expect(r3.ok).toBe(true)
+    if (r3.ok) expect(r3.request.to_stop.location).toEqual({ lng: 0, lat: 0 })
+  })
+
+  it('锚点 id 超过 replan 投影 100 字上限时候选生成已拒绝；101-200 字 id 属导入路径，构造阶段同样拒绝', () => {
+    // 后段请求投影本身限 100 字：超长锚点 id 在 buildDayReplanTailRequest 就失败，不会产生 scope。
+    const base100 = deepClone(makeBase())
+    base100.days[1].stops[1] = { ...base100.days[1].stops[1], id: 'L'.repeat(101) }
+    const overProjection = buildDayReplanTailRequest(base100, 2, 'x', 1, {
+      travel_mode: 'walking',
+      parentRevision: REVISION,
+    })
+    expect(overProjection.ok).toBe(false)
+    if (!overProjection.ok) expect(overProjection.reason).toBe('invalid_stop')
+
+    // 衔接接口口径与 replan 一致（都 100）：构造期防御性拒绝，不改名/截断，可仅应用后段。
+    const built = buildTail(makeBase(), 'x', 1)
+    const response = tailCandidate(built.request, 'new-bd4')
+    const forgedAnchor = {
+      ...built.scope,
+      anchorStopId: 'L'.repeat(MAX_LEG_REFRESH_STOP_ID_LENGTH + 1),
+    } as DayReplanTailScope
+    // scope 对象被伪造后与 verifyTailScope 既有字段仍自洽（锚点校验按 anchorIndex 站点 id），
+    // 真正拦住的是 buildLegRefreshRequest 对 id 的白名单校验。
+    const result = buildTailBoundaryRequest(
+      makeBase(), forgedAnchor, response, REVISION,
+      { ...boundaryCurrent(makeBase(), built, response), scope: forgedAnchor },
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(['invalid_boundary_input', 'invalid_scope', 'invalid_boundary_stop_id', 'stale_scope']).toContain(result.reason)
+    }
+  })
+
+  it('scope 是唯一模式来源：篡改 scope.request.travel_mode 或 scope.travelMode 都拒绝', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bd5')
+    // requestSnapshot 已不再匹配（含 travel_mode），verifyTailScope 先拒绝
+    const forgedRequest = {
+      ...built.scope,
+      request: { ...built.scope.request, travel_mode: 'driving' },
+    } as DayReplanTailScope
+    const r1 = buildTailBoundaryRequest(
+      base, forgedRequest, response, REVISION,
+      { ...boundaryCurrent(base, built, response), scope: forgedRequest },
+    )
+    expect(r1.ok).toBe(false)
+    // 直接伪造 scope.travelMode 与 request.travel_mode 不一致
+    const forgedMode = { ...built.scope, travelMode: 'driving' } as DayReplanTailScope
+    const r2 = buildTailBoundaryRequest(
+      base, forgedMode, response, REVISION,
+      { ...boundaryCurrent(base, built, response), scope: forgedMode },
+    )
+    expect(r2.ok).toBe(false)
+  })
+})
+
+describe('bindTailBoundaryResponse', () => {
+  it('ready 精确 echo 绑定成功；typed 失败（no_key 等）不产生 selection', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bn1')
+    const { owner, request } = buildBoundary(base, built, response)
+
+    const ok = bindTailBoundaryResponse(
+      owner, request, legReadyResponse(request),
+      boundaryCurrent(base, built, response),
+    )
+    expect(ok.ok).toBe(true)
+    if (ok.ok) {
+      expect(ok.selection.owner).toBe(owner)
+      expect(ok.selection.request).toBe(request)
+      expect(ok.selection.response.map_status).toBe('ready')
+      expect(ok.selection.response.leg?.route_type).toBe('navigation')
+    }
+
+    const readyShape = legReadyResponse(request)
+    const failed: LegRefreshResponse = {
+      ...readyShape,
+      map_status: 'no_key',
+      leg: null,
+      reason: '服务端未配置高德地图 Key，本次未执行任何路线查询。',
+    }
+    const rejected = bindTailBoundaryResponse(owner, request, failed, boundaryCurrent(base, built, response))
+    expect(rejected.ok).toBe(false)
+    if (!rejected.ok) expect(rejected.reason).toBe('boundary_not_ready')
+  })
+
+  it('请求期间上下文变化拒绝：epoch 推进/引用换新/revision 变/原地改', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bn2')
+    const { owner, request } = buildBoundary(base, built, response)
+    const ready = legReadyResponse(request)
+
+    // epoch 推进后（含 A→B→A 回不到旧值）不等于 captured
+    const advanced = bindTailBoundaryResponse(
+      owner, request, ready,
+      boundaryCurrent(base, built, response, { boundaryEpoch: BOUNDARY_EPOCHS.boundaryEpoch + 1 }),
+    )
+    expect(advanced.ok).toBe(false)
+    if (!advanced.ok) expect(advanced.reason).toBe('invalid_boundary')
+
+    // 同内容换 trip 引用
+    const clonedTrip = bindTailBoundaryResponse(
+      owner, request, ready,
+      boundaryCurrent(base, built, response, { trip: deepClone(base) }),
+    )
+    expect(clonedTrip.ok).toBe(false)
+
+    // 同内容换候选引用
+    const clonedResp = bindTailBoundaryResponse(
+      owner, request, ready,
+      boundaryCurrent(base, built, response, { candidate: deepClone(response) }),
+    )
+    expect(clonedResp.ok).toBe(false)
+
+    // revision 推进
+    const stale = bindTailBoundaryResponse(
+      owner, request, ready,
+      boundaryCurrent(base, built, response, { revision: REVISION + 1 }),
+    )
+    expect(stale.ok).toBe(false)
+
+    // trip 原地改（引用同、内容变）：快照核对拒绝；改完还原不影响判定
+    const before = JSON.stringify(base)
+    base.summary = '原地改'
+    const mutatedResult = bindTailBoundaryResponse(owner, request, ready, boundaryCurrent(base, built, response))
+    base.summary = '原始摘要。'
+    expect(JSON.stringify(base)).toBe(before)
+    expect(mutatedResult.ok).toBe(false)
+  })
+
+  it('响应 echo 漂移拒绝：端点坐标/id/day/date/mode 任意一处与请求不一致都不绑定', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bn3')
+    const { owner, request } = buildBoundary(base, built, response)
+    const current = boundaryCurrent(base, built, response)
+
+    const drifted = legReadyResponse(request)
+    drifted.from_stop = {
+      id: request.from_stop.id,
+      location: { lng: request.from_stop.location.lng + 0.0000001, lat: request.from_stop.location.lat },
+    }
+    expect(bindTailBoundaryResponse(owner, request, drifted, current).ok).toBe(false)
+
+    const badId = legReadyResponse(request)
+    badId.to_stop = { ...badId.to_stop, id: 'other-id' }
+    expect(bindTailBoundaryResponse(owner, request, badId, current).ok).toBe(false)
+
+    const badDay = legReadyResponse(request)
+    badDay.day = request.day + 1
+    expect(bindTailBoundaryResponse(owner, request, badDay, current).ok).toBe(false)
+
+    const badDate = legReadyResponse(request)
+    badDate.date = request.date === null ? '2026-05-02' : null
+    expect(bindTailBoundaryResponse(owner, request, badDate, current).ok).toBe(false)
+
+    const badMode = legReadyResponse(request)
+    badMode.travel_mode = 'driving'
+    expect(bindTailBoundaryResponse(owner, request, badMode, current).ok).toBe(false)
+  })
+
+  it('ready 但 leg 形状非法（非 navigation/geometry<2/负距离/leg 端点漂移）拒绝', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-bn4')
+    const { owner, request } = buildBoundary(base, built, response)
+    const current = boundaryCurrent(base, built, response)
+
+    const straight = legReadyResponse(request)
+    ;(straight.leg as { route_type: string }).route_type = 'straight_line'
+    expect(bindTailBoundaryResponse(owner, request, straight, current).ok).toBe(false)
+
+    const shortGeometry = legReadyResponse(request, { geometry: [{ lng: 120, lat: 30 }] })
+    expect(bindTailBoundaryResponse(owner, request, shortGeometry, current).ok).toBe(false)
+
+    const negative = legReadyResponse(request, { distance: -1 })
+    expect(bindTailBoundaryResponse(owner, request, negative, current).ok).toBe(false)
+
+    const legDrift = legReadyResponse(request)
+    ;(legDrift.leg as { from_stop_id: string }).from_stop_id = 'other'
+    expect(bindTailBoundaryResponse(owner, request, legDrift, current).ok).toBe(false)
+  })
+})
+
+describe('composeTailPreviewDay / applyDayReplanTail（boundary）', () => {
+  it('预览：边界 leg 变 navigation，其余原引用；notices 明确来源；合法 0 距离与未知耗时不混淆', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-pv1', '13:00', 'ready', [
+      '本次返回提醒：地图降级说明保留。',
+    ])
+    const selection = bindBoundary(base, built, response, { distance: 0, duration: null })
+    const snapshot = JSON.stringify(base)
+    const preview = composeTailPreviewDay(
+      base, built.scope, response, REVISION, selection,
+      boundaryCurrent(base, built, response),
+    )
+    expect(preview.ok).toBe(true)
+    if (!preview.ok) return
+    const day = preview.day
+    expect(day.stops[0]).toBe(base.days[1].stops[0])
+    expect(day.stops[1]).toBe(base.days[1].stops[1])
+    expect(day.legs[0]).toBe(base.days[1].legs[0])
+    const boundary = day.legs[1]
+    expect(boundary.route_type).toBe('navigation')
+    expect(boundary.from_stop_id).toBe('s2')
+    expect(boundary.to_stop_id).toBe('new-pv1')
+    expect(boundary.mode).toBe(built.scope.travelMode)
+    expect(boundary.distance_m).toBe(0)
+    expect(boundary.duration_minutes).toBeNull()
+    expect(boundary.geometry).toEqual(selection.response.leg?.geometry)
+    expect(boundary.description).toBe(selection.response.leg?.description)
+    expect(day.legs).toHaveLength(2)
+    // 组合 map_status：前缀与候选 ready + 边界 navigation → ready（不再 partial）
+    expect(preview.mapStatus).toBe('ready')
+    // notices：不再说“未重算”，说明按记录坐标取得、未核对地点身份
+    const notices = preview.notices.join('\n')
+    expect(notices).not.toContain('未重算')
+    expect(notices).toContain('按两端记录坐标')
+    expect(notices).toContain('未核对地点身份')
+    // R2 回归：navigation 预览不得携带旧 unknown 的 TAIL_APPLY_NOTICE 原文
+    expect(preview.notices).not.toContain(TAIL_APPLY_NOTICE)
+    expect(preview.notices[0]).toContain(TAIL_BOUNDARY_APPLIED_NOTICE.slice(0, 30))
+    // 用户自由文本中“未重算”不被误删的护栏：这里断言的是本模块自动文案，不前缀扫描用户提醒
+    expect(JSON.stringify(base)).toBe(snapshot)
+  })
+
+  it('预览传 boundary 不传 current：invalid_boundary_input；失效 selection 绝不当 unknown', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-pv2')
+    const selection = bindBoundary(base, built, response)
+
+    const noCurrent = composeTailPreviewDay(base, built.scope, response, REVISION, selection)
+    expect(noCurrent.ok).toBe(false)
+    if (!noCurrent.ok) expect(noCurrent.reason).toBe('invalid_boundary_input')
+
+    // current epoch 推进后传同一 selection：拒绝（不静默降级 unknown）
+    const advanced = composeTailPreviewDay(
+      base, built.scope, response, REVISION, selection,
+      boundaryCurrent(base, built, response, { boundaryEpoch: BOUNDARY_EPOCHS.boundaryEpoch + 7 }),
+    )
+    expect(advanced.ok).toBe(false)
+    if (!advanced.ok) expect(advanced.reason).toBe('invalid_boundary')
+
+    // current 与实参错配（换 trip 引用）拒绝
+    const mismatch = composeTailPreviewDay(
+      base, built.scope, response, REVISION, selection,
+      boundaryCurrent(base, built, response, { trip: deepClone(base) }),
+    )
+    expect(mismatch.ok).toBe(false)
+  })
+
+  it('应用：只换跨界 leg；摘要不再说未重算；boundaryKind=navigation；前缀/候选内部/其他天保真', () => {
+    const base = makeBase()
+    const built = buildTail(base, '换成安静的安排。', 1)
+    const response = tailCandidate(built.request, 'new-ap1', '13:00', 'ready', [
+      '本次返回提醒一：占位时间。',
+    ])
+    const selection = bindBoundary(base, built, response, { distance: 1234, duration: 18 })
+    const snapshot = JSON.stringify(base)
+    const result = applyDayReplanTail({
+      baseTrip: base,
+      scope: built.scope,
+      response,
+      currentRevision: REVISION,
+      forkTripId: 'trip-boundary-fork-1',
+      boundary: selection,
+      current: boundaryCurrent(base, built, response),
+    })
+    expect(result.ok).toBe(true)
+    expect(JSON.stringify(base)).toBe(snapshot)
+    if (!result.ok) return
+
+    const trip = result.trip
+    const day = trip.days[1]
+    expect(trip.days[0]).toBe(base.days[0])
+    expect(day.stops[0]).toBe(base.days[1].stops[0])
+    expect(day.stops[1]).toBe(base.days[1].stops[1])
+    expect(day.legs[0]).toBe(base.days[1].legs[0])
+    const boundary = day.legs[1]
+    expect(boundary.route_type).toBe('navigation')
+    expect(boundary.distance_m).toBe(1234)
+    expect(boundary.duration_minutes).toBe(18)
+    // 导航 leg 是复制，不把外部对象塞进 Trip
+    expect(boundary).not.toBe(selection.response.leg)
+    expect(boundary.geometry).not.toBe(selection.response.leg?.geometry)
+    expect(day.legs).toHaveLength(2)
+    // 摘要/notice：采用路径不再说“未重算”
+    expect(trip.summary).not.toContain('未重算')
+    expect(trip.summary).toContain('按两端记录坐标')
+    expect(result.notices.join('\n')).not.toContain('未重算')
+    expect(result.notices.join('\n')).toContain('按两端记录坐标')
+    // R2 回归：navigation 应用不携带旧 unknown 的 TAIL_APPLY_NOTICE 原文
+    expect(result.notices).toContain(TAIL_BOUNDARY_APPLIED_NOTICE)
+    expect(result.notices).not.toContain(TAIL_APPLY_NOTICE)
+    expect(result.tail.boundaryKind).toBe('navigation')
+    // 头模板：仍是既有后段头（不新增 warnings 模板）
+    expect(trip.warnings[0]).toContain(TAIL_AI_REPLAN_WARNING_PREFIX)
+    expect(result.changedDays).toEqual([2])
+  })
+
+  it('失效 selection 应用整次失败保旧：epoch 推进/换引用/缺 current 都不落回 unknown', () => {
+    const base = makeBase()
+    const built = buildTail(base, 'x', 1)
+    const response = tailCandidate(built.request, 'new-ap2')
+    const selection = bindBoundary(base, built, response)
+    const snapshot = JSON.stringify(base)
+    const input = {
+      baseTrip: base,
+      scope: built.scope,
+      response,
+      currentRevision: REVISION,
+      forkTripId: 'trip-boundary-fork-2',
+      boundary: selection,
+    }
+    const staleEpoch = applyDayReplanTail({
+      ...input,
+      current: boundaryCurrent(base, built, response, { contentEpoch: BOUNDARY_EPOCHS.contentEpoch + 1 }),
+    })
+    expect(staleEpoch.ok).toBe(false)
+    if (!staleEpoch.ok) expect(staleEpoch.reason).toBe('invalid_boundary')
+
+    const swapped = applyDayReplanTail({
+      ...input,
+      current: boundaryCurrent(base, built, response, { candidate: deepClone(response) }),
+    })
+    expect(swapped.ok).toBe(false)
+
+    const noCurrent = applyDayReplanTail(input)
+    expect(noCurrent.ok).toBe(false)
+    if (!noCurrent.ok) expect(noCurrent.reason).toBe('invalid_boundary_input')
+    expect(JSON.stringify(base)).toBe(snapshot)
+  })
+
+  it('交替重复：unknown→navigation→unknown→navigation，头不嵌套、用户自写同前缀提醒保留', () => {
+    let tripState = deepClone(makeBase())
+    tripState.warnings = [
+      '【AI后段调整】用户自己写的提醒，不是模板，必须保留。',
+      '调整前提醒 A',
+    ]
+
+    // 第 1 次：unknown
+    let built = buildTail(tripState, '第一次。', 1)
+    let response = tailCandidate(built.request, 'alt-1', '13:00')
+    let applied = applyDayReplanTail({
+      baseTrip: tripState, scope: built.scope, response,
+      currentRevision: REVISION, forkTripId: 'alt-fork-1',
+    })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) return
+    tripState = applied.trip
+    expect(applied.tail.boundaryKind).toBe('unavailable')
+    expect(tripState.summary).toContain('衔接路线未重算')
+    // R2 回归：旧 unknown 应用的 notice 逐字 = 旧 TAIL_APPLY_NOTICE 原文（含“衔接路线未重算”）
+    expect(applied.notices[0]).toBe(TAIL_APPLY_NOTICE)
+    expect(applied.notices[0]).toContain('衔接路线未重算')
+    expect(applied.notices[0]).not.toBe(TAIL_BOUNDARY_APPLIED_NOTICE)
+
+    // 第 2 次：navigation（基于新行程重新生成）
+    const stateAfterUnknown = tripState
+    built = buildTail(stateAfterUnknown, '第二次。', 1)
+    response = tailCandidate(built.request, 'alt-2', '13:30')
+    const selection = bindBoundary(stateAfterUnknown, built, response)
+    applied = applyDayReplanTail({
+      baseTrip: stateAfterUnknown, scope: built.scope, response,
+      currentRevision: REVISION, forkTripId: 'alt-fork-2',
+      boundary: selection,
+      current: boundaryCurrent(stateAfterUnknown, built, response),
+    })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) return
+    tripState = applied.trip
+    expect(applied.tail.boundaryKind).toBe('navigation')
+    expect(tripState.summary).not.toContain('未重算')
+    // R2 回归：navigation 应用的 notice 是独立新 notice，不携带旧“未重算”常量
+    expect(applied.notices).toContain(TAIL_BOUNDARY_APPLIED_NOTICE)
+    expect(applied.notices).not.toContain(TAIL_APPLY_NOTICE)
+    for (const notice of applied.notices) {
+      expect(notice).not.toContain('衔接路线未重算')
+    }
+    // 模板头恰好 1 条；用户自写同前缀提醒不算模板头（probe 证据：共 2 条同前缀）
+    expect(tripState.warnings.filter((w) => /^【AI后段调整】第\d+天前 \d+ 站原样保留/.test(w))).toHaveLength(1)
+
+    // 第 3 次：unknown
+    const stateAfterNav = tripState
+    built = buildTail(stateAfterNav, '第三次。', 1)
+    response = tailCandidate(built.request, 'alt-3', '14:00')
+    applied = applyDayReplanTail({
+      baseTrip: stateAfterNav, scope: built.scope, response,
+      currentRevision: REVISION, forkTripId: 'alt-fork-3',
+    })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) return
+    tripState = applied.trip
+    expect(tripState.summary).toContain('未重算')
+
+    // 第 4 次：navigation
+    const stateAfterUnknown2 = tripState
+    built = buildTail(stateAfterUnknown2, '第四次。', 1)
+    response = tailCandidate(built.request, 'alt-4', '14:30')
+    const selection4 = bindBoundary(stateAfterUnknown2, built, response)
+    applied = applyDayReplanTail({
+      baseTrip: stateAfterUnknown2, scope: built.scope, response,
+      currentRevision: REVISION, forkTripId: 'alt-fork-4',
+      boundary: selection4,
+      current: boundaryCurrent(stateAfterUnknown2, built, response),
+    })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) return
+    tripState = applied.trip
+
+    // 头不嵌套：整个流程只有 1 条【AI后段调整】模板头；用户自写同前缀提醒不算模板头、仍保留
+    const templateHeaders = tripState.warnings.filter((w) =>
+      /^【AI后段调整】第\d+天前 \d+ 站原样保留，之后已按 AI 候选替换/.test(w),
+    )
+    expect(templateHeaders).toHaveLength(1)
+    expect(templateHeaders[0]).toContain('前 2 站原样保留')
+    const tailPrefix = tripState.warnings.filter((w) => w.startsWith('【AI后段调整】'))
+    expect(tailPrefix).toHaveLength(2) // 模板头 + 用户自写一条
+    expect(tripState.warnings).toContain('【AI后段调整】用户自己写的提醒，不是模板，必须保留。')
+    expect(tripState.warnings).toContain('调整前提醒 A')
+  })
+
+  it('容量：navigation 边界推过全行程几何预算 → capacity_exceeded 且说明几何超预算、保旧', () => {
+    // 基础行程体积小（短文本），6 天 × 4999 点（单段 5000 上限内）+ day2 的 4 点 = 29998；
+    // 加候选内部 1 段 4999 点 + 边界 leg 4999 点 = 39996；候选再加 1 段 5 点 → 40001 > 40000。
+    // 序列化体积仍 < 640 KiB，确保失败原因是几何预算而不是体积。
+    const bigGeometry = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        lng: Number((120.56 + ((120.58 - 120.56) * i) / (count - 1)).toFixed(6)),
+        lat: Number((31.31 + ((31.3 - 31.31) * i) / (count - 1)).toFixed(6)),
+      }))
+    // 体积最小坐标（{lng:1,lat:1} ≈ 15B/点）：只喂 checkTripShape 的点数与字节数，
+    // 不参与衔接路线（plausible 检查只针对 boundary leg，filler/候选 leg 无此约束）。
+    const tinyGeometry = (count: number) =>
+      Array.from({ length: count }, () => ({ lng: 1, lat: 1 }))
+    const bigTrip: Trip = {
+      ...deepClone(makeBase()),
+      summary: '',
+      title: 't',
+      days: [
+        // 额外一天（两站一小段 3 点）：用于把总点数顶过 40000，同时让 checkTripShape 基础态合法
+        {
+          day: 10,
+          date: null,
+          title: 'd10',
+          summary: '',
+          stops: [locatedStop('p1', '甲', '09:00', 120.5, 31.3), locatedStop('p2', '乙', '10:00', 120.5, 31.3)],
+          legs: [
+            {
+              from_stop_id: 'p1',
+              to_stop_id: 'p2',
+              mode: 'walking' as const,
+              route_type: 'navigation' as const,
+              distance_m: 100,
+              duration_minutes: 2,
+              geometry: tinyGeometry(6),
+              description: '',
+            },
+          ],
+        },
+        { ...deepClone(makeBase().days[0]), summary: '', title: 'd0', stops: deepClone(makeBase().days[0].stops).map((s) => ({ ...s, description: '', address: '' })) },
+        {
+          ...deepClone(makeBase().days[1]),
+          summary: '',
+          title: 'd2',
+          stops: deepClone(makeBase().days[1].stops).map((s) => ({ ...s, description: '', address: '' })),
+        },
+        ...Array.from({ length: 6 }, (_, d) => ({
+          day: d + 4,
+          date: null,
+          title: `d${d + 4}`,
+          summary: '',
+          stops: [
+            locatedStop(`a${d}`, '甲', '09:00', 120.5, 31.3),
+            locatedStop(`b${d}`, '乙', '10:00', 120.5, 31.3),
+          ],
+          legs: [
+            {
+              from_stop_id: `a${d}`,
+              to_stop_id: `b${d}`,
+              mode: 'walking' as const,
+              route_type: 'navigation' as const,
+              distance_m: 900,
+              duration_minutes: 12,
+              geometry: tinyGeometry(4_999),
+              description: '',
+            },
+          ],
+        })),
+      ],
+    }
+    bigTrip.warnings = []
+    bigTrip.days.forEach((day) => {
+      day.stops.forEach((stop) => {
+        stop.description = ''
+        stop.address = ''
+        stop.name = stop.id
+      })
+    })
+    expect(checkTripShape(bigTrip)).toEqual({ ok: true })
+    const built = buildTail(bigTrip, 'x', 1, 2)
+    const response = tailCandidate(built.request, 'new-big2', '13:00')
+    response.day.stops = [
+      { ...response.day.stops[0] },
+      locatedStop('new-big2b', '乙二', '14:00', 120.59, 31.31),
+    ]
+    response.day.legs = [
+      {
+        from_stop_id: 'new-big2',
+        to_stop_id: 'new-big2b',
+        mode: 'walking',
+        route_type: 'navigation',
+        distance_m: 900,
+        duration_minutes: 12,
+        geometry: [...tinyGeometry(4_993), { lng: 120.6, lat: 31.32 }, { lng: 120.61, lat: 31.33 }, { lng: 120.62, lat: 31.34 }, { lng: 120.63, lat: 31.35 }, { lng: 120.64, lat: 31.36 }, { lng: 120.65, lat: 31.37 }],
+        description: '大。',
+      },
+    ]
+    const selection = bindBoundary(bigTrip, built, response, {
+      geometry: bigGeometry(5_000),
+    })
+    const baseSnapshot = JSON.stringify(bigTrip)
+    const result = applyDayReplanTail({
+      baseTrip: bigTrip,
+      scope: built.scope,
+      response,
+      currentRevision: REVISION,
+      forkTripId: 'trip-big-fork-2',
+      boundary: selection,
+      current: boundaryCurrent(bigTrip, built, response),
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('capacity_exceeded')
+      expect(result.message).toContain('几何点')
+      expect(result.message).toContain('没有被改动或截断')
+    }
+    expect(JSON.stringify(bigTrip)).toBe(baseSnapshot)
+  })
+})
+

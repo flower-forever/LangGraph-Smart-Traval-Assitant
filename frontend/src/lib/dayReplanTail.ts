@@ -39,7 +39,19 @@ import {
   type DayReplanResponse,
   type MapStatus,
 } from './dayReplan'
-import { MAX_SAVED_TRIP_BYTES, checkTripShape, savedTripRecordBytes } from './savedTrips'
+import {
+  buildLegRefreshRequest,
+  legRefreshReadyLeg,
+  validateLegRefreshResponse,
+  type LegRefreshRequest,
+  type LegRefreshResponse,
+} from './legRefresh'
+import {
+  MAX_SAVED_TRIP_BYTES,
+  MAX_TOTAL_GEOMETRY_POINTS,
+  checkTripShape,
+  savedTripRecordBytes,
+} from './savedTrips'
 
 // ==================== 常量 ====================
 
@@ -49,6 +61,9 @@ export const TAIL_AI_REPLAN_WARNING_PREFIX = '【AI后段调整】'
 export const TAIL_BOUNDARY_LEG_DESCRIPTION = '衔接路线未重算，需另行核对。'
 export const TAIL_APPLY_NOTICE =
   'AI 后段候选只应用到当前副本：前段站点与路线原样保留，衔接路线未重算；不会自动保存，也不代表已核实预约、营业状态或实时交通。'
+/** 采用固定端点衔接路线时的应用说明（与 TAIL_APPLY_NOTICE 并列，不替换旧常量）。 */
+export const TAIL_BOUNDARY_APPLIED_NOTICE =
+  '已按两端记录坐标取得锚点与新后段首站之间的衔接路线（高德地图 WGS84 导航结果）；未重新核对地址或地点身份，也不代表实时交通。'
 
 /** 与 dayReplan.ts 同一口径的合法站点时间。 */
 const TAIL_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -398,6 +413,11 @@ export type DayReplanTailFailureReason =
   | 'tail_id_conflict'
   | 'time_conflict'
   | 'time_cross_day'
+  | 'invalid_boundary_input'
+  | 'invalid_boundary'
+  | 'boundary_not_ready'
+  | 'missing_boundary_location'
+  | 'invalid_boundary_stop_id'
 
 export interface DayReplanTailFailure {
   ok: false
@@ -580,41 +600,33 @@ function boundaryLeg(fromStopId: string, toStopId: string, mode: TravelMode): Tr
   }
 }
 
-/** 组合完整目标日：冻结前缀原引用 + 新衔接 leg + 经校验的候选后段。 */
-function assembleTailDay(ctx: TailContext, travelMode: TravelMode): TripDay {
+/**
+ * 组合完整目标日：冻结前缀原引用 + 衔接 leg + 经校验的候选后段。
+ * navigationBoundaryLeg 由调用方先经 resolveBoundaryLeg 校验后传入（已复制的 leg）；
+ * 未传时保持既有未知衔接 leg，内容逐字不变。
+ */
+function assembleTailDay(
+  ctx: TailContext,
+  travelMode: TravelMode,
+  navigationBoundaryLeg?: TripLeg,
+): TripDay {
   const firstTailStop = ctx.candidateDay.stops[0]
+  const crossing =
+    navigationBoundaryLeg !== undefined
+      ? navigationBoundaryLeg
+      : boundaryLeg(ctx.baseDay.stops[ctx.keptCount - 1].id, firstTailStop.id, travelMode)
   return {
     day: ctx.baseDay.day,
     date: ctx.baseDay.date,
     title: `第${ctx.baseDay.day}天（前${ctx.keptCount}站原样，之后按 AI 候选调整）`,
-    summary: buildTailDaySummary(ctx.keptCount, ctx.baseDay.stops[ctx.keptCount - 1]?.name ?? ''),
+    summary: buildTailDaySummary(
+      ctx.keptCount,
+      ctx.baseDay.stops[ctx.keptCount - 1]?.name ?? '',
+      navigationBoundaryLeg !== undefined ? 'navigation' : 'unavailable',
+    ),
     stops: [...ctx.frozenStops, ...ctx.candidateDay.stops],
-    legs: [
-      ...ctx.frozenLegs,
-      boundaryLeg(ctx.baseDay.stops[ctx.keptCount - 1].id, firstTailStop.id, travelMode),
-      ...ctx.candidateDay.legs,
-    ],
+    legs: [...ctx.frozenLegs, crossing, ...ctx.candidateDay.legs],
   }
-}
-
-function buildTailDaySummary(keptCount: number, anchorName: string): string {
-  return (
-    `AI 后段调整：本日前 ${keptCount} 站（至「${anchorName}」）原样保留，仅之后按 AI 候选替换；` +
-    '锚点衔接路线未重算，需另行核对。前段时刻、停留与路线未改动，后段为候选数据，' +
-    '未核实预约、营业状态或实时交通。'
-  )
-}
-
-function buildTailTripSummary(days: readonly TripDay[], dayNumber: number, keptCount: number): string {
-  const totalStops = days.reduce((total, day) => total + day.stops.length, 0)
-  const rest =
-    days.length > 1 ? `其余 ${days.length - 1} 天沿用原安排` : '这是行程里唯一的一天'
-  return (
-    `AI 后段调整副本（未重新规划其它天）：第${dayNumber}天前 ${keptCount} 站原样保留、仅之后按 AI 候选替换，${rest}；` +
-    `共 ${days.length} 天、${totalStops} 个站点。锚点衔接路线未重算，需另行核对；` +
-    '本次没有重新核实预约、营业状态或实时交通，占位时间与地图降级说明见行程提醒，原推荐摘要不再代表当前方案。' +
-    '本次应用不会自动保存。'
-  )
 }
 
 function buildTailAiHeader(
@@ -661,12 +673,16 @@ export type DayReplanTailPreviewResult = DayReplanTailPreview | DayReplanTailFai
  * currentRevision 必填：必须传界面当前的真实 revision；缺失或无效（NaN / Infinity /
  * 负数 / 非整数 / 非数值）按 invalid_revision 类型化失败，不回退 scope 自带 revision
  * 自比自——revision 变而内容相同的窄场景下预览也必须作废。
+ * boundary 传入时 current 也必须传入（独立 TailBoundaryCurrent）；路线失效整次失败，
+ * 绝不静默降级回未知衔接。
  */
 export function composeTailPreviewDay(
   baseTrip: Trip,
   scope: unknown,
   response: unknown,
   currentRevision: number,
+  boundary?: TailBoundarySelection,
+  current?: unknown,
 ): DayReplanTailPreviewResult {
   if (!isValidCurrentRevision(currentRevision)) {
     return tailFailure(
@@ -674,13 +690,28 @@ export function composeTailPreviewDay(
       '调用方未提供有效的当前行程版本，无法安全核对后段范围；未组合预览。',
     )
   }
+  let navigationBoundaryLeg: TripLeg | undefined
+  if (boundary !== undefined) {
+    const resolved = resolveBoundaryLeg(
+      baseTrip,
+      scope,
+      response,
+      boundary,
+      current,
+    )
+    if (!resolved.ok) return resolved
+    if (resolved.leg !== null) navigationBoundaryLeg = copyBoundaryLeg(resolved.leg)
+  }
   const ctxResult = resolveTailContext(baseTrip, scope, response, currentRevision)
   if (!ctxResult.ok) return ctxResult
   const ctx = ctxResult.ctx
   const tailScope = scope as DayReplanTailScope
-  const day = assembleTailDay(ctx, tailScope.travelMode)
+  const day = assembleTailDay(ctx, tailScope.travelMode, navigationBoundaryLeg)
+  const boundaryLegForNotice = day.legs[ctx.keptCount - 1]
   const notices = [
-    `衔接路线（${ctx.baseDay.stops[ctx.keptCount - 1].name} → ${ctx.candidateDay.stops[0].name}）未重算：距离、耗时与几何未知，需另行核对。`,
+    navigationBoundaryLeg !== undefined
+      ? `${TAIL_BOUNDARY_NAV_NOTICE}衔接段距离 ${boundaryLegForNotice.distance_m ?? '未知'} 米、耗时${boundaryLegForNotice.duration_minutes == null ? '未知' : `约 ${boundaryLegForNotice.duration_minutes} 分钟`}；未核对地点身份。`
+      : `衔接路线（${ctx.baseDay.stops[ctx.keptCount - 1].name} → ${ctx.candidateDay.stops[0].name}）未重算：距离、耗时与几何未知，需另行核对。`,
     ctx.lowerBound.known
       ? `按已填时间推算，冻结段已知结束不早于 ${minutesToClock(ctx.lowerBound.minutes as number)}；新后段不应早于该时刻开始（未计入衔接交通）。`
       : '冻结段存在未填时间或未填停留，无法推算衔接时刻下界；无法确认时间衔接，需人工核对。',
@@ -714,6 +745,13 @@ export interface ApplyDayReplanTailInput {
    * 保证预览组合与应用用的请求是同一份，不被篡改或错配。
    */
   request?: DayReplanRequest
+  /**
+   * 已绑定的固定端点衔接路线（锚点→候选首站）；提供时 current 也必须提供，
+   * 且任何归属/回显校验失败都整次失败，绝不静默降级回未知衔接。
+   */
+  boundary?: TailBoundarySelection
+  /** boundary 存在时的当前实时上下文（Panel/App 独立读取，不从 owner 填充）。 */
+  current?: unknown
 }
 
 /** 应用输入的当前 revision 核对：与预览同一口径，无效即类型化失败。 */
@@ -747,6 +785,8 @@ export interface DayReplanTailApplySuccess {
     boundaryMode: TravelMode
     lowerBound: TailLowerBound
     combinedMapStatus: MapStatus
+    /** 本次应用采用的衔接 leg 形态：navigation（已取得路线）或 unavailable（未知衔接）。 */
+    boundaryKind: 'unavailable' | 'navigation'
   }
 }
 
@@ -759,7 +799,7 @@ export type DayReplanTailApplyResult = DayReplanTailApplySuccess | DayReplanTail
  * scope 非法 / 过期返回失败，绝不落回整天替换；所有输入保持不变。
  */
 export function applyDayReplanTail(input: ApplyDayReplanTailInput): DayReplanTailApplyResult {
-  const { baseTrip, scope, response, currentRevision, forkTripId, request } = input
+  const { baseTrip, scope, response, currentRevision, forkTripId, request, boundary, current } = input
   const revisionProblem = checkCurrentRevision(currentRevision)
   if (revisionProblem) return revisionProblem
   const scopeCheck = verifyTailScope(scope, baseTrip, currentRevision)
@@ -779,6 +819,20 @@ export function applyDayReplanTail(input: ApplyDayReplanTailInput): DayReplanTai
         '传入的候选请求与后段范围记录不一致，后段候选未应用；请用生成时的候选重新应用。',
       )
     }
+  }
+
+  // 带 boundary 的应用必须先通过完整归属/回显校验；失败整次放弃，绝不降级 unknown。
+  let navigationBoundaryLeg: TripLeg | undefined
+  if (boundary !== undefined) {
+    const resolved = resolveBoundaryLeg(
+      baseTrip,
+      scope,
+      response,
+      boundary,
+      current,
+    )
+    if (!resolved.ok) return resolved
+    if (resolved.leg !== null) navigationBoundaryLeg = copyBoundaryLeg(resolved.leg)
   }
 
   const ctxResult = resolveTailContext(baseTrip, scope, response, currentRevision)
@@ -803,7 +857,7 @@ export function applyDayReplanTail(input: ApplyDayReplanTailInput): DayReplanTai
   })
   if (!oldResult.ok) return oldResult
 
-  const assembledDay = assembleTailDay(ctx, scope.travelMode)
+  const assembledDay = assembleTailDay(ctx, scope.travelMode, navigationBoundaryLeg)
   const warnings = [...oldResult.trip.warnings]
   // 旧 apply 的组合头固定在首位；不是它说明组合结果不符合预期，整体放弃。
   if (!warnings[0]?.startsWith(AI_REPLAN_WARNING_PREFIX)) {
@@ -820,15 +874,26 @@ export function applyDayReplanTail(input: ApplyDayReplanTailInput): DayReplanTai
     oldResult.keptOldWarnings > 0,
   )
 
+  const boundaryKind: 'unavailable' | 'navigation' =
+    navigationBoundaryLeg !== undefined ? 'navigation' : 'unavailable'
+
   const trip: Trip = {
     ...oldResult.trip,
-    summary: buildTailTripSummary(oldResult.trip.days, scope.day, ctx.keptCount),
+    summary: buildTailTripSummary(oldResult.trip.days, scope.day, ctx.keptCount, boundaryKind),
     warnings,
     days: oldResult.trip.days.map((day) => (day.day === scope.day ? assembledDay : day)),
   }
 
   const postShape = checkTripShape(trip)
   if (!postShape.ok) {
+    // 几何点数超全行程预算（40 000）不算结构损坏：给容量原因，整次失败保旧，不抽稀不丢腿。
+    if (postShape.reason === 'too_large') {
+      return tailFailure(
+        'capacity_exceeded',
+        `应用后的行程路线几何点超过全行程 ${MAX_TOTAL_GEOMETRY_POINTS} 点预算，` +
+          '这次应用已放弃，原始行程与候选几何都没有被改动或截断，也没有自动抽稀任何路段。',
+      )
+    }
     return tailFailure(
       'postcondition_failed',
       '应用后的行程没有通过本地结构校验，这次应用已放弃，原始行程保持不变。',
@@ -861,7 +926,10 @@ export function applyDayReplanTail(input: ApplyDayReplanTailInput): DayReplanTai
     keptOldWarnings: oldResult.keptOldWarnings,
     omittedOldWarnings: oldResult.omittedOldWarnings,
     omittedWarnings: oldResult.omittedWarnings,
-    notices: [TAIL_APPLY_NOTICE, DAY_REPLAN_WARNINGS_NOTICE],
+    notices:
+      boundaryKind === 'navigation'
+        ? [TAIL_BOUNDARY_APPLIED_NOTICE, DAY_REPLAN_WARNINGS_NOTICE]
+        : [TAIL_APPLY_NOTICE, DAY_REPLAN_WARNINGS_NOTICE],
     tail: {
       day: scope.day,
       keptCount: ctx.keptCount,
@@ -871,6 +939,528 @@ export function applyDayReplanTail(input: ApplyDayReplanTailInput): DayReplanTai
       boundaryMode: scope.travelMode,
       lowerBound: ctx.lowerBound,
       combinedMapStatus: classifyDayMapStatus(assembledDay),
+      boundaryKind,
     },
   }
+}
+
+// ==================== 边界衔接路线（固定端点单段查询的 owner / 绑定 / 组合） ====================
+
+/**
+ * 后段候选锚点→新后段首站的固定端点衔接路线（POST /api/trips/days/leg-refresh）。
+ *
+ * 归属与失效边界（与设计一致）：
+ * - owner 只保存请求时刻的基准（trip/候选/scope 引用 + 完整 JSON 快照 + 端点对象引用 +
+ *   单调 epoch 捕获值）；它不是当前状态，也不能自证归属。每个检查点都必须拿调用方
+ *   独立传入的 TailBoundaryCurrent（Panel/App 从当前渲染 refs 读取）重新核对，
+ *   并在 current 上重跑 verifyTailScope / resolveTailContext。
+ * - current 与函数显式实参（baseTrip/response/scope/currentRevision）必须互相一致；
+ *   epochs 是安全非负整数，缺失/负数/NaN/非整数一律 fail closed，不跳过校验。
+ * - 带 boundary 的预览/应用任何校验失败都整次失败并保旧，绝不静默降级回未知衔接；
+ *   要走未知衔接必须显式不传 boundary（旧调用路径，行为逐字不变）。
+ * - travel_mode 只取 scope.travelMode，并与 scope.request.travel_mode 互核；
+ *   候选 id 恒等映射，碰撞/超上限拒绝，不改名、不截断、不 geocode。
+ */
+
+/** 调用方当前实时上下文：Panel 从渲染 refs、App 从 tripRef/revision 读取后显式传入。 */
+export interface TailBoundaryCurrent {
+  trip: Trip
+  candidate: DayReplanResponse
+  scope: DayReplanTailScope
+  revision: number
+  /** 单调 epoch：由 Panel 维护并在渲染期推进；纯层只比较，不推进。 */
+  contentEpoch: number
+  inputEpoch: number
+  boundaryEpoch: number
+}
+
+/** 请求时刻捕获的归属基准。captured 值只作比对，不代表当前。 */
+export interface TailBoundaryOwner {
+  trip: Trip
+  /** 请求时刻 Trip 完整内容快照（同引用原地改也会变）。 */
+  tripSnapshot: string
+  candidate: DayReplanResponse
+  /** 请求时候选响应完整内容快照。 */
+  candidateSnapshot: string
+  scope: DayReplanTailScope
+  /** 请求时 scope 完整内容快照（补 verifyTailScope 指纹不含的对象级漂移，如 travelers 原地改）。 */
+  scopeSnapshot: string
+  /** 请求时锚点对象引用（= baseDay.stops[keptCount-1]）。 */
+  anchorStop: TripStop
+  /** 请求时候选首站对象引用（= candidateDay.stops[0]）。 */
+  tailFirstStop: TripStop
+  /** 已通过白名单校验的请求；不可变基准，绑定与最终应用都以它为 echo 对照。 */
+  request: LegRefreshRequest
+  captured: {
+    contentEpoch: number
+    inputEpoch: number
+    boundaryEpoch: number
+  }
+}
+
+/** 绑定成功的衔接路线选择：owner + 请求 + ready 响应。 */
+export interface TailBoundarySelection {
+  owner: TailBoundaryOwner
+  request: LegRefreshRequest
+  response: LegRefreshResponse & { map_status: 'ready' }
+}
+
+export type TailBoundaryFailureReason = DayReplanTailFailureReason
+
+export interface TailBoundaryFailure {
+  ok: false
+  reason: TailBoundaryFailureReason
+  message: string
+}
+
+export type TailBoundaryBuildResult =
+  | { ok: true; owner: TailBoundaryOwner; request: LegRefreshRequest }
+  | TailBoundaryFailure
+
+export type TailBoundaryBindResult =
+  | { ok: true; selection: TailBoundarySelection }
+  | TailBoundaryFailure
+
+export type TailBoundaryComposedLegResult =
+  | { ok: true; leg: TripLeg | null }
+  | TailBoundaryFailure
+
+function boundaryFailure(
+  reason: TailBoundaryFailureReason,
+  message: string,
+): TailBoundaryFailure {
+  return { ok: false, reason, message }
+}
+
+function isBoundedEpoch(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function isFiniteCoordinatePair(value: unknown): value is { lng: number; lat: number } {
+  return (
+    isRecord(value) &&
+    typeof value.lng === 'number' &&
+    Number.isFinite(value.lng) &&
+    value.lng >= -180 &&
+    value.lng <= 180 &&
+    typeof value.lat === 'number' &&
+    Number.isFinite(value.lat) &&
+    value.lat >= -90 &&
+    value.lat <= 90
+  )
+}
+
+/** current 形状与身份核对：缺失/负数/NaN epoch 一律 fail closed（不跳过校验）。 */
+function checkBoundaryCurrent(
+  current: unknown,
+  baseTrip: Trip,
+  response: unknown,
+  scope: unknown,
+): { ok: true; current: TailBoundaryCurrent } | TailBoundaryFailure {
+  if (!isRecord(current)) {
+    return boundaryFailure(
+      'invalid_boundary_input',
+      '缺少当前上下文，无法核对衔接路线归属；本次未取得或未应用衔接路线。',
+    )
+  }
+  if (
+    current.trip !== baseTrip ||
+    current.candidate !== response ||
+    current.scope !== scope
+  ) {
+    return boundaryFailure(
+      'invalid_boundary_input',
+      '当前上下文与本次操作的对象不一致，无法核对衔接路线归属；本次未取得或未应用衔接路线。',
+    )
+  }
+  if (
+    !isBoundedEpoch(current.revision) ||
+    !isBoundedEpoch(current.contentEpoch) ||
+    !isBoundedEpoch(current.inputEpoch) ||
+    !isBoundedEpoch(current.boundaryEpoch)
+  ) {
+    return boundaryFailure(
+      'invalid_boundary_input',
+      '当前上下文缺少有效的版本序号（revision / epochs 必须是安全非负整数），无法核对衔接路线归属；本次未取得或未应用衔接路线。',
+    )
+  }
+  return { ok: true, current: current as unknown as TailBoundaryCurrent }
+}
+
+/** owner 与 current 全量核对：引用、快照、epoch 任一漂移都失效。 */
+function checkBoundaryOwner(
+  owner: unknown,
+  current: TailBoundaryCurrent,
+): { ok: true; owner: TailBoundaryOwner } | TailBoundaryFailure {
+  if (!isRecord(owner)) {
+    return boundaryFailure('invalid_boundary', '衔接路线归属记录不完整，结果不能使用。')
+  }
+  if (
+    owner.trip !== current.trip ||
+    owner.candidate !== current.candidate ||
+    owner.scope !== current.scope
+  ) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '行程、候选或后段范围在查询衔接路线后已变化（包括同内容替换），这份衔接结果不能使用。',
+    )
+  }
+  const captured = owner.captured
+  if (
+    !isRecord(captured) ||
+    captured.contentEpoch !== current.contentEpoch ||
+    captured.inputEpoch !== current.inputEpoch ||
+    captured.boundaryEpoch !== current.boundaryEpoch
+  ) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '页面内容或输入在查询衔接路线后已变化，这份衔接结果不能使用；请重新获取。',
+    )
+  }
+  let tripSnapshot: string
+  let candidateSnapshot: string
+  let scopeSnapshot: string
+  try {
+    tripSnapshot = JSON.stringify(current.trip)
+    candidateSnapshot = JSON.stringify(current.candidate)
+    scopeSnapshot = JSON.stringify(current.scope)
+  } catch {
+    return boundaryFailure(
+      'invalid_boundary',
+      '行程或候选无法序列化核对，这份衔接结果不能使用。',
+    )
+  }
+  if (
+    owner.tripSnapshot !== tripSnapshot ||
+    owner.candidateSnapshot !== candidateSnapshot ||
+    owner.scopeSnapshot !== scopeSnapshot
+  ) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '行程、候选或后段范围内容在查询衔接路线后已变化（包括原地修改），这份衔接结果不能使用。',
+    )
+  }
+  return { ok: true, owner: owner as unknown as TailBoundaryOwner }
+}
+
+/**
+ * 构造锚点→候选首站的固定端点路线请求并捕获 owner 基准。
+ * 先按既有 scope/候选校验重跑组合上下文，再从组合结果取真实端点；
+ * 缺坐标（null 不是 0）、id 超出衔接接口上限（不改名/截断）、scope 模式不一致都明确失败。
+ */
+export function buildTailBoundaryRequest(
+  baseTrip: Trip,
+  scope: unknown,
+  response: unknown,
+  currentRevision: number,
+  current: unknown,
+): TailBoundaryBuildResult {
+  const currentCheck = checkBoundaryCurrent(current, baseTrip, response, scope)
+  if (!currentCheck.ok) return currentCheck
+  const liveCurrent = currentCheck.current
+  if (liveCurrent.revision !== currentRevision) {
+    return boundaryFailure(
+      'invalid_boundary_input',
+      '当前行程版本与传入版本不一致，无法安全发起衔接路线查询。',
+    )
+  }
+  const scopeCheck = verifyTailScope(scope, baseTrip, currentRevision)
+  if (!scopeCheck.ok) {
+    return boundaryFailure(scopeCheck.reason, scopeCheck.message)
+  }
+  const tailScope = scope as DayReplanTailScope
+  const ctxResult = resolveTailContext(baseTrip, scope, response, currentRevision)
+  if (!ctxResult.ok) return ctxResult
+  const ctx = ctxResult.ctx
+
+  // scope 是模式的唯一来源；请求里也必须一致（scope.request 由 build 生成，正常恒等，防御性核对）。
+  if (tailScope.request.travel_mode !== tailScope.travelMode) {
+    return boundaryFailure(
+      'invalid_scope',
+      '后段范围记录的出行方式不一致，无法安全发起衔接路线查询；请重新生成候选。',
+    )
+  }
+
+  const anchorStop = ctx.baseDay.stops[ctx.keptCount - 1]
+  const tailFirstStop = ctx.candidateDay.stops[0]
+  if (!isRecord(anchorStop) || !isRecord(tailFirstStop)) {
+    return boundaryFailure('invalid_base_day', '锚点或候选首站数据不完整，未发起衔接路线查询。')
+  }
+  if (anchorStop.location === null) {
+    return boundaryFailure(
+      'missing_boundary_location',
+      `「${anchorStop.name}」没有记录坐标，无法按固定端点查询衔接路线；不会按地址重新定位或补 0。仍可仅应用后段（衔接未知）。`,
+    )
+  }
+  if (tailFirstStop.location === null) {
+    return boundaryFailure(
+      'missing_boundary_location',
+      `「${tailFirstStop.name}」没有记录坐标，无法按固定端点查询衔接路线；不会按地址重新定位或补 0。仍可仅应用后段（衔接未知）。`,
+    )
+  }
+  if (!isFiniteCoordinatePair(anchorStop.location)) {
+    return boundaryFailure(
+      'missing_boundary_location',
+      `「${anchorStop.name}」的记录坐标不是合法 WGS84 数值，无法查询衔接路线。仍可仅应用后段（衔接未知）。`,
+    )
+  }
+  if (!isFiniteCoordinatePair(tailFirstStop.location)) {
+    return boundaryFailure(
+      'missing_boundary_location',
+      `「${tailFirstStop.name}」的记录坐标不是合法 WGS84 数值，无法查询衔接路线。仍可仅应用后段（衔接未知）。`,
+    )
+  }
+
+  const built = buildLegRefreshRequest({
+    parent: { trip_id: tailScope.tripId, revision: tailScope.revision },
+    day: tailScope.day,
+    date: tailScope.date,
+    travel_mode: tailScope.travelMode,
+    from_stop: {
+      id: anchorStop.id,
+      location: { lng: anchorStop.location.lng, lat: anchorStop.location.lat },
+    },
+    to_stop: {
+      id: tailFirstStop.id,
+      location: { lng: tailFirstStop.location.lng, lat: tailFirstStop.location.lat },
+    },
+  })
+  if (!built.ok) {
+    // 恒等映射：id 无法通过衔接接口校验（超长/控制字符/空白/相同 id）时明确解释，不改名不截断。
+    if (built.reason === 'duplicate_stop_id') {
+      return boundaryFailure(
+        'invalid_boundary_stop_id',
+        '锚点与候选首站的站点 id 相同，无法查询衔接路线；候选未通过组合校验，请重新生成。',
+      )
+    }
+    return boundaryFailure(
+      'invalid_boundary_stop_id',
+      `站点 id 无法用于衔接路线查询（${built.message}）；不会改名或截断站点 id。仍可仅应用后段（衔接未知）。`,
+    )
+  }
+
+  let tripSnapshot: string
+  let candidateSnapshot: string
+  let scopeSnapshot: string
+  try {
+    tripSnapshot = JSON.stringify(baseTrip)
+    candidateSnapshot = JSON.stringify(response)
+    scopeSnapshot = JSON.stringify(tailScope)
+  } catch {
+    return boundaryFailure(
+      'invalid_boundary',
+      '行程或候选无法序列化记录归属，未发起衔接路线查询。',
+    )
+  }
+
+  return {
+    ok: true,
+    owner: {
+      trip: baseTrip,
+      tripSnapshot,
+      candidate: response as DayReplanResponse,
+      candidateSnapshot,
+      scope: tailScope,
+      scopeSnapshot,
+      anchorStop,
+      tailFirstStop,
+      request: built.request,
+      captured: {
+        contentEpoch: liveCurrent.contentEpoch,
+        inputEpoch: liveCurrent.inputEpoch,
+        boundaryEpoch: liveCurrent.boundaryEpoch,
+      },
+    },
+    request: built.request,
+  }
+}
+
+/**
+ * 绑定响应为 selection：在 current 上重跑 scope/组合校验（不是 owner 自证），
+ * 重取当前端点并与请求、响应 echo 三层精确核对；只有 ready 才产生 selection，
+ * typed 失败（no_key/timeout/unavailable/failed）按 boundary_not_ready 拒绝，
+ * 由调用方决定保留候选并显示原因。
+ */
+export function bindTailBoundaryResponse(
+  owner: unknown,
+  request: LegRefreshRequest,
+  rawResponse: unknown,
+  current: unknown,
+): TailBoundaryBindResult {
+  if (!isRecord(current)) {
+    return boundaryFailure(
+      'invalid_boundary_input',
+      '缺少当前上下文，无法核对衔接路线结果；本次结果不使用。',
+    )
+  }
+  const liveCheck = checkBoundaryCurrent(
+    current,
+    current.trip as Trip,
+    current.candidate,
+    current.scope,
+  )
+  if (!liveCheck.ok) return liveCheck
+  const liveCurrent = liveCheck.current
+  const ownerCheck = checkBoundaryOwner(owner, liveCurrent)
+  if (!ownerCheck.ok) return ownerCheck
+  const liveOwner = ownerCheck.owner
+
+  // 在 current 上重跑既有校验：scope 指纹 / 请求指纹 / 候选组合 / id 冲突 / 时间下界。
+  const scopeCheck = verifyTailScope(liveCurrent.scope, liveCurrent.trip, liveCurrent.revision)
+  if (!scopeCheck.ok) {
+    return boundaryFailure(scopeCheck.reason, scopeCheck.message)
+  }
+  const ctxResult = resolveTailContext(
+    liveCurrent.trip,
+    liveCurrent.scope,
+    liveCurrent.candidate,
+    liveCurrent.revision,
+  )
+  if (!ctxResult.ok) return ctxResult
+
+  // 重取当前组合端点：与 owner 捕获、请求、响应 echo 三层必须逐字一致。
+  const anchorStop = ctxResult.ctx.baseDay.stops[ctxResult.ctx.keptCount - 1]
+  const tailFirstStop = ctxResult.ctx.candidateDay.stops[0]
+  if (anchorStop !== liveOwner.anchorStop || tailFirstStop !== liveOwner.tailFirstStop) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '锚点或候选首站已变化，这份衔接结果不能使用；请重新获取。',
+    )
+  }
+  if (
+    request !== liveOwner.request ||
+    request.from_stop.id !== anchorStop.id ||
+    request.to_stop.id !== tailFirstStop.id ||
+    request.from_stop.location.lng !== anchorStop.location?.lng ||
+    request.from_stop.location.lat !== anchorStop.location?.lat ||
+    request.to_stop.location.lng !== tailFirstStop.location?.lng ||
+    request.to_stop.location.lat !== tailFirstStop.location?.lat
+  ) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '衔接路线请求与当前端点不一致，结果不能使用；请重新获取。',
+    )
+  }
+
+  const validated = validateLegRefreshResponse(rawResponse, request)
+  if (!validated.ok) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '衔接路线返回没有通过完整性检查，本次结果不使用。可以重新获取，或仅应用后段（衔接未知）。',
+    )
+  }
+  const readyLeg = legRefreshReadyLeg(validated.response)
+  if (validated.response.map_status !== 'ready' || readyLeg === null) {
+    return boundaryFailure(
+      'boundary_not_ready',
+      `${validated.response.reason ?? '衔接路线查询未返回路线。'}候选仍在，可仅应用后段（衔接未知），或稍后重试。`,
+    )
+  }
+  return { ok: true, selection: { owner: liveOwner, request, response: validated.response as TailBoundarySelection['response'] } }
+}
+
+/**
+ * 预览/应用共用的边界 leg 解析：
+ * - boundary === undefined：返回 null（走既有未知衔接，旧行为逐字不变）。
+ * - boundary 存在：任何校验失败都整次失败（invalid_boundary 等），绝不静默降级 unknown；
+ *   要放弃路线必须由用户显式舍弃后重新走 unknown 路径。
+ */
+function resolveBoundaryLeg(
+  baseTrip: Trip,
+  scope: unknown,
+  response: unknown,
+  boundary: TailBoundarySelection | undefined,
+  current: unknown,
+): TailBoundaryComposedLegResult {
+  if (boundary === undefined) return { ok: true, leg: null }
+  if (boundary === null || !isRecord(boundary) || !isRecord(boundary.owner)) {
+    return boundaryFailure(
+      'invalid_boundary_input',
+      '衔接路线选择记录不完整，无法安全应用；本次未应用。',
+    )
+  }
+  const currentCheck = checkBoundaryCurrent(current, baseTrip, response, scope)
+  if (!currentCheck.ok) return currentCheck
+  const liveCurrent = currentCheck.current
+  const ownerCheck = checkBoundaryOwner(boundary.owner, liveCurrent)
+  if (!ownerCheck.ok) return ownerCheck
+  const liveOwner = ownerCheck.owner
+  if (boundary.request !== liveOwner.request || !isRecord(boundary.response)) {
+    return boundaryFailure(
+      'invalid_boundary',
+      '衔接路线选择记录与请求不一致，结果不能使用；请重新获取。',
+    )
+  }
+  const bound = bindTailBoundaryResponse(
+    liveOwner,
+    liveOwner.request,
+    boundary.response,
+    liveCurrent,
+  )
+  if (!bound.ok) return bound
+  const leg = legRefreshReadyLeg(bound.selection.response)
+  if (leg === null) {
+    return boundaryFailure(
+      'boundary_not_ready',
+      '衔接路线结果不再是可用导航路线；本次未应用。可仅应用后段（衔接未知）。',
+    )
+  }
+  return { ok: true, leg }
+}
+
+/** 从绑定的 ready 响应复制导航 leg（不把外部可变对象塞进 Trip）。 */
+function copyBoundaryLeg(leg: TripLeg): TripLeg {
+  return {
+    from_stop_id: leg.from_stop_id,
+    to_stop_id: leg.to_stop_id,
+    mode: leg.mode,
+    route_type: 'navigation',
+    distance_m: leg.distance_m,
+    duration_minutes: leg.duration_minutes,
+    geometry: leg.geometry.map((point) => ({ lng: point.lng, lat: point.lat })),
+    description: leg.description,
+  }
+}
+
+/** 采用衔接路线时的固定说明：来源诚实，不声称已核对地点身份或实时交通。 */
+const TAIL_BOUNDARY_NAV_NOTICE = TAIL_BOUNDARY_APPLIED_NOTICE
+
+function buildTailDaySummary(
+  keptCount: number,
+  anchorName: string,
+  boundaryKind: 'unavailable' | 'navigation',
+): string {
+  if (boundaryKind === 'navigation') {
+    return (
+      `AI 后段调整：本日前 ${keptCount} 站（至「${anchorName}」）原样保留，仅之后按 AI 候选替换；` +
+      '锚点与新后段首站之间的衔接路线已按两端记录坐标取得（高德地图 WGS84），未重新核对地址或地点身份。' +
+      '前段时刻、停留与路线未改动，后段为候选数据，未核实预约、营业状态或实时交通。'
+    )
+  }
+  return (
+    `AI 后段调整：本日前 ${keptCount} 站（至「${anchorName}」）原样保留，仅之后按 AI 候选替换；` +
+    '锚点衔接路线未重算，需另行核对。前段时刻、停留与路线未改动，后段为候选数据，' +
+    '未核实预约、营业状态或实时交通。'
+  )
+}
+
+function buildTailTripSummary(
+  days: readonly TripDay[],
+  dayNumber: number,
+  keptCount: number,
+  boundaryKind: 'unavailable' | 'navigation',
+): string {
+  const totalStops = days.reduce((total, day) => total + day.stops.length, 0)
+  const rest =
+    days.length > 1 ? `其余 ${days.length - 1} 天沿用原安排` : '这是行程里唯一的一天'
+  const boundaryNote =
+    boundaryKind === 'navigation'
+      ? '锚点与新后段首站之间的衔接路线已按两端记录坐标取得（高德地图 WGS84），未重新核对地址或地点身份；'
+      : '锚点衔接路线未重算，需另行核对；'
+  return (
+    `AI 后段调整副本（未重新规划其它天）：第${dayNumber}天前 ${keptCount} 站原样保留、仅之后按 AI 候选替换，${rest}；` +
+    `共 ${days.length} 天、${totalStops} 个站点。${boundaryNote}` +
+    '本次没有重新核实预约、营业状态或实时交通，占位时间与地图降级说明见行程提醒，原推荐摘要不再代表当前方案。' +
+    '本次应用不会自动保存。'
+  )
 }
