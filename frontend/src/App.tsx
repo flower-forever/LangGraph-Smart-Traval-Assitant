@@ -610,6 +610,9 @@ export default function App() {
   /** resumeUi 的同步引用：其它入口处理器（导入/保存恢复）需要感知 pending 状态 */
   const resumeUiRef = useRef<ResumeUiState>({ kind: 'off' })
   resumeUiRef.current = resumeUi
+  /** resumeEnabled 的同步引用：persistSessionResume 判断是否需要把已启用的 UI 向下同步为 off */
+  const resumeEnabledRef = useRef(false)
+  resumeEnabledRef.current = resumeEnabled
   /** 来源标记同步引用：openedFromFile 当前值，写入快照 ui.openedFromFile */
   const openedFromFileRef = useRef<boolean | null>(false)
   openedFromFileRef.current = openedFromFile
@@ -650,7 +653,19 @@ export default function App() {
     (options?: { force?: boolean }) => {
       const storage = storageRef.current
       if (!storage) return
-      if (!isSessionResumeEnabled(storage)) return
+      // 同页静默 flag off：同页 DevTools/扩展把 flag 置 0 不会派 StorageEvent（该事件
+      // 本就不达同页），UI 停留已启用。只在既有自动写尝试走到这里时检测一次：
+      // flag ≠ '1' → 把本标签 UI 向下同步为 off 并停写；原 raw、当前 Trip/草稿/费用、
+      // hasStoredData 原样，不写 flag、不读数据键、不删不恢复。外部再把 flag 置 1
+      // （同样无事件）不自动重启本标签，只有用户显式启用才恢复读取。
+      if (!isSessionResumeEnabled(storage)) {
+        if (resumeEnabledRef.current) {
+          setResumeEnabled(false)
+          setResumeUi({ kind: 'off' })
+          resumeSuspendReasonRef.current = null
+        }
+        return
+      }
       if (resumePausedRef.current && !options?.force) return
       if (resumeSuspendReasonRef.current !== null || editorInputDirtyRef.current) return
       const latestTrip = tripRef.current

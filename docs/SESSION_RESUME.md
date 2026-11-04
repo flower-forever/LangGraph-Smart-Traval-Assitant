@@ -37,6 +37,8 @@
 恢复/放弃动作前再严格比对；外部已改则拒绝动作、双方数据不变，不靠二次 getItem 刷新基准。读比对 + 单次 setItem **不是原子 CAS**：本功能不承诺事务或任何未测量的
 竞态窗口上界；检测到冲突即停写，接管只在用户显式操作后发生。
 
+同页静默 flag 关闭（恢复 Minor）：同页 DevTools/扩展把启用 flag 置为非 '1' 不会派发 storage 事件（该事件本就不送达写入方页面），UI 不即时变化；只有在下一次既有自动写尝试检测到 flag 不为 '1' 时，本标签 UI 向下同步为 off 并停写，原 raw、当前 Trip/草稿/费用与 hasStoredData 原样，不写 flag、不读内容键、不删、不自动恢复或保存。外部再把 flag 置回 '1'（同样无事件）不会自动复活本标签，只有用户显式启用才重新读取 pending；不新增轮询、定时器、storage 拦截或自定义事件，也不声称同页写入可即时侦测。
+
 ## 恢复语义
 
 - pending 概况先展示（标题/天数/草稿有无/费用条数/保存时间 + 未向服务器核对声明），
@@ -75,14 +77,14 @@
 ## 测试
 
 - `src/__tests__/sessionRestore.test.ts`：flag/envelope/门禁/协议/重建/删除与结构隔离、Trip 写前校验共 49 例。
-- `src/__tests__/AppSessionRestoreIntegration.test.tsx`：App 接线 35 例（off 零写、启用写、
+- `src/__tests__/AppSessionRestoreIntegration.test.tsx`：App 接线 37 例（off 零写、启用写、
   pending 不被示例覆盖、迟到响应不覆盖恢复、草稿不自动应用、费用 current/stale、关闭/删除、
   损坏保旧、跨标签停写与外部开启不复活、文件来源与 legacy 未知三态、dirty 输入与提交后继续留存、
   无事件外部写恢复/放弃 CAS、empty 双读取窗口、读取异常安全、存储 getter 不可用重试、
   删除 compare-then-remove、prepare 成功后的确认窗口内外部静默写入（合法 pending 与损坏基线）、
   pending 期间导入/已保存恢复保原 raw、写成功关闭后删除入口、off 零读取→显式检查→独立删除、
   null/空/坏/异版本检查区分、检查零副作用、检查后静默 B 两窗口拒删、SecurityError 诚实反馈可重试、
-  检查推进确认身份 ABA 不复用）；
+  检查推进确认身份 ABA 不复用、同页静默 flag 关闭后下一次写尝试向下同步 off 且外部回 1 不复活、显式启用才恢复 pending 读取）；
   另有 `SessionResumePanel.test.tsx`：确认身份 1 例 + off 检查入口与检查身份 epoch 2 例。
 
 ## 恢复结构隔离与写入校验

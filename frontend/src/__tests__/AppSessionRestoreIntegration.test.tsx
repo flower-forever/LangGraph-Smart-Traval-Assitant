@@ -1246,4 +1246,158 @@ describe('App 会话留存：关闭后副本管理（Important 修复）', () =>
     await waitFor(() => expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).toBeNull())
     expect(window.localStorage.getItem(SESSION_RESUME_FLAG_KEY)).toBe('0')
   })
+
+  /**
+   * 同页静默 flag off（Minor 修复）：同页 DevTools/扩展直接把 flag 置 '0' 且不派
+   * StorageEvent（StorageEvent 本就不跨同一页面）。此时 UI 仍显示已启用；
+   * 下一次费用/草稿提交触发原有自动写尝试时，发现 flag ≠ '1'，必须：
+   * - 把本标签 UI 向下同步为 off（停写、关闭当前启用状态）；
+   * - 保留原 raw 与当前 Trip 草稿/费用内容；不写 flag、不读恢复内容键、
+   *   不删除、不自动恢复/应用/保存。
+   * 本测试只 setItem(flag,'0')、绝不手动 dispatch StorageEvent——那不是本缺陷。
+   */
+  it('D9: 同页静默 flag 置 0（无事件）→ 下一次自动写尝试把本标签 UI 同步为 off，raw/内存内容原样、不写 flag 不读数据键', async () => {
+    stubHappyFetch()
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    await screen.findByText('杭州三日漫步路书')
+    await enableResume(user)
+    await waitFor(() => expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).not.toBeNull())
+    const rawBefore = window.localStorage.getItem(SESSION_RESUME_DATA_KEY)
+    expect(window.localStorage.getItem(SESSION_RESUME_FLAG_KEY)).toBe('1')
+    // UI 当前显示已启用（有关闭保留按钮）
+    expect(screen.getByRole('button', { name: /关闭保留/ })).toBeInTheDocument()
+
+    // 展开费用面板并填入名称，让内存持有费用内容；此时自动写把费用快照进副本
+    await user.click(screen.getByRole('button', { name: '费用估算' }))
+    await user.click(screen.getByRole('button', { name: '添加费用项' }))
+    await waitFor(() => expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).not.toBeNull())
+    await user.type(screen.getByLabelText(/名称（可留空）/), '高铁票')
+    const rawWithBudget = await waitFor(() => {
+      const raw = window.localStorage.getItem(SESSION_RESUME_DATA_KEY)
+      expect(raw).not.toBeNull()
+      expect(raw).toContain('高铁票')
+      return raw!
+    })
+    expect(rawWithBudget).not.toBe(rawBefore)
+
+    // 同页静默关闭：只 setItem，绝不 dispatch StorageEvent（同页本就没有该事件）
+    window.localStorage.setItem(SESSION_RESUME_FLAG_KEY, '0')
+
+    // 通过业务操作触发原有自动写尝试（费用输入提交）
+    await user.type(screen.getByLabelText(/金额（元）/), '128.5')
+
+    // 写尝试检测到 flag ≠ '1'：本标签 UI 向下同步为 off
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '在此浏览器保留工作进度' })).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('button', { name: /关闭保留/ })).toBeNull()
+    expect(screen.getByTestId('session-resume-card')).toBeInTheDocument()
+
+    // 原 raw 逐字节保留；flag 保持外部写的 '0'，不被应用回写
+    expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).toBe(rawWithBudget)
+    expect(window.localStorage.getItem(SESSION_RESUME_FLAG_KEY)).toBe('0')
+
+    // flag 关闭后业务 setItem/removeItem 均为 0（不含 flag 键本身的那次外部写）
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    await user.type(screen.getByLabelText(/名称（可留空）/), '续')
+    await waitFor(() => expect(screen.getByDisplayValue('高铁票续')).toBeInTheDocument())
+    expect(
+      setItemSpy.mock.calls.filter(
+        ([key]) => key === SESSION_RESUME_DATA_KEY || key === SESSION_RESUME_FLAG_KEY,
+      ),
+    ).toEqual([])
+    expect(removeSpy.mock.calls.filter(([key]) => key === SESSION_RESUME_DATA_KEY)).toEqual([])
+
+    // 无额外数据键读取（ off 合同：默认零内容键读取）
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    await user.type(screen.getByLabelText(/金额（元）/), '9')
+    await waitFor(() => expect(screen.getByDisplayValue('128.59')).toBeInTheDocument())
+    expect(getItemSpy.mock.calls.filter(([key]) => key === SESSION_RESUME_DATA_KEY)).toEqual([])
+
+    // 内存费用与当前 Trip 原样保留：页面行程未变、费用草稿仍在
+    expect(screen.getByText('杭州三日漫步路书')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('高铁票续')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('128.59')).toBeInTheDocument()
+
+    // 外部把 flag 回 '1'（仍无事件）：本标签不自动重启写或恢复 UI，保持 off
+    await act(async () => {
+      window.localStorage.setItem(SESSION_RESUME_FLAG_KEY, '1')
+    })
+    await user.type(screen.getByLabelText(/金额（元）/), '1')
+    expect(screen.getByRole('button', { name: '在此浏览器保留工作进度' })).toBeInTheDocument()
+    expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).toBe(rawWithBudget)
+
+    // 只有用户显式启用：按当前存储内容重新读取——存储里已有副本 → pending 概况重现
+    // （自动写被 pending 挂起是既有行为，不期待自动写）；内存费用原样保留
+    await user.click(screen.getByRole('button', { name: '在此浏览器保留工作进度' }))
+    expect(await screen.findByRole('button', { name: /关闭保留/ })).toBeInTheDocument()
+    expect(window.localStorage.getItem(SESSION_RESUME_FLAG_KEY)).toBe('1')
+    const resumedCard = screen.getByTestId('session-resume-card')
+    expect(await within(resumedCard).findByText(/杭州三日漫步路书/)).toBeInTheDocument()
+    expect(within(resumedCard).getByRole('button', { name: '恢复上次的工作进度' })).toBeInTheDocument()
+    // 副本仍是静默关闭前的 raw（pending 挂起不写）；内存费用草稿原样
+    expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).toBe(rawWithBudget)
+    expect(screen.getByDisplayValue('高铁票续')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('128.591')).toBeInTheDocument()
+    void container
+  })
+
+  /**
+   * D9 守卫补充：静默 off 同步后，外部把 flag 回 '1'（无事件）也不自动开启本标签；
+   * 只有用户显式启用才恢复 pending 读取。既有「写尝试时才检测」边界保持：
+   * 不加 polling/timer/事件劫持，不声称同页写入瞬时侦测。
+   */
+  it('D9: 静默 off 同步后外部 flag 回 1（无事件）不自动开启；显式启用才恢复 pending 读取', async () => {
+    // 本 describe 无 seedResumeRecord：内联同一夹具（合法副本 + flag '1'）
+    const seeded = writeSessionResume(
+      {
+        payload: {
+          trip: PLAN_TRIP,
+          draft: null,
+          budget: null,
+          ui: { activeDay: 1, draftMode: 'walking', openedFromFile: false },
+        },
+        expectedRaw: null,
+      },
+      window.localStorage,
+    )
+    if (!seeded.ok) throw new Error(`fixture 失败：${seeded.reason}`)
+    window.localStorage.setItem(SESSION_RESUME_FLAG_KEY, '1')
+    stubHappyFetch()
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    const card = await screen.findByTestId('session-resume-card')
+    await screen.findByText('杭州三日漫步路书')
+    expect(within(card).getByText(/南京两日规划行/)).toBeInTheDocument()
+    // 显式恢复进入 idle：自动写恢复运行，后续编辑器打开才能触达 flag 检查
+    await user.click(within(card).getByRole('button', { name: '恢复上次的工作进度' }))
+    await screen.findByText('南京两日规划行')
+    // 同页静默置 0：UI 仍显示已启用（缺陷现场）
+    window.localStorage.setItem(SESSION_RESUME_FLAG_KEY, '0')
+    // 触发一次原有自动写尝试（打开编辑器会产生一次写尝试）
+    await user.click(within(container).getByRole('button', { name: '编辑这趟行程' }))
+    await screen.findByRole('region', { name: '本地行程草稿编辑器' })
+    // 同步后本标签 UI 为 off；副本原样保留、flag 不被改写
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '在此浏览器保留工作进度' })).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('button', { name: /关闭保留/ })).toBeNull()
+    expect(window.localStorage.getItem(SESSION_RESUME_FLAG_KEY)).toBe('0')
+    expect(window.localStorage.getItem(SESSION_RESUME_DATA_KEY)).not.toBeNull()
+
+    // 外部把 flag 回 '1'（无事件）：本标签不自动开启、不自动读 pending
+    await act(async () => {
+      window.localStorage.setItem(SESSION_RESUME_FLAG_KEY, '1')
+    })
+    expect(screen.getByRole('button', { name: '在此浏览器保留工作进度' })).toBeInTheDocument()
+    expect(within(screen.getByTestId('session-resume-card')).queryByText(/南京两日规划行/)).toBeNull()
+
+    // 用户显式启用：按当前存储重新读取，pending 概况回来
+    await user.click(screen.getByRole('button', { name: '在此浏览器保留工作进度' }))
+    const revived = await screen.findByTestId('session-resume-card')
+    expect(await within(revived).findByText(/南京两日规划行/)).toBeInTheDocument()
+    expect(within(revived).getByRole('button', { name: '恢复上次的工作进度' })).toBeInTheDocument()
+  })
 })
