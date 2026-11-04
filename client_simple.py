@@ -7,7 +7,7 @@ import os
 from dotenv import load_dotenv
 
 from langgraph.prebuilt import create_react_agent
-from langchain_community.chat_models import ChatTongyi
+from qwen_model import ChatTongyi
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 import mcp_runtime
@@ -48,7 +48,7 @@ async def single_query(question: str) -> str:
     
     # 3. 初始化模型
     model = ChatTongyi(
-        model=os.getenv("MODEL_NAME", "qwen-plus"),
+        model=os.getenv("MODEL_NAME", "qwen3.8-flash"),
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY")
     )
     

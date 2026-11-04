@@ -384,7 +384,10 @@ describe('不可变与文案边界', () => {
     const result = dailyWalkingDistanceResult(draft, 3000, 'all_days')
     if (!result.ok) throw new Error(result.message)
     expect(JSON.stringify(draft)).toBe(before)
-    expect(draft.days).toBe(base.days)
+    // 创建时草稿的可编辑结构与 base 是值相等、对象独立的副本（见 tripDraft 回归），
+    // 这里验证的是检查不改动草稿：内容不变、引用不变。
+    expect(draft.days).not.toBe(base.days)
+    expect(JSON.stringify(draft.days)).toBe(JSON.stringify(base.days))
   })
 
   it('固定口径文案存在且不出现「全天未超限/轻松走完」类肯定结论', () => {

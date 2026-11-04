@@ -10,9 +10,10 @@ import TripDraftEditor from './components/TripDraftEditor'
 import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPanel'
 import DayWeatherPanel from './components/DayWeatherPanel'
 import DayPoiSourcesPanel from './components/DayPoiSourcesPanel'
+import WebSourcesPanel from './components/WebSourcesPanel'
 import MapRefreshPanel from './components/MapRefreshPanel'
 import TripBudgetPanel from './components/TripBudgetPanel'
-import { emptyBudgetSession, type BudgetSessionState } from './lib/tripBudget'
+import { emptyBudgetSession, tripOwnerSnapshot, type BudgetSessionState } from './lib/tripBudget'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
@@ -36,6 +37,21 @@ import {
   type MapRefreshResponse,
 } from './lib/mapRefresh'
 import { formatDateTime } from './lib/format'
+import SessionResumePanel from './components/SessionResumePanel'
+import {
+  SESSION_RESUME_DATA_KEY,
+  getLocalStorageSafe,
+  isSessionResumeEnabled,
+  loadSessionResumeRecord,
+  removeSessionResumeData,
+  setSessionResumeFlag,
+  writeSessionResume,
+  buildPayloadFromSession,
+  previewSessionResume,
+  SESSION_RESUME_FLAG_KEY,
+  type SessionResumeLoad,
+} from './lib/sessionRestore'
+import type { StorageLike } from './lib/savedTrips'
 import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, TravelMode, Trip } from './lib/api'
 
 /** 站点 id / fork 行程 id 都由页面用 UUID 生成；无 crypto.randomUUID 的环境退回随机串 */
@@ -43,6 +59,34 @@ function newUuid(): string {
   const c = globalThis.crypto as Crypto | undefined
   if (c && typeof c.randomUUID === 'function') return c.randomUUID()
   return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
+/** 留存用：当前 Trip 的内容快照；序列化失败返回 null（调用方停写） */
+function tripOwnerSnapshotForResume(trip: Trip): string | null {
+  const result = tripOwnerSnapshot(trip)
+  return result.ok ? result.value : null
+}
+
+/** 异常安全的数据键读取；读取失败返回 null（不代表存储为空，仅冻结基准） */
+function readDataRawSafe(storage: StorageLike | null): string | null {
+  if (!storage) return null
+  try {
+    return storage.getItem(SESSION_RESUME_DATA_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** 恢复动作前的严格读取：读取异常不能被当成“存储为空”而放过 CAS 比对 */
+function readDataRawForAction(
+  storage: StorageLike | null,
+): { ok: true; raw: string | null } | { ok: false } {
+  if (!storage) return { ok: false }
+  try {
+    return { ok: true, raw: storage.getItem(SESSION_RESUME_DATA_KEY) }
+  } catch {
+    return { ok: false }
+  }
 }
 
 type LoadPhase = 'initial' | 'loading' | 'ready' | 'failed'
@@ -199,7 +243,7 @@ export default function App() {
    * 只用来加一句来源说明：文件里的 source 字段不能证明真实来源，
    * 也不能拿它当「本地保存恢复」来展示时间戳。
    */
-  const [openedFromFile, setOpenedFromFile] = useState(false)
+  const [openedFromFile, setOpenedFromFile] = useState<boolean | null>(false)
   /** 备份 / 导入面板是否展开；默认收起，展开后才挂载面板 */
   const [transferOpen, setTransferOpen] = useState(false)
   /** 本日天气面板是否展开；收起后不挂载，未查询不请求 */
@@ -213,6 +257,18 @@ export default function App() {
    */
   const poiSourcesExplicitCloseRef = useRef(false)
   const poiSourcesEntryRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * 网页资料面板（Tavily 搜索摘要）是否展开；收起后不挂载，未查询不请求。
+   * 结果只存面板内存：不写 Trip／费用／恢复副本，与「本日公开资料」互不替代。
+   */
+  const [webSourcesOpen, setWebSourcesOpen] = useState(false)
+  /**
+   * 网页资料面板「显式收起」标记：只有用户在面板里点了「收起」才置位，
+   * 据此在入口重新挂载后把键盘焦点送回「查网页资料」按钮。编辑/AI/地图打开
+   * 的隐式收起不置位——那不是用户在面板里的操作，不抢走当前焦点。
+   */
+  const webSourcesExplicitCloseRef = useRef(false)
+  const webSourcesEntryRef = useRef<HTMLDivElement | null>(null)
   const transferBodyId = useId()
   const abortRef = useRef<AbortController | null>(null)
   const exampleAbortRef = useRef<AbortController | null>(null)
@@ -269,6 +325,11 @@ export default function App() {
   /** 最新行程的同步引用：AI 候选应用必须以当前页面为准，不能读闭包里的旧值 */
   const tripRef = useRef<Trip | null>(null)
   tripRef.current = trip
+  /** 留存写入用的同步引用（声明在下方状态之后统一赋值）：persistSessionResume 从事件路径读最新值 */
+  const draftRef = useRef<TripDraft | null>(null)
+  const budgetRef = useRef<BudgetSessionState>(emptyBudgetSession())
+  const activeDayRef = useRef(1)
+  const draftModeRef = useRef<TravelMode>('walking')
 
   /* ───────── 费用估算（手动 CNY，内存草稿）状态 ───────── */
 
@@ -278,6 +339,11 @@ export default function App() {
    * 不写 Storage、不发请求；刷新页面会丢失，界面有固定说明。
    */
   const [budgetSession, setBudgetSession] = useState<BudgetSessionState>(emptyBudgetSession)
+  /** 留存写入用的同步引用：persistSessionResume 从事件路径读最新草稿/费用/界面状态 */
+  draftRef.current = draft
+  budgetRef.current = budgetSession
+  activeDayRef.current = activeDay
+  draftModeRef.current = draftMode
   /** 费用估算面板是否展开；默认收起，收起不清草稿 */
   const [budgetOpen, setBudgetOpen] = useState(false)
   /** 显式收起费用面板的标记：置位后焦点回「费用估算」入口按钮；隐式隐藏不置位不抢焦点 */
@@ -309,6 +375,27 @@ export default function App() {
   const handlePoiSourcesClose = useCallback(() => {
     poiSourcesExplicitCloseRef.current = true
     setPoiSourcesOpen(false)
+  }, [])
+
+  /**
+   * 显式收起网页资料面板后，把键盘焦点送回重新挂载的「查网页资料」入口按钮。
+   * 只在显式收起标记置位时执行一次并清除标记；隐式收起（编辑/AI/地图打开）
+   * 不置位也不抢焦点。
+   */
+  useEffect(() => {
+    if (webSourcesOpen) return
+    if (!webSourcesExplicitCloseRef.current) return
+    webSourcesExplicitCloseRef.current = false
+    const entry = webSourcesEntryRef.current
+    if (!entry) return
+    const entryButton = entry.querySelector<HTMLButtonElement>('button')
+    entryButton?.focus()
+  }, [webSourcesOpen])
+
+  /** 面板内点「收起」：标记显式收起，让焦点回到入口；其余行为不变 */
+  const handleWebSourcesClose = useCallback(() => {
+    webSourcesExplicitCloseRef.current = true
+    setWebSourcesOpen(false)
   }, [])
 
   /** AI 单日调整请求序号：关闭面板 / 重新生成 / 应用成功都 +1，迟到的适配器结果据此作废 */
@@ -486,6 +573,523 @@ export default function App() {
       tripTitleRef.current?.focus({ preventScroll: true })
     })
   }, [])
+  /* ───────── 本机工作进度留存（opt-in）状态 ───────── */
+
+  /**
+   * 留存功能状态机：off（未启用）→ idle（启用且无副本）→ pending（有待恢复副本，
+   * 自动写整体暂停）→ 恢复/放弃后回 active。跨标签冲突或写失败进入 paused，
+   * 只能由用户显式操作退出；editorInputDirty 时自动写暂停。
+   */
+  type ResumeUiState =
+    | { kind: 'off' }
+    | { kind: 'idle' }
+    | { kind: 'pending'; load: Extract<SessionResumeLoad, { status: 'pending' }> }
+    /** rawPreserved=false 只用于删除成功：旧副本已不存在，不能再声称原数据保留 */
+    | { kind: 'problem'; message: string; canRestore: boolean; rawPreserved: boolean }
+
+  const storageRef = useRef(getLocalStorageSafe())
+  const [resumeEnabled, setResumeEnabled] = useState(false)
+  const [resumeUi, setResumeUi] = useState<ResumeUiState>(() =>
+    storageRef.current
+      ? { kind: 'off' }
+      : {
+          kind: 'problem',
+          message: '浏览器本地存储不可用（可能被隐私模式或站点设置禁用），工作进度留存未启用。',
+          canRestore: false,
+          rawPreserved: false,
+        },
+  )
+  /** 冻结的存储现值：自动写与外部变化检测都以它为基准 */
+  const resumeExpectedRawRef = useRef<string | null>(null)
+  /** 自动写被冲突/写失败/删除后暂停：只能由用户显式操作解除 */
+  const resumePausedRef = useRef(false)
+  /** editorInputDirty 或 pending 期间挂起自动写（同步 ref，state 不参与守卫） */
+  const resumeSuspendReasonRef = useRef<'dirty' | 'pending' | null>(null)
+  /** editorInputDirty 的同步引用：子组件回调先写 ref，避免 effect 前的自动写窗口 */
+  const editorInputDirtyRef = useRef(false)
+  /** resumeUi 的同步引用：其它入口处理器（导入/保存恢复）需要感知 pending 状态 */
+  const resumeUiRef = useRef<ResumeUiState>({ kind: 'off' })
+  resumeUiRef.current = resumeUi
+  /** 来源标记同步引用：openedFromFile 当前值，写入快照 ui.openedFromFile */
+  const openedFromFileRef = useRef<boolean | null>(false)
+  openedFromFileRef.current = openedFromFile
+  /** off 时存储里是否仍有副本（驱动「删除本机恢复副本」入口显示）；off 时不读内容键 */
+  const [resumeHasDataState, setResumeHasDataState] = useState(false)
+  const resumeHasData = resumeHasDataState
+  /**
+   * off 下的显式检查结果（仅用户点击「检查本机恢复副本」时才读数据键）：
+   * generation 每次检查推进，是 off 删除确认身份的一部分；挂载/重载恒为 not_checked。
+   */
+  type ResumeManagementState =
+    | { generation: 0; kind: 'not_checked' }
+    | { generation: number; kind: 'found'; raw: string }
+    | { generation: number; kind: 'not_found' }
+    | { generation: number; kind: 'error'; message: string }
+  const [resumeManagement, setResumeManagement] = useState<ResumeManagementState>({
+    generation: 0,
+    kind: 'not_checked',
+  })
+  const resumeManagementGenerationRef = useRef(0)
+
+  /**
+   * 子组件单站表单 dirty 变化的同步入口：先写 ref 再 setState。
+   * 自动写 effect 在本函数返回前就可能被同一批渲染触发，不能等 effect 再更新守卫。
+   */
+  const updateEditorInputDirty = useCallback((dirty: boolean) => {
+    editorInputDirtyRef.current = dirty
+    setEditorInputDirty(dirty)
+    if (dirty) {
+      resumeSuspendReasonRef.current = 'dirty'
+    } else if (resumeSuspendReasonRef.current === 'dirty') {
+      resumeSuspendReasonRef.current = resumeUiRef.current.kind === 'pending' ? 'pending' : null
+    }
+  }, [])
+
+  /** 把当前会话快照写入留存键（App 内部统一入口，含所有守卫） */
+  const persistSessionResume = useCallback(
+    (options?: { force?: boolean }) => {
+      const storage = storageRef.current
+      if (!storage) return
+      if (!isSessionResumeEnabled(storage)) return
+      if (resumePausedRef.current && !options?.force) return
+      if (resumeSuspendReasonRef.current !== null || editorInputDirtyRef.current) return
+      const latestTrip = tripRef.current
+      if (!latestTrip) return
+      const snapshot = tripOwnerSnapshotForResume(latestTrip)
+      const payload = buildPayloadFromSession({
+        trip: latestTrip,
+        draft: draftRef.current,
+        budget: budgetRef.current,
+        ui: {
+          activeDay: activeDayRef.current,
+          draftMode: draftModeRef.current,
+          openedFromFile: openedFromFileRef.current,
+        },
+        tripRevision: tripRevisionRef.current,
+        tripSnapshot: snapshot,
+      })
+      if (payload === null) {
+        // 投影失败 = 有内容无法自证归属：整次停写，绝不静默丢块落盘
+        resumePausedRef.current = true
+        setResumeUi({
+          kind: 'problem',
+          message: '当前行程或费用内容无法自证归属，自动留存已暂停；已有副本原样。',
+          canRestore: false,
+          rawPreserved: true,
+        })
+        return
+      }
+      const result = writeSessionResume({ payload, expectedRaw: resumeExpectedRawRef.current }, storage)
+      if (result.ok) {
+        // 成功路径直接采用刚写入的串作新基准（异常安全，不二次读存储）
+        resumeExpectedRawRef.current = result.writtenRaw
+        // 写成功即有副本：同步 hasStoredData，关闭保留后删除入口不丢失（不二次读存储）
+        setResumeHasDataState(true)
+        return
+      }
+      // conflict / quota / unavailable / unknown / too_large：一律停自动写并显式说明，旧 raw 不动
+      resumePausedRef.current = true
+      setResumeUi({ kind: 'problem', message: result.message, canRestore: false, rawPreserved: true })
+    },
+    [],
+  )
+
+  /** 暂停自动写并给出可见 problem（ref 与 state 同步置位，不留渲染窗口） */
+  const pauseResumeWrites = useCallback((message: string) => {
+    resumePausedRef.current = true
+    setResumeUi({ kind: 'problem', message, canRestore: false, rawPreserved: true })
+  }, [])
+
+  /** 存储整体不可用：明确未启用，且不能声称已有副本被保留 */
+  const showStorageUnavailable = useCallback(() => {
+    setResumeEnabled(false)
+    setResumeUi({
+      kind: 'problem',
+      message: '浏览器本地存储不可用（可能被隐私模式或站点设置禁用），工作进度留存未启用。',
+      canRestore: false,
+      rawPreserved: false,
+    })
+  }, [])
+
+  /** 会话变化（trip/revision/draft/budget/ui）后触发一次有界自动写 */
+  useEffect(() => {
+    if (!resumeEnabled) return
+    if (resumeSuspendReasonRef.current !== null || editorInputDirtyRef.current) return
+    if (resumePausedRef.current) return
+    persistSessionResume()
+  }, [
+    resumeEnabled,
+    trip,
+    tripRevision,
+    draft,
+    budgetSession,
+    activeDay,
+    draftMode,
+    editorInputDirty,
+    persistSessionResume,
+  ])
+
+  /** 跨标签：任一留存键（含 flag）的 storage 事件 → 冲突暂停，冻结事件后现值 */
+  useEffect(() => {
+    if (!resumeEnabled) return
+    const handler = (event: StorageEvent) => {
+      if (event.storageArea !== storageRef.current) return
+      // 数据键变化、flag 变化、以及 key=null（clear()）都视为外部接管
+      const relevant = event.key === SESSION_RESUME_DATA_KEY || event.key === SESSION_RESUME_FLAG_KEY || event.key === null
+      if (!relevant) return
+      // 冻结当前存储现值（含本次事件写入后的值），本标签不再自动写；
+      // 外部把 flag 关掉时同步停用本标签 UI；重新启用不自动复活写，须用户显式操作。
+      try {
+        resumeExpectedRawRef.current = storageRef.current?.getItem(SESSION_RESUME_DATA_KEY) ?? null
+      } catch {
+        resumeExpectedRawRef.current = null
+      }
+      const stillEnabled = isSessionResumeEnabled(storageRef.current)
+      if (!stillEnabled) {
+        setResumeEnabled(false)
+        setResumeUi({ kind: 'off' })
+        resumeSuspendReasonRef.current = null
+        return
+      }
+      pauseResumeWrites('检测到另一个标签页更新了留存副本，本标签页已暂停自动留存。可用「删除本机恢复副本」或先关闭再开启以重新接管。')
+    }
+    window.addEventListener('storage', handler)
+    return () => window.removeEventListener('storage', handler)
+  }, [resumeEnabled, pauseResumeWrites])
+
+  /** 挂载 / 重新启用时读取副本 → pending；示例或规划结果不能覆盖它 */
+  const refreshResumeFromStorage = useCallback(() => {
+    const storage = storageRef.current
+    if (!storage) {
+      showStorageUnavailable()
+      return
+    }
+    const enabled = isSessionResumeEnabled(storage)
+    setResumeEnabled(enabled)
+    if (!enabled) {
+      setResumeUi({ kind: 'off' })
+      resumeExpectedRawRef.current = null
+      // off 默认零内容键读取：检查结果回到未检查，等待用户显式检查
+      setResumeManagement({ generation: 0, kind: 'not_checked' })
+      resumeManagementGenerationRef.current = 0
+      return
+    }
+    const load = loadSessionResumeRecord(storage)
+    // 所有异常路径：冻结 raw + ref 停写 + 可见 problem（同步，不给后续 effect 写入窗口）
+    if (load.status === 'pending') {
+      // 用这次解析实际读到的 raw 作为冻结基准，绝不再读一次当前值覆盖它
+      resumeExpectedRawRef.current = load.raw
+      resumePausedRef.current = false
+      // 编辑器未提交输入优先于 pending 的挂起原因；dirty 结束时会回到 pending
+      resumeSuspendReasonRef.current = editorInputDirtyRef.current ? 'dirty' : 'pending'
+      setResumeHasDataState(true)
+      setResumeUi({ kind: 'pending', load })
+    } else if (load.status === 'empty') {
+      // 空串/空白也算“空”；直接冻结 load 当次实际读到的 raw，绝不再读一次换基准
+      resumeExpectedRawRef.current = load.raw
+      resumePausedRef.current = false
+      resumeSuspendReasonRef.current = editorInputDirtyRef.current ? 'dirty' : null
+      setResumeHasDataState(false)
+      setResumeUi({ kind: 'idle' })
+    } else if (load.status === 'disabled') {
+      setResumeUi({ kind: 'off' })
+      resumeExpectedRawRef.current = null
+      resumeSuspendReasonRef.current = null
+    } else if (
+      load.status === 'corrupt' ||
+      load.status === 'unknown_version' ||
+      load.status === 'invalid' ||
+      load.status === 'unavailable'
+    ) {
+      // 异常路径：冻结 raw + ref 停写 + 可见 problem（同步，不给后续 effect 写入窗口）
+      resumeExpectedRawRef.current = readDataRawSafe(storage)
+      setResumeHasDataState(true)
+      pauseResumeWrites(load.message)
+    }
+  }, [pauseResumeWrites, showStorageUnavailable])
+
+  useEffect(() => {
+    refreshResumeFromStorage()
+  }, [refreshResumeFromStorage])
+
+  const handleResumeEnable = useCallback(() => {
+    // 首次 getter 抛异常/返回 null 时，允许在同页重试获取；仍不可用则明确反馈
+    let storage = storageRef.current
+    if (!storage) {
+      storage = getLocalStorageSafe()
+      storageRef.current = storage
+    }
+    if (!storage) {
+      showStorageUnavailable()
+      return
+    }
+    const result = setSessionResumeFlag(storage, true)
+    if (!result.ok) {
+      pauseResumeWrites(result.message)
+      return
+    }
+    // 用户显式启用 = 接管：解除暂停并按当前存储内容重建 pending/idle
+    resumePausedRef.current = false
+    refreshResumeFromStorage()
+  }, [refreshResumeFromStorage, pauseResumeWrites, showStorageUnavailable])
+
+  const handleResumeDisable = useCallback(() => {
+    const storage = storageRef.current
+    if (!storage) {
+      showStorageUnavailable()
+      return
+    }
+    const result = setSessionResumeFlag(storage, false)
+    if (!result.ok) {
+      pauseResumeWrites(result.message)
+      return
+    }
+    // 停写并回 off：按钮可再次开启；数据键与正式保存原样。
+    // 关闭前已写成功的副本由 hasStoredData 记住，删除入口不丢；检查结果回未检查（不读内容键）。
+    setResumeEnabled(false)
+    resumeSuspendReasonRef.current = null
+    setResumeUi({ kind: 'off' })
+    setResumeManagement({ generation: 0, kind: 'not_checked' })
+    resumeManagementGenerationRef.current = 0
+  }, [pauseResumeWrites, showStorageUnavailable])
+
+  /**
+   * off 下显式「检查本机恢复副本」：唯一在关闭状态读数据键的入口。
+   * 只读取一次 raw 展示管理反馈——不启用 flag、不写/删存储、不解析恢复、不改当前页面；
+   * 每次点击都推进 generation，使检查打开的旧删除确认失效（防 ABA / 静默换 B）。
+   * null → 未找到；空串/空白/坏 JSON/异版本同样是“存在 raw”，一律可管理删除。
+   */
+  const handleResumeCheckStoredData = useCallback(() => {
+    const storage = storageRef.current
+    if (!storage) {
+      showStorageUnavailable()
+      return
+    }
+    const current = readDataRawForAction(storage)
+    resumeManagementGenerationRef.current += 1
+    const generation = resumeManagementGenerationRef.current
+    if (!current.ok) {
+      // 诚实反馈：读取失败不能假称存在或未找到；存储原样，可重试
+      setResumeManagement({
+        generation,
+        kind: 'error',
+        message: '读取本机留存副本失败，检查未完成；存储原样保留，可重试。',
+      })
+      return
+    }
+    if (current.raw === null) {
+      // 未找到：清空基准与副本状态；若之前检查到过副本，删除入口随之消失
+      resumeExpectedRawRef.current = null
+      setResumeHasDataState(false)
+      setResumeManagement({ generation, kind: 'not_found' })
+      return
+    }
+    // 任何存在 raw（含空串/空白/损坏/异版本）都冻结为可管理候选：
+    // 同时作为该界面的删除 prepare 比对基准，让检查到的副本可独立两步删除
+    resumeExpectedRawRef.current = current.raw
+    setResumeHasDataState(true)
+    setResumeManagement({ generation, kind: 'found', raw: current.raw })
+  }, [showStorageUnavailable])
+
+  /**
+   * 删除前引导：只在当前 raw 仍等于该界面已冻结的候选 raw 时打开二次确认，
+   * 并把这次实际读到的 raw 交给确认步骤做最终 compare-then-remove。
+   */
+  const handleResumePrepareDelete = useCallback((): { ok: true; raw: string | null } | { ok: false } => {
+    const storage = storageRef.current
+    if (!storage) {
+      showStorageUnavailable()
+      return { ok: false }
+    }
+    const current = readDataRawForAction(storage)
+    if (!current.ok) {
+      pauseResumeWrites('读取本机留存副本失败，删除未执行；当前页面和已有副本都没有改变。')
+      return { ok: false }
+    }
+    if (current.raw !== resumeExpectedRawRef.current) {
+      pauseResumeWrites(
+        '检测到另一个标签页更新了留存副本，删除未执行；当前页面和对方副本都保持原样。请先关闭再开启留存以重新读取，确认后再删除。',
+      )
+      return { ok: false }
+    }
+    return { ok: true, raw: current.raw }
+  }, [pauseResumeWrites, showStorageUnavailable])
+
+  const handleResumeDelete = useCallback(
+    (expectedRaw: string | null) => {
+      const storage = storageRef.current
+      if (!storage) {
+        showStorageUnavailable()
+        return
+      }
+      const current = readDataRawForAction(storage)
+      if (!current.ok) {
+        pauseResumeWrites('读取本机留存副本失败，删除未执行；当前页面和已有副本都没有改变。')
+        return
+      }
+      if (current.raw !== expectedRaw) {
+        pauseResumeWrites(
+          '检测到另一个标签页更新了留存副本，删除未执行；当前页面和对方副本都保持原样。请先关闭再开启留存以重新读取，确认后再删除。',
+        )
+        return
+      }
+      const result = removeSessionResumeData(storage)
+      if (!result.ok) {
+        pauseResumeWrites(result.message)
+        return
+      }
+      // 删除成功：副本不存在，expected 置空；按「删除后需再次显式启用/新变更才重新留存」策略，
+      // 本标签保持 paused（防同 transition 立即默默重建），UI 给出明确说明。
+      resumeExpectedRawRef.current = null
+      resumeSuspendReasonRef.current = null
+      resumePausedRef.current = true
+      setResumeHasDataState(false)
+      // off 检查流程的删除同样把检查结果清为未找到，旧检查候选不再残留
+      resumeManagementGenerationRef.current += 1
+      setResumeManagement({
+        generation: resumeManagementGenerationRef.current,
+        kind: 'not_found',
+      })
+      setResumeUi({
+        kind: 'problem',
+        message: resumeEnabled
+          ? '已删除本机恢复副本。自动留存保持暂停；先点「关闭保留（已留存的副本会保留）」，再重新点「在此浏览器保留工作进度」即可重新开始留存当前进度。'
+          : '已删除本机恢复副本。自动留存保持暂停；点「在此浏览器保留工作进度」可重新开始留存当前进度。',
+        canRestore: false,
+        rawPreserved: false,
+      })
+    },
+    [resumeEnabled, pauseResumeWrites, showStorageUnavailable],
+  )
+
+  const handleResumeRestore = useCallback(() => {
+    if (resumeUi.kind !== 'pending') return
+    // CAS 守卫：动作前严格比对当前 raw 与「产出这份 pending 时实际解析的 raw」。
+    // 不一致只停写并保留双方数据，绝不用当前值刷新 expectedRaw 去“解决”冲突。
+    const current = readDataRawForAction(storageRef.current)
+    if (!current.ok) {
+      pauseResumeWrites('读取本机留存副本失败，恢复未执行；当前页面和已有副本都没有改变。')
+      return
+    }
+    if (current.raw !== resumeUi.load.raw) {
+      pauseResumeWrites(
+        '检测到另一个标签页更新了留存副本，恢复未执行；当前页面和对方副本都保持原样。请先关闭再开启留存以重新读取，确认后再恢复。',
+      )
+      return
+    }
+    const record = resumeUi.load.record
+    // 原子预检：draft/budget 全部重建成功才动手；失败时当前页面、在飞请求、raw 全部原样
+    const preview = previewSessionResume(record, tripRevisionRef.current + 1)
+    if (!preview.ok) {
+      pauseResumeWrites(`恢复未执行：${preview.message}`)
+      return
+    }
+
+    // 预检通过才作废全部在飞请求与旧候选
+    planSeqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
+    aiRequestSeqRef.current += 1
+    setAiOpen(false)
+    // 地图刷新面板自身持有在途请求；恢复时卸载它，交给面板 cleanup 中止旧请求
+    setMapOpen(false)
+    setPlanLoading(false)
+    setPlanCancelled(false)
+    setDraftError(null)
+    setAppliedNotice(null)
+    undoApplyRef.current = null
+    setCanUndoApply(false)
+    setEditorEditing(false)
+    updateEditorInputDirty(false)
+    setActiveStopId(null)
+
+    setDraft(preview.draft)
+    setTrip(record.session.trip)
+    bumpTripRevision()
+    setBudgetSession(preview.budget)
+
+    setPhase('ready')
+    setError(null)
+    setRequestOutcome({ kind: 'none' })
+    setRestoredAt(null)
+    // 来源边界：快照自述来自备份文件 → 保持「未向服务器核对」提示；
+    // 旧记录缺来源标记 → 保守按未知提示；应用内正常进度不冒充刚打开文件。
+    const sourceNote =
+      preview.openedFromFile === true
+        ? '已从本机留存的工作进度恢复。这份进度当时的行程来自你选择的备份文件：页面仍未向服务器核对内容。'
+        : preview.openedFromFile === null
+          ? '已从本机留存的工作进度恢复。这份进度没有记录来源标记，行程内容按未核实处理。'
+          : '已从本机留存的工作进度恢复。'
+    // 三态原样恢复：null（旧记录未知）必须继续保持未知，不能降成 false
+    setOpenedFromFile(preview.openedFromFile)
+    setAppliedNotice(
+      `${sourceNote}这不是「保存的行程」：要长期留存请在下方显式保存；未应用的草稿仍需你手动应用。`,
+    )
+    const restoredDayValid = record.session.trip.days.some((d) => d.day === preview.activeDay)
+    setActiveDay(restoredDayValid ? preview.activeDay : (record.session.trip.days[0]?.day ?? 1))
+    setDraftMode(preview.draftMode)
+
+    // 恢复不是删除：不 removeItem，也不重新读取当前 raw 覆盖冻结基准。
+    // 下一次自动写仍以产出 pending 时的 raw 做单次 guarded 替换；若期间被更新则 conflict 保旧。
+    resumeSuspendReasonRef.current = null
+    resumePausedRef.current = false
+    setResumeUi({ kind: 'idle' })
+    scrollToItinerary()
+  }, [resumeUi, bumpTripRevision, scrollToItinerary, pauseResumeWrites, updateEditorInputDirty])
+
+  const handleResumeDiscardAndStart = useCallback(() => {
+    if (resumeUi.kind !== 'pending') return
+    const storage = storageRef.current
+    if (!storage) return
+    // 与恢复同一 CAS 守卫：只接受 pending 解析时冻结的 raw；外部已更新则放弃替换
+    const current = readDataRawForAction(storage)
+    if (!current.ok) {
+      pauseResumeWrites('读取本机留存副本失败，未替换副本；当前页面和已有副本都没有改变。')
+      return
+    }
+    if (current.raw !== resumeUi.load.raw) {
+      pauseResumeWrites(
+        '检测到另一个标签页更新了留存副本，未替换副本；当前页面和对方副本都保持原样。请先关闭再开启留存以重新读取，确认后再操作。',
+      )
+      return
+    }
+    // 先构造/校验当前页面 payload，成功才以旧 expectedRaw 做单次替换写；
+    // 任何 quota/序列化/冲突失败：旧 raw 原样，pending 保持。
+    const latestTrip = tripRef.current
+    if (!latestTrip) {
+      pauseResumeWrites('当前页面还没有可留存的行程，未替换副本；上次进度原样保留。')
+      return
+    }
+    const snapshot = tripOwnerSnapshotForResume(latestTrip)
+    const payload = buildPayloadFromSession({
+      trip: latestTrip,
+      draft: draftRef.current,
+      budget: budgetRef.current,
+      ui: {
+        activeDay: activeDayRef.current,
+        draftMode: draftModeRef.current,
+        openedFromFile: openedFromFileRef.current,
+      },
+      tripRevision: tripRevisionRef.current,
+      tripSnapshot: snapshot,
+    })
+    if (payload === null) {
+      pauseResumeWrites('当前行程或费用内容无法自证归属，未替换副本；上次进度原样保留。')
+      return
+    }
+    const result = writeSessionResume({ payload, expectedRaw: resumeExpectedRawRef.current }, storage)
+    if (!result.ok) {
+      pauseResumeWrites(`${result.message}（替换副本未完成，上次进度原样保留）`)
+      return
+    }
+    resumeExpectedRawRef.current = result.writtenRaw
+    resumeSuspendReasonRef.current = null
+    resumePausedRef.current = false
+    setResumeUi({ kind: 'idle' })
+  }, [resumeUi, pauseResumeWrites])
 
   const handlePlan = useCallback(async (payload: PlanRequest) => {
     // 取消上一次未完成的规划请求，并用序号挡住已经 resolved、但回调还没执行的旧响应
@@ -577,7 +1181,7 @@ export default function App() {
     undoApplyRef.current = null
     setCanUndoApply(false)
     setEditorEditing(false)
-    setEditorInputDirty(false)
+    updateEditorInputDirty(false)
     setTrip(restored)
     bumpTripRevision()
     setPhase('ready')
@@ -587,8 +1191,10 @@ export default function App() {
     setOpenedFromFile(false)
     setActiveStopId(null)
     setActiveDay(restored.days[0]?.day ?? 1)
+    // 显式恢复已保存行程只替换内存视图；留存 pending 副本继续保留并暂停自动写，
+    // 只有用户明确恢复留存或确认放弃当前 pending 才移交。
     scrollToItinerary()
-  }, [scrollToItinerary])
+  }, [scrollToItinerary, updateEditorInputDirty])
 
   /**
    * 打开从备份文件导入的行程（TripTransferPanel 的「打开这份行程」）。
@@ -618,7 +1224,7 @@ export default function App() {
     undoApplyRef.current = null
     setCanUndoApply(false)
     setEditorEditing(false)
-    setEditorInputDirty(false)
+    updateEditorInputDirty(false)
     setTrip(imported)
     bumpTripRevision()
     setPhase('ready')
@@ -628,8 +1234,10 @@ export default function App() {
     setOpenedFromFile(true)
     setActiveStopId(null)
     setActiveDay(imported.days[0]?.day ?? 1)
+    // 打开导入文件只替换内存视图；留存 pending 副本继续保留并暂停自动写，
+    // 只有用户明确恢复留存或确认放弃当前 pending 才移交/覆盖。
     scrollToItinerary()
-  }, [scrollToItinerary])
+  }, [scrollToItinerary, updateEditorInputDirty])
 
   const dayTabs = trip?.days ?? []
   const tripIsExample = trip?.source === 'example'
@@ -659,6 +1267,8 @@ export default function App() {
     undoApplyRef.current = null
     // 面板打开期间本日资料收起卸载：不保留旧结果，也不自动重查
     setPoiSourcesOpen(false)
+    // 网页资料面板同样收起卸载：面板自身 cleanup 已作废在途请求
+    setWebSourcesOpen(false)
     const result = createTripDraft(trip, { forkTripId: newUuid(), newLegMode: draftMode })
     if (!result.ok) {
       setDraftError(`没能开始本地编辑：${result.message}`)
@@ -684,7 +1294,7 @@ export default function App() {
     setDraft(null)
     setDraftError(null)
     setEditorEditing(false)
-    setEditorInputDirty(false)
+    updateEditorInputDirty(false)
     setTrip(result.trip)
     bumpTripRevision()
     setPhase('ready')
@@ -702,15 +1312,15 @@ export default function App() {
       current && result.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
     )
     scrollToItinerary()
-  }, [trip, activeDay, bumpTripRevision, scrollToItinerary])
+  }, [trip, activeDay, bumpTripRevision, scrollToItinerary, updateEditorInputDirty])
 
   /** 放弃草稿：回到原视图；原行程从未被改过，无需恢复 */
   const handleDraftDiscard = useCallback(() => {
     setDraft(null)
     setDraftError(null)
     setEditorEditing(false)
-    setEditorInputDirty(false)
-  }, [])
+    updateEditorInputDirty(false)
+  }, [updateEditorInputDirty])
 
   /** 撤销应用：回到应用前的那个行程。只影响当前视图，不删除用户已显式保存的副本 */
   const handleUndoApply = useCallback(() => {
@@ -721,7 +1331,7 @@ export default function App() {
     setDraft(null)
     setDraftError(null)
     setEditorEditing(false)
-    setEditorInputDirty(false)
+    updateEditorInputDirty(false)
     setTrip(snapshot)
     bumpTripRevision()
     setPhase('ready')
@@ -735,7 +1345,7 @@ export default function App() {
       current && snapshot.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
     )
     scrollToItinerary()
-  }, [canUndoApply, activeDay, bumpTripRevision, scrollToItinerary])
+  }, [canUndoApply, activeDay, bumpTripRevision, scrollToItinerary, updateEditorInputDirty])
 
   /* ───────── AI 单日调整：打开 / 请求适配 / 应用 / 关闭 ───────── */
 
@@ -761,6 +1371,8 @@ export default function App() {
     setAiOpen(true)
     // 面板打开期间本日资料收起卸载：不保留旧结果，也不自动重查
     setPoiSourcesOpen(false)
+    // 网页资料面板同样收起卸载：面板自身 cleanup 已作废在途请求
+    setWebSourcesOpen(false)
   }, [trip, draft, aiOpen])
 
   /** 关闭面板：作废在途候选请求；当前行程不变，也不代表服务端停止处理。 */
@@ -910,6 +1522,8 @@ export default function App() {
     setWeatherOpen(false)
     // 面板打开期间本日资料收起卸载：不保留旧结果，也不自动重查
     setPoiSourcesOpen(false)
+    // 网页资料面板同样收起卸载：面板自身 cleanup 已作废在途请求
+    setWebSourcesOpen(false)
     setMapOpen(true)
   }, [trip, currentDay, draft, aiOpen, mapOpen])
 
@@ -1310,7 +1924,7 @@ export default function App() {
                   trip={trip}
                   day={currentDay ?? null}
                   revision={tripRevision}
-                  openedFromFile={openedFromFile}
+                  openedFromFile={openedFromFile === true}
                   onApply={handleMapApply}
                   onClose={handleCloseMapRefresh}
                 />
@@ -1344,7 +1958,7 @@ export default function App() {
                 onDiscard={handleDraftDiscard}
                 createStopId={newUuid}
                 onEditingChange={setEditorEditing}
-                onInputDirtyChange={setEditorInputDirty}
+                onInputDirtyChange={updateEditorInputDirty}
                 onSelectStop={handleSelectStop}
               />
             )}
@@ -1407,7 +2021,7 @@ export default function App() {
                     trip={trip}
                     day={currentDay}
                     revision={tripRevision}
-                    openedFromFile={openedFromFile}
+                    openedFromFile={openedFromFile === true}
                     onClose={() => setWeatherOpen(false)}
                   />
                 ) : (
@@ -1441,7 +2055,7 @@ export default function App() {
                     trip={trip}
                     day={currentDay}
                     revision={tripRevision}
-                    openedFromFile={openedFromFile}
+                    openedFromFile={openedFromFile === true}
                     activeStopId={activeStopId}
                     onClose={handlePoiSourcesClose}
                   />
@@ -1458,6 +2072,43 @@ export default function App() {
                     <div className="edit-entry-actions">
                       <button type="button" className="btn" onClick={() => setPoiSourcesOpen(true)}>
                         查资料
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/*
+              网页资料：独立于 AI / 规划 / 天气 / 本日公开资料的 Tavily 搜索摘要入口。
+              本地编辑或 AI / 地图面板打开时收起，面板展开本身不发请求；
+              只有点「搜索网页资料」才请求一次，站点只作阅读上下文、无需坐标。
+              结果只存面板内存，不写 Trip／费用／恢复副本。
+            */}
+            {!editingDraft && !aiOpen && !mapOpen && currentDay && (
+              <div className="web-sources-slot" data-testid="web-sources-slot">
+                {webSourcesOpen ? (
+                  <WebSourcesPanel
+                    trip={trip}
+                    day={currentDay}
+                    revision={tripRevision}
+                    openedFromFile={openedFromFile}
+                    activeStopId={activeStopId}
+                    onClose={handleWebSourcesClose}
+                  />
+                ) : (
+                  <div className="edit-entry" data-testid="web-sources-entry" ref={webSourcesEntryRef}>
+                    <div>
+                      <p className="field-label">网页资料（第 {currentDay.day} 天）</p>
+                      <p className="field-help">
+                        用你输入的内容搜索 Tavily 网页摘要，未核实，不冒充官方信息。
+                        打开面板不会发请求，点「搜索网页资料」才会请求一次；
+                        结果只在本页内存里，不写进行程、费用或本地保存。
+                      </p>
+                    </div>
+                    <div className="edit-entry-actions">
+                      <button type="button" className="btn" onClick={() => setWebSourcesOpen(true)}>
+                        查网页资料
                       </button>
                     </div>
                   </div>
@@ -1528,6 +2179,24 @@ export default function App() {
             )}
           </section>
         )}
+
+        {/*
+          本机工作进度留存：默认关闭。启用后有界自动留存；有待恢复副本时显示概况卡，
+          自动写暂停至用户选择。编辑器未提交输入期间同样暂停（输入不在留存范围）。
+        */}
+        <SessionResumePanel
+          state={resumeUi}
+          enabled={resumeEnabled}
+          hasStoredData={resumeHasData}
+          management={resumeManagement}
+          onEnable={handleResumeEnable}
+          onDisable={handleResumeDisable}
+          onRestore={handleResumeRestore}
+          onDiscardAndStart={handleResumeDiscardAndStart}
+          onCheckStoredData={handleResumeCheckStoredData}
+          onPrepareDelete={handleResumePrepareDelete}
+          onDeleteData={handleResumeDelete}
+        />
 
         {/*
           备份 / 导入的入口：默认收起，点一次展开。没有行程时也能进来导入，

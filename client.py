@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_community.chat_models import ChatTongyi
+from qwen_model import ChatTongyi
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 import mcp_runtime
@@ -41,7 +41,7 @@ class Configuration:
     """应用配置"""
     
     def __init__(self, config_file: str = None):
-        self.model = os.getenv("MODEL_NAME", "qwen-plus")
+        self.model = os.getenv("MODEL_NAME", "qwen3.8-flash")
         # 只判断「有没有可用的 key」，不读取、不输出 key 内容
         self.api_key = (os.getenv("DASHSCOPE_API_KEY") or "").strip() or None
         # 支持通过命令行参数指定配置文件；None 时由 mcp_runtime 按

@@ -4,8 +4,12 @@
  * 边界（与 editing-brief.md 对齐，界面接线属于后续任务）：
  * - 不读 localStorage，不调用 crypto / 网络 / Date，也不自动保存或请求外部服务；
  *   fork 行程 id 与新增站点 id 全部由调用方提供，模块不枚举已保存记录、不生成 id。
- * - 原 Trip 与草稿都按只读处理：每次编辑返回新的草稿，原行程、未修改的天、
- *   未修改站点的对象和 geometry 逐点保持同一引用；这样大几何不会被来回克隆。
+ * - 原 Trip 按只读处理：本模块从不修改它，discardDraft 直接返回它。创建草稿时
+ *   把可编辑的 day / stops / legs / location 克隆成草稿自己的结构（值相等、对象
+ *   独立），普通编辑的 copy-on-write 只在草稿自己的前后状态之间共享未变对象；
+ *   geometry 数组与坐标点是双方都不改写的只读叶节点，保持同一引用，大几何不来回克隆。
+ *   因此调用方原地改草稿工作结构不会污染原 Trip，反之原 Trip 的内容变化也能被
+ *   界面按「base 变了」察觉，而不是被别名共享吞掉。
  * - 修改名称 / 地址视为「地点变了」：该站 location 置 null，涉及它的旧路段改成
  *   unavailable（geometry=[]、distance_m/duration_minutes=null），说明统一写
  *   UNAVAILABLE_LEG_DESCRIPTION；只改时间 / 停留 / 描述时坐标与 geometry 原样保留。
@@ -95,12 +99,16 @@ export interface DraftHistoryEntry {
 export interface TripDraft {
   /** 原始行程；本模块从不修改它，discardDraft 直接返回它。 */
   readonly base: Trip
+  /**
+   * 当前草稿的天。创建时与 base 的 days 值相等但对象独立（可编辑结构副本），
+   * 编辑只在草稿自己的状态之间 copy-on-write；geometry 数组与坐标点保持与 base
+   * 共享（只读叶节点合同），站点文字字段、location、legs 均为草稿私有副本。
+   */
+  readonly days: readonly TripDay[]
   /** 应用后写入 Trip.id 的 fork id；同一草稿多次应用复用同一个。 */
   readonly forkTripId: string
   /** 新建相邻路段时显式使用的出行方式。 */
   readonly newLegMode: TravelMode
-  /** 当前草稿的天：只有被改过的天是新对象，其余与 base 共享。 */
-  readonly days: readonly TripDay[]
   /** 被操作过的天序号（升序）；apply 时还会再和 base 做内容比对。 */
   readonly changedDays: readonly number[]
   /** 有界撤销栈，最新一项在末尾。 */
@@ -587,8 +595,30 @@ function buildNewStop(input: NewDraftStop): { ok: true; stop: TripStop } | Draft
 }
 
 /**
+ * 草稿的可编辑结构副本：day / stops / legs 数组与对象、站点 location 都新建，
+ * 值逐字段照抄（含旧导入的宽字段，不做任何二次校验或截断）；
+ * geometry 数组与坐标点是双方都不改写的只读叶节点，保持同一引用。
+ * location 用 spread 保留全部可枚举字段：checkTripShape 只校验 lng/lat，不拒绝
+ * 旧备份里 location 携带的未声明字段（例如标注来源、置信度），重建成仅 {lng, lat}
+ * 会在「备份→加载→编辑→应用」路径上静默丢数据。
+ * 不用 JSON 往返克隆：避免丢 undefined 语义，也避免对大行程做整棵序列化。
+ */
+function cloneEditableDays(days: readonly TripDay[]): TripDay[] {
+  return days.map((day) => ({
+    ...day,
+    stops: day.stops.map((stop) => ({
+      ...stop,
+      location: stop.location === null ? null : { ...stop.location },
+    })),
+    legs: day.legs.map((leg) => ({ ...leg })),
+  }))
+}
+
+/**
  * 创建草稿。base 必须是 checkTripShape 认可的 Trip；fork id 由调用方生成，
- * 必须非空、≤100 字符且不同于 base.id。base 本身不会被复制或改写。
+ * 必须非空、≤100 字符且不同于 base.id。base 本身不会被复制或改写：
+ * 草稿拿到的是上面 cloneEditableDays 产出的可编辑结构副本，discard 与
+ * 无变化应用返回的仍然是 base 原对象。
  */
 export function createTripDraft(base: Trip, options: CreateTripDraftOptions): DraftCreateResult {
   const shape = checkTripShape(base)
@@ -621,7 +651,7 @@ export function createTripDraft(base: Trip, options: CreateTripDraftOptions): Dr
       base,
       forkTripId: options.forkTripId,
       newLegMode: options.newLegMode,
-      days: base.days,
+      days: cloneEditableDays(base.days),
       changedDays: [],
       history: [],
       revision: 0,

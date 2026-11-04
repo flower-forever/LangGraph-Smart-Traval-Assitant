@@ -310,45 +310,43 @@ export default function TripDraftEditor({
   } | null>(null)
   const [walkingDistanceError, setWalkingDistanceError] = useState<string | null>(null)
 
-  /** 步行距离检查的 owner 身份：forkTripId + base 身份/内容签名。
-   * 任一变化都意味着旧偏好 / 旧 run 不再属于当前草稿。签名序列化失败时返回
-   * null（failclosed）：无法核对归属就一律按「已切换」处理，结果不渲染。 */
-  const walkingOwner = useMemo(() => {
-    const base = draft.base
-    let baseSignature: string | null
-    try {
-      baseSignature = JSON.stringify([
-        base?.id ?? null,
-        base?.source ?? null,
-        base?.title ?? null,
-        base?.destination ?? null,
-        (base?.days ?? []).map((item) => item.day),
-      ])
-    } catch {
-      baseSignature = null
-    }
-    if (typeof draft.forkTripId !== 'string' || draft.forkTripId === '' || baseSignature === null) {
-      return null
-    }
-    return { forkTripId: draft.forkTripId, baseSignature }
-  }, [draft.base, draft.forkTripId])
-  const walkingOwnerKey =
-    walkingOwner === null ? null : `${walkingOwner.forkTripId}\u0000${walkingOwner.baseSignature}`
+  /** 步行距离检查的 owner 身份：forkTripId + base 完整内容快照。
+   * 每轮渲染都对 base 重新序列化（刻意不用 useMemo 按引用缓存）：
+   * 同引用 base 被原地改任何站点 / 路线内容（含 geometry）都会立刻改变 key；
+   * 新 base 对象内容相同同样改变 key（结合 base 引用身份推进 epoch）。
+   * 序列化失败时 key 为 null（fail closed）：无法核对归属就一律按「已切换」处理，
+   * 结果不渲染、检查不可用。 */
+  let walkingOwnerKey: string | null = null
+  try {
+    walkingOwnerKey =
+      typeof draft.forkTripId === 'string' && draft.forkTripId !== ''
+        ? `${JSON.stringify(draft.forkTripId)}\u0000${JSON.stringify(draft.base)}`
+        : null
+  } catch {
+    walkingOwnerKey = null
+  }
 
-  /** owner 变化推进单调 epoch；owner 为 null（无法核对归属）时也推进，
-   * 保证 A-B-A 回到旧 key 也不会复用旧 run。 */
+  /** owner 变化推进单调 epoch：key 或 base 引用身份任一变化都算新会话，
+   * 保证 A-B-A 回到旧 key 也不会复用旧 run；key 为 null（fail closed）时也推进。 */
   const walkingOwnerEpochRef = useRef(0)
   const walkingLastOwnerKeyRef = useRef<string | null | undefined>(undefined)
-  if (walkingLastOwnerKeyRef.current !== walkingOwnerKey) {
+  const walkingLastBaseRefRef = useRef<unknown>(undefined)
+  if (
+    walkingLastOwnerKeyRef.current !== walkingOwnerKey ||
+    walkingLastBaseRefRef.current !== draft.base
+  ) {
     walkingOwnerEpochRef.current += 1
     walkingLastOwnerKeyRef.current = walkingOwnerKey
-  }  /** 与当前可见 run 绑定的 owner epoch：run 在某次 owner 时代里点「检查」产生，
+    walkingLastBaseRefRef.current = draft.base
+  }
+
+  /** 与当前可见 run 绑定的 owner epoch：run 在某次 owner 时代里点「检查」产生，
    * owner 变化后 epoch 不匹配的 run 一律视为过期，不会套到新草稿上渲染。 */
   const walkingRunEpochRef = useRef(0)
 
-  /** 偏好设置只属于当前草稿会话：owner（forkTripId + base 身份）变化后回到默认
-   * 禁用，避免旧草稿的上限偏好被带进新草稿的检查结果。旧 run / 旧结论在这轮
-   * effect 之前也不会被渲染：结果 useMemo 只认与当前 owner epoch 同期的 run。 */
+  /** 偏好设置只属于当前草稿会话：owner（forkTripId + base 完整内容快照）变化后回到
+   * 默认禁用，避免旧草稿的上限偏好被带进新草稿的检查结果。旧 run / 旧结论在这轮
+   * effect 之前也不会被渲染：结果计算只认与当前 owner epoch 同期的 run。 */
   useEffect(() => {
     setDailyStopLimitEnabled(false)
     setDailyStopLimit(4)
@@ -365,7 +363,9 @@ export default function TripDraftEditor({
     setWalkingDistanceError(null)
     // 重置完成后把当前 run 标成与新 owner 同期；下一次 owner 变化前不再重复重置。
     walkingRunEpochRef.current = walkingOwnerEpochRef.current
-  }, [draft.forkTripId, walkingOwnerKey])
+    // 依赖含 draft.base 引用身份：内容完全相同的新 base 对象也是新会话，
+    // 必须重置偏好；同草稿重渲染时 base 引用不变，不会误触发。
+  }, [draft.forkTripId, draft.base, walkingOwnerKey])
 
   const headingRef = useRef<HTMLHeadingElement | null>(null)
   const addButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -395,7 +395,8 @@ export default function TripDraftEditor({
   }, [draft, endTimeRun, endTimeEnabled])
   /** 冻结设置对应的步行距离汇总。两条硬约束：
    * 1. owner 绑定：run 只在与它同期的 owner epoch 里有效；换草稿（含同 fork
-   *    换 base）后、effect 重置生效前，旧 run / 旧结论不渲染，不闪现。
+   *    换 base、同引用 base 原地改内容）后、effect 重置生效前，旧 run / 旧结论
+   *    不渲染，不闪现。
    * 2. 当前内容：这里刻意不用 useMemo——useMemo 按依赖（对象引用）缓存，
    *    同一个 draft 对象被原地改 legs 后重渲染会命中旧缓存。每轮渲染都基于
    *    当前 draft 的 legs 重新汇总，编辑 / 撤销 / 切天 / 原地变更都读新值。 */

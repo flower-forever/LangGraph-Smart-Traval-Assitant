@@ -62,6 +62,7 @@ from travel_itinerary import (
 )
 from weather_api import weather_router_factory
 from poi_sources_api import poi_sources_router_factory
+from tavily_web_api import tavily_web_router_factory
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -89,7 +90,7 @@ except Exception as exc:  # pragma: no cover - 仅依赖缺失时命中
     _LANGGRAPH_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 try:
-    from langchain_community.chat_models import ChatTongyi  # type: ignore[no-redef]
+    from qwen_model import ChatTongyi  # type: ignore[no-redef]
     from langchain_core.messages import HumanMessage  # type: ignore[no-redef]
 except Exception as exc:  # pragma: no cover
     _MODEL_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
@@ -343,7 +344,7 @@ class Configuration:
         self.refresh()
 
     def refresh(self) -> None:
-        self.model = os.getenv("MODEL_NAME", "qwen-plus")
+        self.model = os.getenv("MODEL_NAME", "qwen3.8-flash")
         self.api_key = (os.getenv("DASHSCOPE_API_KEY") or "").strip() or None
         self.amap_api_key = (os.getenv("AMAP_API_KEY") or "").strip() or None
         # 默认只监听回环地址：本地预览没有认证，不该默认暴露到局域网。
@@ -1021,6 +1022,10 @@ app.include_router(weather_router_factory())
 
 # POI 公开资料候选路由同样自带上/下文 lifespan，与模型/MCP 初始化无关。
 app.include_router(poi_sources_router_factory())
+
+# Tavily 网页资料搜索路由：lifespan 启动时读 TAVILY_API_KEY（可选），
+# 无 Key 仍启动（请求返回 no_key 信封）；POST 写请求由 app 级来源守卫覆盖。
+app.include_router(tavily_web_router_factory())
 
 # 只信任显式 origin；allow_credentials=True 时绝不能再配 allow_origins=["*"]。
 app.add_middleware(

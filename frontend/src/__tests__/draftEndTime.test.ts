@@ -322,7 +322,10 @@ describe('dailyEndTimeLimitResult 输入不可变', () => {
     const result = dailyEndTimeLimitResult(draft, 1080, 'all_days')
     if (!result.ok) throw new Error(result.message)
     expect(JSON.stringify(draft)).toBe(before)
-    expect(draft.days).toBe(base.days)
+    // 创建时草稿的可编辑结构与 base 是值相等、对象独立的副本（见 tripDraft 回归），
+    // 这里验证的是检查不改动草稿：内容不变、引用不变。
+    expect(draft.days).not.toBe(base.days)
+    expect(JSON.stringify(draft.days)).toBe(JSON.stringify(base.days))
   })
 
   it('旧大站数与旧宽字段不被校验卡住，照常逐站检查', () => {

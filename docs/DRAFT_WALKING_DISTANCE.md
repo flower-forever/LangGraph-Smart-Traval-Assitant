@@ -15,7 +15,7 @@
 - **比较结论是保守的**：已知部分超过上限时说「已记录导航步行距离超过所设上限」并提醒未知段可能更多；未超过时只说「已记录部分未超」，有未知段必须说明不能确认全量。不出现「全天未超限」「可以轻松走完」这类肯定结论，不谈体力适合或健康建议。
 - **显示约数不参与比较**：小数或大数合计的展示用「约 N 米」标注估算；超过 / 未超的比较始终基于原始合计，不依赖显示舍入。
 - **只有点「检查」才产生结果**：修改开启状态、上限输入或范围都会立即清除旧结果与旧报错，必须重新点「检查」；禁用状态不冒充已检查结论。
-- **只在本编辑器会话**：设置与结果不写入 Trip、不进 `Trip.warnings`、不存 localStorage、不发给后端、不触发任何路线重算或网络请求。换草稿后整体回默认（默认关闭、输入 3000、范围 all_days），A-B-A 切换不复活旧 run；owner 绑定不只看 `forkTripId`，还看 base 身份与内容签名——同 fork id 换 base 草稿同样重置，切换后旧 run / 旧结论在重置生效前也不会闪现。
+- **只在本编辑器会话**：设置与结果不写入 Trip、不进 `Trip.warnings`、不存 localStorage、不发给后端、不触发任何路线重算或网络请求。换草稿后整体回默认（默认关闭、输入 3000、范围 all_days），A-B-A 切换不复活旧 run；owner 每轮渲染基于 `forkTripId + base 完整内容快照`（`JSON.stringify(base)`，不按引用 memo）并结合 base 引用身份推进单调 epoch——同浅元数据但站点 / 路线内容不同的新 base、内容相同的新克隆 base、同引用 base 被原地改任何内容（含 geometry），都会进入新会话并重置偏好；序列化失败 fail closed（结果不渲染、检查不可用）；切换后旧 run / 旧结论在重置生效前也不会闪现。
 - **不阻断原编辑**：仅此检查的输入非法不影响单站编辑、应用、撤销、放弃等原有路径；`applyDraft` 一层 undo 与原 Trip 行为不变。
 
 ## 每日输出
@@ -26,9 +26,13 @@
 
 冻结设置对应的结果每次渲染都基于当前 draft 的 legs 重新汇总，不按对象引用做 useMemo 缓存：同草稿切天、编辑、撤销会重读，同一个 draft 对象被原地改 `legs` 的 `distance_m` / `route_type` 后，重渲染也会读出新值。改名称 / 地址使相关路段失效（`route_type` 回 `unavailable`、距离 `null`）后，合计立即变为「暂无可统计」——绝不拿旧距离继续合计。
 
+注意（2026-11-03 归属修复后）：创建草稿（`createTripDraft`）起 `draft.days` 与 `base.days` 就是值相等、对象独立的可编辑结构副本（geometry 数组与坐标点仍按只读叶节点合同共享）。「同 draft 对象原地改 legs」改的是草稿自己的工作结构，设置保留、按新值重算；「同引用 base 原地改内容」改的是 base，owner 完整内容快照立刻变化，旧 run 渲染期即失效、偏好回默认。两者不再被别名混成同一件事。直接改 geometry 是不受支持的只读叶节点写操作，但 base geometry 变化同样会被完整快照发现并触发会话重置。
+
 ## 实现与文件
 
-纯函数模块 `draftWalkingDistance.ts` 不改 `tripDraft.ts` 的 `DraftLocalCheck` / warnings 协议，独立区块渲染；`TripDraftEditor.tsx` 只加一组与 endtime 同模式的偏好状态（enabled / text / scope / frozen run / error），另加步行检查自己的 owner 绑定（forkTripId + base 身份/内容签名 + 单调 epoch）：run 与产生它的 owner 时代绑定，owner 变化后旧 run 一律过期。样式沿用既有 `.tde-` tokens，只新增 `.tde-walking-detail` 一个明细行类。
+纯函数模块 `draftWalkingDistance.ts` 不改 `tripDraft.ts` 的 `DraftLocalCheck` / warnings 协议，独立区块渲染；`TripDraftEditor.tsx` 只加一组与 endtime 同模式的偏好状态（enabled / text / scope / frozen run / error），另加步行检查自己的 owner 绑定（forkTripId + base 完整内容快照 + 单调 epoch，含 base 引用身份）：run 与产生它的 owner 时代绑定，owner 变化后旧 run 一律过期。样式沿用既有 `.tde-` tokens，只新增 `.tde-walking-detail` 一个明细行类。
+
+2026-11-03 归属修复：`createTripDraft` 创建时克隆可编辑 day / stops / legs / location（值相等、对象独立；geometry 按只读叶节点合同共享），`draft.base` 仍是原 Trip、discard 与无变化 apply 仍返回原对象；编辑器 owner 改为每轮渲染对 base 完整内容快照（不再按引用 useMemo），epoch 由 forkTripId + base 引用身份共同推进，重置 effect 依赖同样含 base 引用。回归见 `frontend/src/__tests__/tripDraftOwnerIsolationRegression.test.tsx`。
 
 | 文件 | 内容 |
 | --- | --- |

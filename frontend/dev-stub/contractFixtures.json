@@ -1,0 +1,178 @@
+{
+  "planTrip": {
+    "id": "trip-e2e-plan-1",
+    "source": "agent",
+    "destination": "杭州（契约桩）",
+    "title": "AI 契约桩·杭州三日（离线验收）",
+    "summary": "契约桩固定返回的三日行程：只用于离线浏览器验收的结构化数据，不是真实模型输出，也没有真实导航。",
+    "map_coordinate_system": "WGS84",
+    "warnings": [
+      "契约桩数据（离线验收）：行程来自本地测试桩，不是真实智能体输出。",
+      "所有坐标与路线几何都是固定测试值，不代表真实地图质量或真实导航。"
+    ],
+    "days": [
+      {
+        "day": 1,
+        "date": "2026-11-07",
+        "title": "西湖博物馆线",
+        "summary": "沿湖步行加博物馆，路线为契约桩固定折线。",
+        "stops": [
+          { "id": "s-e2e-1", "name": "苏堤春晓", "time": "09:00", "duration_minutes": 45, "description": "契约桩测试站点：沿湖第一站，坐标为固定测试值。", "address": "杭州市西湖区苏堤（测试地址）", "location": { "lng": 120.148, "lat": 30.238 } },
+          { "id": "s-e2e-2", "name": "曲院风荷", "time": "10:30", "duration_minutes": 40, "description": "契约桩测试站点：北山街侧，坐标为固定测试值。", "address": "杭州市西湖区北山街（测试地址）", "location": { "lng": 120.141, "lat": 30.261 } },
+          { "id": "s-e2e-3", "name": "浙江省博物馆", "time": "13:00", "duration_minutes": 90, "description": "契约桩测试站点：孤山馆区，坐标为固定测试值。", "address": "杭州市西湖区孤山路（测试地址）", "location": { "lng": 120.1493, "lat": 30.2604 } }
+        ],
+        "legs": [
+          { "from_stop_id": "s-e2e-1", "to_stop_id": "s-e2e-2", "mode": "walking", "route_type": "navigation", "distance_m": 1100, "duration_minutes": 16, "geometry": [ { "lng": 120.148, "lat": 30.238 }, { "lng": 120.1445, "lat": 30.2495 }, { "lng": 120.141, "lat": 30.261 } ], "description": "契约桩测试路线：固定折线，不代表真实导航。" },
+          { "from_stop_id": "s-e2e-2", "to_stop_id": "s-e2e-3", "mode": "walking", "route_type": "navigation", "distance_m": 950, "duration_minutes": 14, "geometry": [ { "lng": 120.141, "lat": 30.261 }, { "lng": 120.1493, "lat": 30.2604 } ], "description": "契约桩测试路线：固定折线，不代表真实导航。" }
+        ]
+      },
+      {
+        "day": 2,
+        "date": "2026-11-08",
+        "title": "运河漫步",
+        "summary": "拱宸桥一带的运河老街区，契约桩固定数据。",
+        "stops": [
+          { "id": "s-e2e-4", "name": "拱宸桥", "time": "09:30", "duration_minutes": 40, "description": "契约桩测试站点：运河石拱桥，坐标为固定测试值。", "address": "杭州市拱墅区桥弄街（测试地址）", "location": { "lng": 120.1404, "lat": 30.3299 } },
+          { "id": "s-e2e-5", "name": "桥西直街", "time": "11:00", "duration_minutes": 80, "description": "契约桩测试站点：历史街区，坐标为固定测试值。", "address": "杭州市拱墅区小河路（测试地址）", "location": { "lng": 120.1371, "lat": 30.3258 } }
+        ],
+        "legs": [
+          { "from_stop_id": "s-e2e-4", "to_stop_id": "s-e2e-5", "mode": "driving", "route_type": "navigation", "distance_m": 800, "duration_minutes": 5, "geometry": [ { "lng": 120.1404, "lat": 30.3299 }, { "lng": 120.1371, "lat": 30.3258 } ], "description": "契约桩测试路线：固定折线，不代表真实导航。" }
+        ]
+      },
+      {
+        "day": 3,
+        "date": "2026-11-09",
+        "title": "龙井茶园",
+        "summary": "茶园半日，本日路线为直线示意（非导航）。",
+        "stops": [
+          { "id": "s-e2e-6", "name": "龙井村", "time": "09:30", "duration_minutes": 120, "description": "契约桩测试站点：茶园村落，坐标为固定测试值。", "address": "杭州市西湖区龙井路（测试地址）", "location": { "lng": 120.1131, "lat": 30.2226 } },
+          { "id": "s-e2e-7", "name": "九溪烟树", "time": "13:00", "duration_minutes": 90, "description": "契约桩测试站点：溪谷景点，坐标为固定测试值。", "address": "杭州市西湖区九溪路（测试地址）", "location": { "lng": 120.1252, "lat": 30.1972 } }
+        ],
+        "legs": [
+          { "from_stop_id": "s-e2e-6", "to_stop_id": "s-e2e-7", "mode": "walking", "route_type": "straight_line", "distance_m": null, "duration_minutes": null, "geometry": [ { "lng": 120.1131, "lat": 30.2226 }, { "lng": 120.1252, "lat": 30.1972 } ], "description": "契约桩直线示意：不是导航路线，距离与耗时未知。" }
+        ]
+      }
+    ]
+  },
+  "replanDay": {
+    "day": {
+      "day": 1,
+      "title": "AI 契约候选·茶博馆线",
+      "summary": "契约桩固定的单日候选：两个测试站点，坐标与路线为固定值。",
+      "stops": [
+        { "id": "ai-e2e-1", "name": "中国茶叶博物馆", "time": "09:30", "duration_minutes": 120, "description": "契约桩候选站点：博物馆主题，坐标为固定测试值。", "address": "杭州市西湖区龙井路（测试地址）", "location": { "lng": 120.155, "lat": 30.235 } },
+        { "id": "ai-e2e-2", "name": "茅家埠", "time": "12:00", "duration_minutes": 60, "description": "契约桩候选站点：湖埠湿地，坐标为固定测试值。", "address": "杭州市西湖区茅家埠（测试地址）", "location": { "lng": 120.133, "lat": 30.245 } }
+      ],
+      "legs": [
+        { "from_stop_id": "ai-e2e-1", "to_stop_id": "ai-e2e-2", "mode": "walking", "route_type": "navigation", "distance_m": 1250, "duration_minutes": 19, "geometry": [ { "lng": 120.155, "lat": 30.235 }, { "lng": 120.133, "lat": 30.245 } ], "description": "契约桩候选路线：固定折线，不代表真实导航。" }
+      ]
+    },
+    "warnings": ["契约桩提醒：候选为固定测试数据，不是真实模型输出。"]
+  },
+  "weatherTemplate": {
+    "status": "available",
+    "reason": null,
+    "provider_http_status": 200,
+    "checked_at": "2026-11-03T01:00:00+00:00",
+    "fetched_at": "2026-11-03T01:00:02+00:00",
+    "provider_timezone": "Asia/Shanghai",
+    "provider_utc_offset_seconds": 28800,
+    "coordinate": { "system": "WGS84", "verified": false, "requested": { "lat": 0, "lon": 0 }, "grid": { "lat": 0, "lon": 0 }, "grid_elevation_m": 7 },
+    "source": {
+      "provider": "open-meteo.com",
+      "endpoint": "https://api.open-meteo.com/v1/forecast",
+      "docs_url": "https://open-meteo.com/en/docs",
+      "attribution_url": "https://open-meteo.com/",
+      "license": "CC BY 4.0"
+    },
+    "coverage": { "count": 16, "first_date": "2026-10-30", "last_date": "2026-11-14" },
+    "forecast": {
+      "date": "",
+      "values": {
+        "temperature_2m_max": 21.4,
+        "temperature_2m_min": 9.2,
+        "precipitation_sum": 0,
+        "precipitation_probability_max": 12,
+        "wind_speed_10m_max": 18.5,
+        "weather_code": 3
+      },
+      "units": {
+        "temperature_2m_max": "°C",
+        "temperature_2m_min": "°C",
+        "precipitation_sum": "mm",
+        "precipitation_probability_max": "%",
+        "wind_speed_10m_max": "km/h",
+        "weather_code": "wmo code"
+      },
+      "missing_fields": []
+    }
+  },
+  "poiTemplate": {
+    "checked_at": "2026-11-03T01:10:00+00:00",
+    "fetched_at": "2026-11-03T01:10:01+00:00",
+    "source_elements_seen": 2,
+    "notes": ["契约桩测试候选：身份未确认，标签为固定测试值，不代表真实 POI。"],
+    "elements": [
+      {
+        "element_type": "node",
+        "element_id": 63241971,
+        "name": "契约桩茶室（测试）",
+        "dlat": 0.0004,
+        "dlng": 0.0,
+        "distance_m": 44.5,
+        "source_updated_at": "2026-08-01T02:00:00Z",
+        "opening_hours": { "state": "source_only", "value": "09:00-17:00" },
+        "fee": { "state": "unknown", "value": null },
+        "charge": { "state": "unknown", "value": null }
+      },
+      {
+        "element_type": "way",
+        "element_id": 118764532,
+        "name": "契约桩书店（测试）",
+        "dlat": 0.0001,
+        "dlng": 0.0008,
+        "distance_m": 77.8,
+        "source_updated_at": null,
+        "opening_hours": { "state": "unknown", "value": null },
+        "fee": { "state": "source_only", "value": "no" },
+        "charge": { "state": "unknown", "value": null }
+      }
+    ]
+  },
+  "webSourcesTemplate": {
+    "available": {
+      "results": [
+        {
+          "title": "杭州西湖风景名胜区 官方网站",
+          "url": "https://www.westlake.com.cn/",
+          "snippet": "杭州西湖风景名胜区官方站点：开放时间、景区公告与游览提示（契约桩固定测试文本）。",
+          "snippet_truncated": false,
+          "publication_date": "2025-06-01"
+        },
+        {
+          "title": "西湖旅游攻略（契约桩测试条目）",
+          "url": "https://www.example-travel.com/xihu-guide",
+          "snippet": "契约桩摘录：西湖环湖步道全天开放，博物馆周一闭馆。摘录为固定测试文本，不代表真实网页内容。",
+          "snippet_truncated": false,
+          "publication_date": null
+        }
+      ],
+      "results_seen": 2,
+      "notes": [
+        "契约桩固定测试结果：摘录来自本地测试桩，不是真实 Tavily 响应。",
+        "标题与摘录未核实，不代表官方或实时数据；本桩不抓取任何结果链接。"
+      ]
+    },
+    "no_usable_results": {
+      "results_seen": 3,
+      "notes": [
+        "3 条结果链接未通过安全检查，未展示",
+        "取得 3 条结果，但均无法安全展示"
+      ]
+    },
+    "reasons": {
+      "no_key": "未配置搜索服务 Key，网页资料搜索不可用",
+      "unavailable": "网页资料搜索服务暂时不可用"
+    }
+  }
+}

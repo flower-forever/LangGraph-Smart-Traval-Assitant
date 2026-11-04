@@ -86,6 +86,14 @@ _LIMITS = httpx.Limits(max_connections=4, max_keepalive_connections=2)
 _LAT_MIN, _LAT_MAX = -90.0, 90.0
 _LON_MIN, _LON_MAX = -180.0, 180.0
 
+# 固定、诚实的应用请求标识：说明应用身份并给出公开仓库联系 URL，
+# 不含 Key/邮箱/环境值，也不伪装浏览器。Overpass 使用条款要求提供
+# 有效的联系方式；随单次请求发送，覆盖自建与外部注入 client。
+_USER_AGENT = (
+    "Travel-Assistant-PoiSources/1.0 "
+    "(+https://github.com/flower-forever/LangGraph-Smart-Traval-Assitant)"
+)
+
 _DEFAULT_CACHE_TTL_SECONDS = 300.0
 _DEFAULT_CACHE_MAX_KEYS = 128
 
@@ -710,8 +718,11 @@ class PoiSourcesClient:
 
         async def _do_request() -> tuple[bytes, int]:
             # follow_redirects 显式 False：外部注入的 client 可能开了 True。
+            # UA 在单次请求级设置：无论 self._client 是自建还是外部注入
+            # （可能带自定义默认头），这条请求都带固定诚实标识。
             async with self._client.stream(
                 "GET", PROVIDER_ENDPOINT, params={"data": query},
+                headers={"User-Agent": _USER_AGENT},
                 follow_redirects=False,
             ) as response:
                 status = response.status_code

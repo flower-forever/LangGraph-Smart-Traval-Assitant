@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "check:source-paths": "node check-source-paths.mjs",
     "typecheck": "node check-source-paths.mjs && tsc -b --force --pretty false",
-    "stub": "node dev-stub/server.mjs"
+    "stub": "node dev-stub/server.mjs",
+    "verify:e2e": "node e2e/runner.mjs",
+    "verify:e2e:malicious-base": "node e2e/malicious-base.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

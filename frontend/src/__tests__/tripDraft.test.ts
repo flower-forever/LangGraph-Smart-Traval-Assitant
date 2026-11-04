@@ -116,15 +116,25 @@ function tripWithWarnings(count: number): Trip {
 }
 
 describe('createTripDraft', () => {
-  it('创建草稿不修改 base，未改天保持引用，历史为空', () => {
+  it('创建草稿不修改 base，可编辑结构与 base 值相等但对象独立，历史为空', () => {
     const base = deepFreeze(cloneTrip())
     const draft = makeDraft(base)
 
     expect(draft.base).toBe(base)
     expect(draft.forkTripId).toBe('trip-fork-1')
     expect(draft.newLegMode).toBe('walking')
-    expect(draft.days[0]).toBe(base.days[0])
-    expect(draft.days[1]).toBe(base.days[1])
+    // 创建时克隆可编辑结构：值逐字段相等（含宽字段），但 day 对象独立，
+    // 编辑草稿不会写进 base；geometry 数组与坐标点是双方都不改写的只读叶节点，
+    // 保持同一引用（见下方断言与修改地点 / 只改文字用例）。
+    expect(JSON.stringify(draft.days)).toBe(JSON.stringify(base.days))
+    expect(draft.days).not.toBe(base.days)
+    for (let index = 0; index < base.days.length; index += 1) {
+      expect(draft.days[index]).not.toBe(base.days[index])
+      expect(draft.days[index]).toEqual(base.days[index])
+    }
+    expect(draft.days[0].legs[0].geometry).toBe(base.days[0].legs[0].geometry)
+    expect(draft.days[0].stops[0].location).not.toBe(base.days[0].stops[0].location)
+    expect(draft.days[0].stops[0].location).toEqual(base.days[0].stops[0].location)
     expect(draft.changedDays).toEqual([])
     expect(draft.history).toEqual([])
     expect(draft.revision).toBe(0)
@@ -170,9 +180,9 @@ describe('修改地点：名称 / 地址', () => {
   it('改名称会清坐标、让相关旧路段 unavailable，不牵连无关路段', () => {
     const base = deepFreeze(cloneTrip())
     const draft = makeDraft(base)
+    const before = draft
     const updated = edit(updateDraftStop(draft, 1, 's1', { name: '断桥新名' }))
     const day = dayOf(updated, 1)
-
     expect(stopOf(day, 's1').name).toBe('断桥新名')
     expect(stopOf(day, 's1').location).toBeNull()
     expect(day.legs).toHaveLength(2)
@@ -186,8 +196,10 @@ describe('修改地点：名称 / 地址', () => {
       geometry: [],
       description: UNAVAILABLE_LEG_DESCRIPTION,
     })
-    // s2 → s3 与改动站点无关，仍原样复用
-    expect(day.legs[1]).toBe(base.days[0].legs[1])
+    // s2 → s3 与改动站点无关，仍原样复用：与操作前草稿自身状态比较，
+    // 未改对象引用不动（copy-on-write）；base 里对应的旧值也原样保留。
+    expect(day.legs[1]).toBe(before.days[0].legs[1])
+    expect(JSON.stringify(day.legs[1])).toBe(JSON.stringify(base.days[0].legs[1]))
     assertLegReferences(day)
 
     // 冻结的 base 没有被动过
@@ -197,7 +209,7 @@ describe('修改地点：名称 / 地址', () => {
     const applied = applyOk(updated)
     expect(stopOf(applied.trip.days[0], 's1').location).toBeNull()
     expect(applied.trip.days[0].legs[0].geometry).toEqual([])
-    expect(applied.trip.days[0].legs[1]).toBe(base.days[0].legs[1])
+    expect(applied.trip.days[0].legs[1]).toBe(before.days[0].legs[1])
     expect(checkTripShape(applied.trip).ok).toBe(true)
   })
 
@@ -224,13 +236,15 @@ describe('只改时间 / 停留 / 描述：保留坐标和几何', () => {
   it('改时间保留 location 与每段路线的 geometry 引用', () => {
     const base = deepFreeze(cloneTrip())
     const draft = makeDraft(base)
+    const before = draft
     const updated = edit(updateDraftStop(draft, 1, 's1', { time: '09:45' }))
     const day = dayOf(updated, 1)
 
     expect(stopOf(day, 's1').time).toBe('09:45')
     expect(stopOf(day, 's1').location).toEqual({ lng: 120.1576, lat: 30.2726 })
-    expect(day.legs[0]).toBe(base.days[0].legs[0])
-    expect(day.legs[1]).toBe(base.days[0].legs[1])
+    // time-only 编辑不动 legs：未改的 leg 对象引用与操作前草稿一致（copy-on-write）。
+    expect(day.legs[0]).toBe(before.days[0].legs[0])
+    expect(day.legs[1]).toBe(before.days[0].legs[1])
 
     const applied = applyOk(updated)
     expect(applied.trip.days[0].legs[0].geometry).toBe(base.days[0].legs[0].geometry)
@@ -240,6 +254,7 @@ describe('只改时间 / 停留 / 描述：保留坐标和几何', () => {
   it('改停留时长与描述同样保留几何', () => {
     const base = deepFreeze(cloneTrip())
     const draft = makeDraft(base)
+    const before = draft
     const updated = edit(
       updateDraftStop(draft, 1, 's2', {
         duration_minutes: 75,
@@ -251,8 +266,8 @@ describe('只改时间 / 停留 / 描述：保留坐标和几何', () => {
     expect(stopOf(day, 's2').duration_minutes).toBe(75)
     expect(stopOf(day, 's2').description).toBe('改过的描述')
     expect(stopOf(day, 's2').location).toEqual({ lng: 120.1522, lat: 30.2631 })
-    expect(day.legs[0]).toBe(base.days[0].legs[0])
-    expect(day.legs[1]).toBe(base.days[0].legs[1])
+    expect(day.legs[0]).toBe(before.days[0].legs[0])
+    expect(day.legs[1]).toBe(before.days[0].legs[1])
   })
 
   it('旧数据里比后端宽的字段在改时间时不会被二次校验或截断', () => {
@@ -291,7 +306,9 @@ describe('只改时间 / 停留 / 描述：保留坐标和几何', () => {
     edited = edit(updateDraftStop(edited, 1, 'd3', { description: '只改文字' }))
     const day = dayOf(edited, 1)
 
-    expect(day.legs).toBe(beforeLegs)
+    // 创建时草稿拿的是 legs 副本，但只改文字不动 legs：仍是创建时的那一个数组对象。
+    expect(day.legs).toBe(draft.days[0].legs)
+    expect(day.legs).not.toBe(beforeLegs)
     expect(day.legs).toEqual([])
     expect(stopOf(day, 'd1').time).toBe('09:30')
     expect(stopOf(day, 'd2').duration_minutes).toBe(70)
@@ -335,8 +352,10 @@ describe('只改时间 / 停留 / 描述：保留坐标和几何', () => {
     const day = dayOf(edited, 1)
 
     expect(day.legs).toHaveLength(2)
-    expect(day.legs[0]).toBe(beforeLegs[0])
-    expect(day.legs[1]).toBe(beforeLegs[1])
+    // time-only 编辑保持每个现有 leg 原对象（与创建时的草稿副本比较）。
+    expect(day.legs[0]).toBe(draft.days[0].legs[0])
+    expect(day.legs[1]).toBe(draft.days[0].legs[1])
+    expect(day.legs[0]).not.toBe(beforeLegs[0])
     expect(stopOf(day, 'd2').time).toBe('17:30')
   })
 })
@@ -383,8 +402,11 @@ describe('增删与重排', () => {
     const applied = applyOk(second)
     expect(applied.trip.days[1].summary).toContain('第 2 天')
     expect(applied.trip.days[1].summary).toContain('现有 2 个站点')
-    expect(applied.trip.days[0]).toBe(base.days[0])
-    expect(applied.trip.days[2]).toBe(base.days[2])
+    // 未改的天应用后原样带出：内容与 base 相同、对象与草稿未改状态一致（copy-on-write）。
+    expect(applied.trip.days[0]).toBe(second.days[0])
+    expect(JSON.stringify(applied.trip.days[0])).toBe(JSON.stringify(base.days[0]))
+    expect(applied.trip.days[2]).toBe(second.days[2])
+    expect(JSON.stringify(applied.trip.days[2])).toBe(JSON.stringify(base.days[2]))
     expect(checkTripShape(applied.trip).ok).toBe(true)
   })
 
@@ -400,10 +422,11 @@ describe('增删与重排', () => {
     expect(dayOf(second, 2).legs[0].mode).toBe('driving')
 
     // 改名称只让涉及该站的路段失效；无关旧路段仍保留原来的 driving
-    const renamed = edit(updateDraftStop(makeDraft(base), 1, 's1', { name: '新断桥' }))
+    const renamedDraft = makeDraft(base)
+    const renamed = edit(updateDraftStop(renamedDraft, 1, 's1', { name: '新断桥' }))
     const day = dayOf(renamed, 1)
     expect(day.legs[0].mode).toBe('walking')
-    expect(day.legs[1]).toBe(base.days[0].legs[1])
+    expect(day.legs[1]).toBe(renamedDraft.days[0].legs[1])
     expect(day.legs[1].mode).toBe('driving')
   })
 
@@ -471,12 +494,12 @@ describe('增删与重排', () => {
       }),
     )
     // 追加 m4 时 s3→m4 是新关系，s1→s2 仍是原邻接
-    expect(dayOf(draft, 1).legs[0]).toBe(base.days[0].legs[0])
+    expect(dayOf(draft, 1).legs[0]).toBe(draft.days[0].legs[0])
 
     const moved = edit(moveDraftStop(draft, 1, 'm4', 'up'))
     const day = dayOf(moved, 1)
     expect(day.stops.map((stop) => stop.id)).toEqual(['s1', 's2', 'm4', 's3'])
-    expect(day.legs[0]).toBe(base.days[0].legs[0])
+    expect(day.legs[0]).toBe(draft.days[0].legs[0])
     expect(day.legs[1]).toMatchObject({
       from_stop_id: 's2',
       to_stop_id: 'm4',
@@ -532,15 +555,18 @@ describe('增删与重排', () => {
 })
 
 describe('撤销与放弃', () => {
-  it('撤销回到 base 引用，空历史撤销是 no-op', () => {
+  it('撤销回到编辑前草稿状态，空历史撤销是 no-op', () => {
     const base = deepFreeze(cloneTrip())
     const draft = makeDraft(base)
     const edited = edit(updateDraftStop(draft, 1, 's1', { name: '新名' }))
     const undone = edit(undoDraft(edited))
 
-    expect(undone.days).toBe(base.days)
+    // 撤销回到创建时的初始草稿状态（copy-on-write 的「前一个状态」）：
+    // 内容回到 base，对象引用与初始草稿一致；base 本身从未被改写。
+    expect(JSON.stringify(undone.days)).toBe(JSON.stringify(base.days))
+    expect(undone.days).toBe(draft.days)
     expect(undone.changedDays).toEqual([])
-    expect(undone.days[0]).toBe(base.days[0])
+    expect(undone.days[0]).toBe(draft.days[0])
     expect(undoDraft(draft)).toMatchObject({ ok: true, changed: false })
   })
 
@@ -554,7 +580,7 @@ describe('撤销与放弃', () => {
       expect(draft.history.length).toBeLessThanOrEqual(MAX_UNDO_STEPS)
     }
     expect(draft.history).toHaveLength(MAX_UNDO_STEPS)
-    expect(draft.history[0].days[0].legs[0].geometry).toBe(base.days[0].legs[0].geometry)
+    expect(draft.history[0].days[0].legs[0].geometry).toBe(draft.days[0].legs[0].geometry)
 
     let undone = 0
     for (let index = 0; index < MAX_UNDO_STEPS + 5; index += 1) {
@@ -628,8 +654,9 @@ describe('导入 ID 含控制字符时的路段键无歧义', () => {
 
     expect(day.stops.map((stop) => stop.id)).toEqual(['a', 'b'])
     expect(day.legs).toHaveLength(1)
-    // a→b 的旧路段确实存在且未被动过，应原样复用
-    expect(day.legs[0]).toBe(base.days[0].legs[1])
+    // a→b 的旧路段确实存在且未被动过，应原样复用（与创建时的草稿副本比较）。
+    expect(day.legs[0]).toBe(draft.days[0].legs[1])
+    expect(day.legs[0]).not.toBe(base.days[0].legs[1])
     expect(day.legs[0].distance_m).toBe(200)
     expect(day.legs[0].description).toBe('leg a->b')
   })
@@ -653,11 +680,11 @@ describe('导入 ID 含控制字符时的路段键无歧义', () => {
     expect(day.legs).toHaveLength(4)
     // q→a 是新邻接，unavailable；a→b\0c 仍存在，必须复用它自己的旧路段（100 米）
     expect(day.legs[0]).toMatchObject({ from_stop_id: 'q', to_stop_id: 'a', route_type: 'unavailable' })
-    expect(day.legs[1]).toBe(base.days[0].legs[0])
+    expect(day.legs[1]).toBe(draft.days[0].legs[0])
     expect(day.legs[1].distance_m).toBe(100)
     // b\0c→a\0b 邻接未变，复用；a\0b→c 邻接未变，复用
-    expect(day.legs[2]).toBe(base.days[0].legs[1])
-    expect(day.legs[3]).toBe(base.days[0].legs[2])
+    expect(day.legs[2]).toBe(draft.days[0].legs[1])
+    expect(day.legs[3]).toBe(draft.days[0].legs[2])
   })
 })
 
@@ -685,7 +712,8 @@ describe('改名再改回：坐标不自动恢复，undo 才回到原值', () =>
 
   it('undo 恢复原坐标与原路段；time-only 改回仍是完整 no-op', () => {
     const base = deepFreeze(cloneTrip())
-    let draft = makeDraft(base)
+    const initial = makeDraft(base)
+    let draft = initial
     draft = edit(updateDraftStop(draft, 1, 's1', { name: '新断桥' }))
     draft = edit(updateDraftStop(draft, 1, 's1', { name: '断桥残雪' }))
 
@@ -695,7 +723,8 @@ describe('改名再改回：坐标不自动恢复，undo 才回到原值', () =>
     expect(stopOf(dayOf(once, 1), 's1').location).toBeNull()
     const undone = edit(undoDraft(once))
     expect(stopOf(dayOf(undone, 1), 's1').location).toEqual({ lng: 120.1576, lat: 30.2726 })
-    expect(dayOf(undone, 1).legs[0]).toBe(base.days[0].legs[0])
+    // 撤销到头回到创建时的初始草稿状态（对象引用一致），base 本身从未被改写。
+    expect(dayOf(undone, 1).legs[0]).toBe(initial.days[0].legs[0])
 
     const timeOnly = edit(updateDraftStop(makeDraft(base), 1, 's1', { time: '09:30' }))
     const timeBack = edit(updateDraftStop(timeOnly, 1, 's1', { time: '09:00' }))
@@ -764,8 +793,9 @@ describe('applyDraft：摘要、提醒与形状', () => {
 
   it('应用更新被改天与全行程 summary，其他天保持原样', () => {
     const base = deepFreeze(cloneTrip())
+    const draft = makeDraft(base)
     const applied = applyOk(
-      edit(updateDraftStop(makeDraft(base), 1, 's1', { time: '09:45' })),
+      edit(updateDraftStop(draft, 1, 's1', { time: '09:45' })),
     )
 
     expect(applied.changed).toBe(true)
@@ -776,8 +806,11 @@ describe('applyDraft：摘要、提醒与形状', () => {
     expect(applied.trip.summary).not.toBe(base.summary)
     expect(applied.trip.days[0].summary).toContain('第 1 天')
     expect(applied.trip.days[0].summary).toContain('现有 3 个站点')
-    expect(applied.trip.days[1]).toBe(base.days[1])
-    expect(applied.trip.days[2]).toBe(base.days[2])
+    // 未改天原样带出：与草稿未改状态同一引用，内容与 base 一致。
+    expect(applied.trip.days[1]).toBe(draft.days[1])
+    expect(applied.trip.days[2]).toBe(draft.days[2])
+    expect(JSON.stringify(applied.trip.days[1])).toBe(JSON.stringify(base.days[1]))
+    expect(JSON.stringify(applied.trip.days[2])).toBe(JSON.stringify(base.days[2]))
     expect(applied.trip.days[1].summary).toBe(base.days[1].summary)
     expect(applied.trip.days[2].summary).toBe(base.days[2].summary)
     expect(applied.changedDays).toEqual([1])

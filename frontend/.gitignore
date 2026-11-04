@@ -4,5 +4,7 @@ coverage
 *.local
 *.log
 verify/*.png
+verify/artifacts
+e2e/artifacts
 .hallmark
 .DS_Store

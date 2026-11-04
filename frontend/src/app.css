@@ -1679,3 +1679,67 @@ textarea.field-input {
   .ai-entry-actions,
   .ai-entry-actions .btn { width: 100%; align-items: stretch; }
 }
+
+/* ───────── 本机工作进度留存（opt-in 会话恢复） ───────── */
+
+.session-resume {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-4);
+  border: var(--rule-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-2);
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.session-resume-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.session-resume-head .field-label {
+  margin: 0;
+}
+
+.session-resume-pending {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-ok);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-paper-3);
+}
+
+.session-resume-pending p {
+  margin: 0;
+  max-width: 72ch;
+}
+
+.session-resume-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.session-resume-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.session-resume-manage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .session-resume-actions .btn,
+  .session-resume-confirm .btn { width: 100%; }
+}

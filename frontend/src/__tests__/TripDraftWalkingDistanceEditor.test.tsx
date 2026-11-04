@@ -90,6 +90,19 @@ function Harness({ initialDraft, initialDay = 1, latestRef, onApplySpy, onChange
         <button
           type="button"
           onClick={() => {
+            // 回到最初 forkTripId 的全新草稿：真 ABA 的「回到 A」一步。
+            const fresh = createTripDraft(initialDraft.base, {
+              forkTripId: initialDraft.forkTripId,
+              newLegMode: initialDraft.newLegMode,
+            })
+            if (fresh.ok) setDraft(fresh.draft)
+          }}
+        >
+          外部换回原 fork 草稿
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             // 同一个 forkTripId、换一个 base（另一份行程副本）：验证 owner 绑定
             // 不只看 fork id，base 身份变化也要重置偏好。
             const freshBase = JSON.parse(JSON.stringify(initialDraft.base)) as Trip
@@ -389,14 +402,16 @@ describe('步行距离检查：输入 / 范围 / 开关变化与结果失效', (
     expect(
       within(section).getByRole('combobox', { name: '步行距离检查范围' }),
     ).toHaveValue('all_days')
-    expect(within(section).queryByText(/已记录超限/)).toBeNull()
-    expect(within(section).queryByText(/第 \d+ 天/)).toBeNull()
+    expect(within(section).queryAllByText(/已记录超限/)).toHaveLength(0)
+    expect(within(section).queryAllByText(/第 \d+ 天/)).toHaveLength(0)
 
-    // A-B-A：换回原 fork 身份的新草稿同样不带旧 run（不是复活旧结论）
-    await user.click(screen.getByRole('button', { name: '外部换 fork 草稿' }))
+    // 真 A-B-A：回到最初 forkTripId 的新草稿（owner key 与最初相同），
+    // 旧 run 同样不得复活。
+    await user.click(screen.getByRole('button', { name: '外部换回原 fork 草稿' }))
     section = walkingSection(editorRegion())
     expect(within(section).getByText('未启用')).toBeInTheDocument()
-    expect(within(section).queryByText(/已记录超限/)).toBeNull()
+    expect(within(section).queryAllByText(/已记录超限/)).toHaveLength(0)
+    expect(within(section).queryAllByText(/合计 500 米/)).toHaveLength(0)
   })
 
   it('同 forkTripId 换 base 草稿同样重置：旧 run / 旧结论不套到新 base 上', async () => {

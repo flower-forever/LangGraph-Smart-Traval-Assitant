@@ -7,6 +7,8 @@
 
 夹具直接放在本文件内，不依赖外部 fixture 文件。覆盖：
 
+0. 模块级 autouse 守卫：真实 httpx transport 在任何 DNS/HTTP 出站前
+   直接 AssertionError；漏绑 MockTransport 的自建/注入 client 同样被拦
 1. QL 构造纯函数：固定端点、nwr 三标签 union、around、out meta center 上限
 2. 规范 node/way/relation 解析、union 去重、距离排序、8 候选上限
 3. 缺/错字段、布尔 id、NaN 坐标、超长标签 unknown、来源 URL/时间真实口径
@@ -42,6 +44,94 @@ from poi_sources_client import (  # noqa: E402
 )
 
 LAT, LON = 31.2304, 121.4737
+
+# ==================== 0. 真实网络出站守卫（autouse） ====================
+#
+# 本模块必须保持全离线：任何真实 httpx transport 一旦尝试建立连接
+# （DNS/TCP/TLS 之前的 handle_async_request / handle_request 入口）
+# 就立即 AssertionError，把"测试误触真实网络"变成显式红灯，而不是
+# 静默发请求。MockTransport 是独立的 transport 类，自带处理方法、
+# 不经过被替换的方法，因此完全不受影响。
+#
+# httpx.AsyncClient/Client 在构造时直接引用具体 transport 类对象，
+# patch 类方法对之后创建的所有实例生效——包括漏绑 MockTransport 的
+# 自建 client 与注入 client 的默认 transport。生产代码不加任何测试
+# 开关。
+
+
+@pytest.fixture(autouse=True)
+def _block_real_network(monkeypatch):
+    def _refuse_async(self, request):
+        raise AssertionError(
+            "测试试图通过真实 AsyncHTTPTransport 出站（异步路径）："
+            f"{request.method} {request.url.host} —— 本模块只允许 MockTransport"
+        )
+
+    def _refuse_sync(self, request):
+        raise AssertionError(
+            "测试试图通过真实 HTTPTransport 出站（同步路径）："
+            f"{request.method} {request.url.host} —— 本模块只允许 MockTransport"
+        )
+
+    monkeypatch.setattr(
+        httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async
+    )
+    monkeypatch.setattr(
+        httpx.HTTPTransport, "handle_request", _refuse_sync
+    )
+    yield
+    # 还原由 monkeypatch 在自身 teardown 保证（本 fixture 的后置代码
+    # 先于 undo 执行，不能在这里断言已还原）。
+
+
+def test_guard_blocks_async_transport_entrypoint() -> None:
+    """stub 级直调：被 patch 的异步入口在构造连接前立即拒绝。"""
+
+    request = httpx.Request("GET", "https://overpass-api.de/api/interpreter")
+    with pytest.raises(AssertionError, match="AsyncHTTPTransport"):
+        httpx.AsyncHTTPTransport.handle_async_request(object(), request)
+
+
+def test_guard_blocks_sync_transport_entrypoint() -> None:
+    """stub 级直调：同步入口同样拒绝（守卫双路径完整）。"""
+
+    request = httpx.Request("GET", "https://overpass-api.de/api/interpreter")
+    with pytest.raises(AssertionError, match="HTTPTransport"):
+        httpx.HTTPTransport.handle_request(object(), request)
+
+
+def test_owned_client_without_mock_is_intercepted() -> None:
+    """自建 client 漏绑 MockTransport：真实 transport 在出站前被守卫拦截。
+
+    守卫方法体先行于任何 DNS/TCP/TLS，因此这里的 AssertionError 即是
+    红灯证据本身，全程 0 真实出站。
+    """
+
+    client = PoiSourcesClient()  # 故意不传 client、也不注入 transport
+    try:
+        with pytest.raises(AssertionError, match="出站"):
+            run(client.fetch_nearby(LAT, LON))
+    finally:
+        run(client.aclose())
+
+
+def test_injected_client_default_transport_is_intercepted() -> None:
+    """注入 client 漏绑 MockTransport（默认真实 transport）：同样拦截。"""
+
+    http_client = httpx.AsyncClient()  # 默认真实 transport，故意不绑 mock
+    client = PoiSourcesClient(client=http_client)
+    try:
+        with pytest.raises(AssertionError, match="出站"):
+            run(client.fetch_nearby(LAT, LON))
+    finally:
+        run(client.aclose())
+        run(http_client.aclose())
+
+# 期望的固定诚实应用 UA（字面量，不镜像实现常量；实现须与其完全一致）。
+EXPECTED_USER_AGENT = (
+    "Travel-Assistant-PoiSources/1.0 "
+    "(+https://github.com/flower-forever/LangGraph-Smart-Traval-Assitant)"
+)
 
 FIXED_NOW = datetime(2026, 10, 30, 4, 5, 0, tzinfo=timezone.utc)
 FIXED_NOW_ISO = FIXED_NOW.isoformat()
@@ -410,6 +500,78 @@ def test_provider_request_is_fixed() -> None:
     assert query in httpx.QueryParams({"data": query})["data"]
 
 
+def test_user_agent_sent_on_injected_client() -> None:
+    """注入 client 路径：单次请求携带固定诚实 UA，其他默认头保留。"""
+
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["ua"] = request.headers.get("user-agent")
+        seen["accept"] = request.headers.get("accept")
+        seen["accept-encoding"] = request.headers.get("accept-encoding")
+        return httpx.Response(200, json=ok_payload([element(eid=1)]))
+
+    report = fetch(handler)
+    assert report.status == "available"
+    assert seen["ua"] == EXPECTED_USER_AGENT
+    # 只补 UA，不清洗/覆盖 httpx 其他默认头。
+    assert seen["accept"] == "*/*"
+    assert seen["accept-encoding"].startswith("gzip")
+
+
+def test_user_agent_sent_on_owned_client(monkeypatch) -> None:
+    """自建 client 路径：UA 同样随单次请求发出，aclose 真正代关底层 client。
+
+    通过替换 httpx.AsyncClient 工厂注入 MockTransport，让不传 client 的
+    真实自建分支保持离线。
+    """
+
+    seen: dict[str, Any] = {}
+    created: list[httpx.AsyncClient] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["ua"] = request.headers.get("user-agent")
+        return httpx.Response(200, json=ok_payload([]))
+
+    transport = httpx.MockTransport(handler)
+    real_client_cls = httpx.AsyncClient
+
+    def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        instance = real_client_cls(*args, **kwargs)
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    client = PoiSourcesClient()
+    try:
+        report = run(client.fetch_nearby(LAT, LON))
+    finally:
+        run(client.aclose())
+    assert created, "自建路径应真实创建 AsyncClient"
+    assert created[0].is_closed, "aclose 应关闭自建的底层 client"
+    assert report.status == "no_candidates"
+    assert seen["ua"] == EXPECTED_USER_AGENT
+
+
+def test_user_agent_does_not_take_ownership_of_injected_client() -> None:
+    """注入 client 的所有权不变：PoiSourcesClient.aclose 后注入 client 仍可用。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ok_payload([element(eid=1)]))
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(transport=transport)
+    client = PoiSourcesClient(client=http_client)
+    run(client.fetch_nearby(LAT, LON))
+    await_close = client.aclose()
+    run(await_close)
+    # 注入的 client 未被代关：仍能正常发请求。
+    response = run(http_client.get("https://example.com/ping"))
+    assert response.status_code == 200
+    run(http_client.aclose())
+
+
 def test_429_is_rate_limited_200_envelope() -> None:
     report = fetch(lambda request: httpx.Response(429, text="slow down"))
     assert report.status == "rate_limited"
@@ -444,12 +606,13 @@ def test_success_2xx_carries_its_own_status(status_code: int) -> None:
     assert report.fetched_at == FIXED_NOW_ISO
 
 
-@pytest.mark.parametrize("status_code", [204, 301, 302, 404])
+@pytest.mark.parametrize("status_code", [204, 301, 302, 400, 406, 404])
 def test_non_2xx_contrast_is_failed(status_code: int) -> None:
     """非 2xx 对照：都不进成功 body 处理路径。
 
     204 是 2xx 但没有 body，JSON 解析失败折算 failed 且状态如实保留；
     301/302 重定向、404 走 typed 失败，状态同样真实携带。
+    406 是 2026-11-02 真实联调观测到的前置层状态，保持 failed + 406 口径。
     """
 
     if status_code in (301, 302):

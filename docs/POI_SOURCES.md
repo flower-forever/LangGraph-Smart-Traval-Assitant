@@ -37,6 +37,9 @@ out meta center 30;
 
 本地处理：真实 haversine 距离（米）→ 按距离排序 → 最多保留 8 个候选。
 
+每个请求携带固定、诚实应用 User-Agent（公开仓库联系 URL），见下文
+「请求标识（User-Agent）」。
+
 ## 响应信封（PoiSourceReport）
 
 HTTP 200（`invalid_request` 为 422），`x-poi-sources-status` 头带状态。
@@ -84,6 +87,22 @@ provider HTTP 状态（成功路径是收到的 2xx 状态——不硬写 200，
 失败口径。网络连接失败等没有 HTTP 状态的场景为 null。API 层面本接口
 响应始终是 HTTP 200 信封（invalid_request 为 422），`provider_http_status`
 才是上游 provider 的真实状态，两者不混淆。
+
+本接口不使用镜像/备用端点，不自动重试。HTTP 406 / 4xx 折算 `failed`，
+5xx/网络错误折算 `unavailable`，总 deadline 内未完成折算 `timeout`，
+都如实携带本次 provider 状态或为 null。
+
+## 请求标识（User-Agent）
+
+2026-11-02 真实联调观测到 overpass-api.de 对本项目默认库 UA 返回统一 406
+（`/api/status` 与 `/api/interpreter` 同构，GET/POST 一致，html 静态页）。
+该 406 来自前置层、与请求方式/查询内容无关；当时换自定义 UA 的对照请求
+只得到读超时、未收到 HTTP 响应，因此「UA 是唯一根因/上游已恢复」**未被
+证实**，只能确认 406 与请求标识相关。作为协议健壮性收口，客户端现在随
+单次请求发送固定、诚实的应用标识（公开仓库联系 URL，无 Key/邮箱/环境值，
+不伪装浏览器），同时覆盖自建与外部注入的 httpx client。这不保证上游恢复：
+406 仍按 `failed` + `provider_http_status=406` 上报，超时仍按 `timeout`，
+不把已能发请求当作资料已核实（`identity_status` 恒为 `unconfirmed`）。
 
 ## 合同示例（示例数据，离线 Mock）
 
