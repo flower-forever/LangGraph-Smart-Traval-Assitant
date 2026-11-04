@@ -29,18 +29,30 @@ import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from starlette.datastructures import Headers
-from starlette.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse, Response
 
 from day_replan import DayReplanRequest, DayReplanResponse, run_day_replan
+from leg_refresh import (
+    LegRefreshRequest,
+    LegRefreshResponse,
+    LegRefreshSource,
+    _ENDPOINTS as _LEG_REFRESH_ENDPOINTS,
+    _REASONS as _LEG_REFRESH_REASONS,
+    refresh_leg_route,
+)
 from travel_itinerary import (
     AMapClient,
     ItineraryParseError,
@@ -1302,6 +1314,121 @@ async def refresh_trip_day_map(request: MapRefreshRequest):
     - 响应不含 Trip、source 或用户原文，成功站点 location 永不为 null。
     """
     return await run_map_refresh(request)
+
+
+# ==================== 固定端点衔接路线 ====================
+
+# 本端点唯一的 422 形状：固定安全文案，不回显 input / 字段名 / 原始 body。
+_LEG_REFRESH_INVALID_BODY_DETAIL = (
+    "请求体不符合固定端点衔接路线接口要求，本次未执行任何路线查询。"
+)
+
+
+def _invalid_leg_refresh_body_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _LEG_REFRESH_INVALID_BODY_DETAIL},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+class _SafeLegRefreshRoute(APIRoute):
+    """只给 leg-refresh 路由使用：请求解析错误 → 固定安全 422。
+
+    FastAPI 默认 422 会把 Pydantic errors 的 ``input`` 原样放进响应；
+    这里不读取 errors/input/字段名，也不透传原始 body。非 UTF-8 body 的
+    解析 400（cause 为 UnicodeDecodeError）折成同一 422；其他真实程序
+    异常继续上抛，不被吞成校验错误。
+    """
+
+    def get_route_handler(self):
+        original_route_handler = super().get_route_handler()
+
+        async def safe_route_handler(request: Request) -> Response:
+            try:
+                return await original_route_handler(request)
+            except RequestValidationError:
+                return _invalid_leg_refresh_body_response()
+            except StarletteHTTPException as exc:
+                if exc.status_code == 400 and isinstance(
+                    exc.__cause__, UnicodeDecodeError
+                ):
+                    return _invalid_leg_refresh_body_response()
+                raise
+
+        return safe_route_handler
+
+
+def _leg_refresh_failed_response(request: LegRefreshRequest) -> LegRefreshResponse:
+    """客户端创建/进入失败时的固定安全失败信封（service 之外的最后兜底）。
+
+    复用 service 已验收的固定 reason / endpoint 映射，避免两处文案漂移；
+    只返回状态与安全文案，不回显异常、Key、URL 或上游正文。
+    """
+
+    return LegRefreshResponse(
+        parent=request.parent,
+        day=request.day,
+        date=request.date,
+        travel_mode=request.travel_mode,
+        from_stop=request.from_stop,
+        to_stop=request.to_stop,
+        map_status="failed",
+        leg=None,
+        reason=_LEG_REFRESH_REASONS["failed"],
+        source=LegRefreshSource(endpoint=_LEG_REFRESH_ENDPOINTS[request.travel_mode]),
+        checked_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+async def run_leg_refresh(request: LegRefreshRequest) -> LegRefreshResponse:
+    """按需创建/关闭本次请求专用的高德客户端，并调用已验收的纯 service。
+
+    - 无 Key：零客户端创建、零上游调用，service 直接返回 no_key；
+    - 有 Key：owned client 用 ``async with`` 关闭；service 内 ``wait_for``
+      把单次 route 限制在既有刷新预算内，外层取消继续传播；
+    - 客户端创建/进入在 service 之外失败时返回固定 failed 信封，
+      不回显异常文本 / Key / URL。
+    """
+
+    if not cfg.amap_api_key:
+        return await refresh_leg_route(request, None)
+
+    try:
+        async with AMapClient(cfg.amap_api_key, timeout=cfg.amap_timeout) as amap:
+            return await refresh_leg_route(
+                request, amap, timeout_seconds=cfg.map_refresh_timeout
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return _leg_refresh_failed_response(request)
+
+
+leg_refresh_router = APIRouter(route_class=_SafeLegRefreshRoute)
+
+
+@leg_refresh_router.post(
+    "/api/trips/days/leg-refresh",
+    response_model=LegRefreshResponse,
+    summary="查询固定 WGS84 端点的单段衔接路线（不调用大模型）",
+    responses={
+        422: {"description": "请求体形状非法；本次不创建客户端、不执行路线查询"},
+    },
+)
+async def refresh_trip_leg(request: LegRefreshRequest):
+    """只按既有 WGS84 端点查询一段衔接路线，不做 geocode / POI / LLM。
+
+    - 固定端点与 mode 绑定；端点坐标按请求原值回显，不因路网吸附改写；
+    - 无 Key 零客户端；有 Key 单次 route，客户端按请求创建并关闭；
+    - 失败返回固定安全状态与文案，不回显异常、Key 或上游正文；
+    - 不写 Trip / 存储，不自动应用；前端负责显式预览与应用。
+    """
+
+    return await run_leg_refresh(request)
+
+
+app.include_router(leg_refresh_router)
 
 
 def _agent_checkpointer() -> Optional[Any]:
