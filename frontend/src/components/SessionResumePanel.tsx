@@ -11,6 +11,7 @@
  */
 import { useId, useRef, useState } from 'react'
 import type { SessionResumeLoad } from '../lib/sessionRestore'
+import type { WorkspaceRecordV1 } from '../lib/workspaceTypes'
 import { formatDateTime } from '../lib/format'
 
 export interface SessionResumeCardSummary {
@@ -21,6 +22,29 @@ export interface SessionResumeCardSummary {
   savedAt: number | null
   /** 来源自述：来自文件 / 来源未知 / 应用内进度，各用固定文案 */
   sourceNote: string
+  /** v2 工作区数据概况；null = 旧 v1 / 无 workspace 块 */
+  workspaceNote: string | null
+}
+
+/** v2 workspace 块里只读展示的段计数；不声称候选 / 版本库已一起恢复。 */
+function workspaceNoteOf(workspace: WorkspaceRecordV1): string {
+  const parts: string[] = []
+  const anchors = workspace.sidecar.anchors
+  if (
+    anchors.accommodation !== null ||
+    anchors.arrival !== null ||
+    anchors.departure !== null ||
+    Object.keys(anchors.daily).length > 0
+  ) {
+    parts.push('住宿与抵离锚点')
+  }
+  const constraintCount = workspace.sidecar.constraints.items.length
+  if (constraintCount > 0) parts.push(`${constraintCount} 条必去/预约约束`)
+  const checklistCount = workspace.sidecar.checklist.items.length
+  if (checklistCount > 0) parts.push(`${checklistCount} 项准备清单`)
+  const applyCount = workspace.sidecar.applies.length
+  if (applyCount > 0) parts.push(`${applyCount} 条候选使用关系`)
+  return parts.length > 0 ? `含工作区数据：${parts.join('、')}` : '含工作区数据：当前 sidecar 为空'
 }
 
 interface SessionResumePanelProps {
@@ -90,6 +114,7 @@ export default function SessionResumePanel({
             : pending.ui.openedFromFile === null
               ? '这份进度没有记录来源标记，行程内容按未核实处理'
               : '这些内容来自上次本页面的留存快照，页面没有向服务器核对过',
+        workspaceNote: pending.workspace ? workspaceNoteOf(pending.workspace) : null,
       }
     : null
 
@@ -193,8 +218,9 @@ export default function SessionResumePanel({
             有上次的工作进度待恢复（保存于 {summary.savedAt === null ? '未知时间' : formatDateTime(summary.savedAt)}）：
             《{summary.tripTitle}》共 {summary.dayCount} 天
             {summary.hasDraft ? '，含未应用的草稿修改' : ''}
-            {summary.budgetRowCount > 0 ? `，${summary.budgetRowCount} 条手工费用` : ''}。
-            {summary.sourceNote}；点「恢复」才会替换当前页面。
+            {summary.budgetRowCount > 0 ? `，${summary.budgetRowCount} 条手工费用` : ''}
+            {summary.workspaceNote ? `，${summary.workspaceNote}` : ''}。
+            {summary.sourceNote}；恢复时工作区数据会随行程一起整体替换，不会只换其中一项。点「恢复」才会替换当前页面。
           </p>
           <div className="session-resume-actions">
             <button type="button" className="btn btn-primary" onClick={onRestore}>

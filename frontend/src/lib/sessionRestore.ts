@@ -7,11 +7,26 @@
  * - flag 与数据键独立带版本；关闭只停写，不删数据（删除走显式 removeSessionResumeData）。
  * - 单记录 envelope：{ format, version, savedAt, session }，session 为纯数据投影
  *   （Trip、未应用草稿 editedDays + fork/mode、费用原字符串 + binding、activeDay/draftMode）。
- * - 写门禁：整包 UTF-8 ≤ 1.5 MiB；Trip 单记录口径复用 savedTrips 的 640 KiB 规则。
- *   超限 / quota / SecurityError / 写前重读与 expectedRaw 不同 → typed 失败、保旧停写。
- * - 读协议：体积超读限或坏 JSON → corrupt；format/version 不符 → unknown_version；
- *   顶层未知键、缺 trip、任一块结构异常 → invalid（原子拒绝，不部分读取）。
- *   读取永不修改存储：损坏原始数据原样保留，等待用户显式删除或后续修复。
+ * - 写策略向后兼容：调用方没有提供有效工作区记录时仍写 **outer version 1**（旧行为）；
+ *   提供有效工作区记录时写 **outer version 2**，session.workspace 只含
+ *   workspaceId / ownerId / workspaceRevision / updatedAt / sidecar / meta，
+ *   Trip 仍在 session.trip、预算仍在 session.budget，不重复、不扩 Trip v1。
+ * - 读协议：同时接受旧 v1 与新 v2。体积超读限或坏 JSON → corrupt；
+ *   format 不符 / version 不在 {1,2} → unknown_version；顶层或 session 未知键、
+ *   缺 trip、任一块结构异常、v2 workspace 缺失/非法/无法重建 → invalid（原子拒绝，
+ *   绝不回退成 v1 读一半，也不部分读取）。读取永不修改存储。
+ * - v2 一致性：workspace 块必须能通过 workspaceTransfer.rehydrateWorkspaceFromSession
+ *   重建完整 WorkspaceRecordV1；重建使用 session.trip 与按 budget binding 映射出的
+ *   budget snapshot。任何冲突/失败都整份 invalid，不静默丢 sidecar 或预算。
+ * - 写门禁：v1 整包 UTF-8 ≤ MAX_SESSION_RESUME_BYTES（1.5 MiB，旧行为不变）；
+ *   v2 整包 ≤ MAX_SESSION_RESUME_V2_BYTES（3 MiB，独立上限，见常量说明）；Trip 单记录
+ *   口径复用 savedTrips 的 640 KiB 规则；workspace 再走契约 validator（sidecar ≤512 KiB、
+ *   整条 record ≤2 MiB）。超限 / quota / SecurityError / workspace 非法 / 写前重读与
+ *   expectedRaw 不同 → typed 失败、保旧停写；**绝不降级为只写 Trip 的 v1**。
+ * - 恢复：v1 仍走 previewSessionResume（原回调/类型不变）。v2 含 workspace 时，
+ *   本模块只负责解析并返回完整工作区记录；父层必须通过 workspaceSessionRestore 的
+ *   preview / confirm 拿到一个 Trip+sidecar+budget 的整体 proposal，由父层单次
+ *   transition（revision = 当前 +1）采用。本模块不写 storage、不先 setTrip。
  * - 草稿重建走 createTripDraft + 既有校验：editedDays 天号唯一且 ∈ base 天集，
  *   组合投影 checkTripShape({...trip, days}) 复用现有规则；changedDays 由
  *   draftChangedDays 对 base 重导，不信任持久元数据；history 不留存。
@@ -20,6 +35,8 @@
  *   恢复时 current 必须与当前 Trip id 一致且快照可验证才按新 revision 重绑；
  *   stale 用 revision=-1 + 固定哨兵快照重建 owner，必然失配，沿用/新建前保持只读。
  * - 跨标签：本模块不监听 storage 事件；调用方冻结 expectedRaw 传入，写前重读比对。
+ *   prepare/confirm 额外冻结完整 raw + 当前 Trip/工作区引用 + revision + epoch；
+ *   晚确认、同内容新引用、外部更新、工作区选择 / owner 变更都使确认失效。
  */
 import type { TravelMode, Trip, TripDay } from './api'
 import { checkTripShape, savedTripRecordBytes, utf8ByteLength, type StorageLike } from './savedTrips'
@@ -30,17 +47,45 @@ import {
   tripOwnerSnapshot,
 } from './tripBudget'
 import { createTripDraft, draftChangedDays, type TripDraft } from './tripDraft'
+import type {
+  BudgetSnapshotV1,
+  WorkspaceRecordV1,
+  WorkspaceValidationFailure,
+} from './workspaceTypes'
+import { validateWorkspaceRecord } from './workspace'
+import { canonicalValuesEqual } from './workspaceFingerprint'
+import {
+  createSessionWorkspaceBlock,
+  rehydrateWorkspaceFromSession,
+  type SessionWorkspaceBlockV1,
+} from './workspaceTransfer'
 
 /* ───────── 常量与类型 ───────── */
 
 export const SESSION_RESUME_FLAG_KEY = 'travel-assistant:session-resume:enabled:v1'
 export const SESSION_RESUME_DATA_KEY = 'travel-assistant:session-resume:data:v1'
 export const SESSION_RESUME_FORMAT = 'travel-assistant.session-resume'
+/** 旧 / 无 workspace 块时的外层版本；保持原字节协议不变。 */
 export const SESSION_RESUME_VERSION = 1 as const
+/** 带当前有效工作区块时的外层版本。 */
+export const SESSION_RESUME_VERSION_V2 = 2 as const
 
 /** 整包写上限（1.5 MiB）；读上限再加 64 KiB，与 savedTrips 的口径一致 */
 export const MAX_SESSION_RESUME_BYTES = 1_572_864
 export const MAX_SESSION_RESUME_RAW_BYTES = MAX_SESSION_RESUME_BYTES + 64 * 1024
+
+/**
+ * v2 外层上限（3 MiB，独立于 v1 的 1.5 MiB）。
+ *
+ * 合法工作区记录本身仍受公共 `MAX_WORKSPACE_RECORD_BYTES`（2 MiB）、
+ * `MAX_WORKSPACE_SIDECAR_BYTES`（512 KiB）与 Trip 640 KiB 三重门禁约束；
+ * v2 外层在这个完整记录之外还要携带未应用草稿与 ui/envelope 开销。3 MiB =
+ * 2 MiB 记录 + 640 KiB 草稿上限 + 64 KiB envelope/ui 余量，既不沿用旧
+ * Trip-only 读限额误伤合法 640 KiB Trip + 512 KiB sidecar，也不是无限大。
+ * 具体字节口径见 docs/WORKSPACE_RESTORE.md。
+ */
+export const MAX_SESSION_RESUME_V2_BYTES = 3 * 1024 * 1024
+export const MAX_SESSION_RESUME_V2_RAW_BYTES = MAX_SESSION_RESUME_V2_BYTES + 64 * 1024
 
 /** Trip 部分复用本地保存的单份口径（640 KiB，id + savedAt + trip） */
 export const MAX_SESSION_TRIP_BYTES = 640 * 1024
@@ -113,6 +158,12 @@ export interface SessionResumePayload {
   readonly draft: SessionResumeDraftPayload | null
   readonly budget: SessionResumeBudgetBlock | null
   readonly ui: SessionResumeUiState
+  /**
+   * 当前**已应用**的工作区记录（Trip + sidecar + 手工预算 + meta）。
+   * null / 缺省 = 这份留存没有 workspace 块，按旧 v1 协议写入与读取。
+   * 不接收候选库 / 版本库 / 在途草稿；调用方必须在显式 apply 后传入当前记录。
+   */
+  readonly workspace?: WorkspaceRecordV1 | null
 }
 
 export interface SessionResumeRecord {
@@ -122,6 +173,8 @@ export interface SessionResumeRecord {
     readonly draft: SessionResumeDraftPayload | null
     readonly budget: SessionResumeBudgetBlock | null
     readonly ui: SessionResumeUiLoaded
+    /** v2 workspace 块重建出的完整记录；v1 或 workspace:null 时为 null。 */
+    readonly workspace?: WorkspaceRecordV1 | null
   }
 }
 
@@ -136,7 +189,7 @@ export type SessionResumeLoadStatus =
 
 export type SessionResumeLoad =
   /** raw 是本次解析实际读到的字符串，必须作为该 pending 的冻结写基准 */
-  | { status: 'pending'; record: SessionResumeRecord; raw: string }
+  | { status: 'pending'; version?: 1 | 2; record: SessionResumeRecord; raw: string }
   /** empty 同样带上这次实际读到的 raw（null/空串/空白），避免调用方再读一次换基准 */
   | { status: 'empty'; raw: string | null }
   | { status: 'disabled' }
@@ -149,6 +202,8 @@ export type SessionWriteFailureReason =
   | 'too_large'
   | 'conflict'
   | 'snapshot_failed'
+  | 'workspace_invalid'
+  | 'workspace_conflict'
 
 export type SessionWriteResult =
   | { ok: true; bytes: number; savedAt: number; writtenRaw: string }
@@ -221,6 +276,10 @@ function writeFailureMessage(reason: SessionWriteFailureReason): string {
       return '检测到另一个标签页更新了留存副本，本标签页已暂停自动留存以避免覆盖。可在确认后重新读取或接管。'
     case 'snapshot_failed':
       return '当前行程内容无法序列化，无法生成本机留存快照；留存已暂停，页面不受影响。'
+    case 'workspace_invalid':
+      return '当前工作区数据没有通过校验，本次没有写入留存副本；已有副本保持原样。'
+    case 'workspace_conflict':
+      return '当前工作区数据与这次留存的行程或手工预算不一致，本次没有写入；已有副本保持原样，避免静默选一份。'
     default:
       return '写入本地存储失败，工作进度留存已暂停；已有副本保持原样。'
   }
@@ -285,6 +344,46 @@ export interface SessionSnapshotInput {
   readonly tripRevision: number
   /** tripOwnerSnapshot 的结果；null 表示当前 Trip 无法验证（如序列化失败） */
   readonly tripSnapshot?: string | null
+  /**
+   * 当前**已应用**的工作区记录；缺省 / null = 不写 workspace 块（旧 v1 协议）。
+   * 传入时必须与本次 trip / 手工预算一致，否则整次投影 fail closed。
+   */
+  readonly workspace?: WorkspaceRecordV1 | null
+}
+
+/**
+ * 把会话费用块映射成公共预算快照：
+ * - 只有 binding.kind==='current' 且 tripId 与当前 Trip 一致才映射；
+ * - stale / unbound / null 一律返回 null（不属于当前行程，不冒充）；
+ * - 只搬运用户原字符串与行，不补 0、不改写。
+ */
+export function sessionBudgetSnapshot(
+  block: SessionResumeBudgetBlock | null,
+  tripId: string,
+): BudgetSnapshotV1 | null {
+  if (block === null) return null
+  if (block.binding.kind !== 'current') return null
+  if (block.binding.tripId !== tripId) return null
+  return {
+    budgetRaw: block.budgetRaw,
+    rows: block.rows.map((row) => ({
+      id: row.id,
+      category: row.category,
+      name: row.name,
+      amountRaw: row.amountRaw,
+    })),
+  }
+}
+
+/** workspace 记录与本次会话 payload 的 Trip / 手工预算是否一致（写入前 fail closed）。 */
+function workspaceMatchesSessionPayload(
+  workspace: WorkspaceRecordV1,
+  trip: Trip,
+  budgetBlock: SessionResumeBudgetBlock | null,
+): boolean {
+  if (!canonicalValuesEqual(workspace.trip, trip)) return false
+  const mappedBudget = sessionBudgetSnapshot(budgetBlock, trip.id)
+  return canonicalValuesEqual(workspace.budget, mappedBudget)
 }
 
 /**
@@ -347,7 +446,17 @@ export function buildPayloadFromSession(input: SessionSnapshotInput): SessionRes
     }
   }
 
-  return { trip: input.trip, draft: draftBlock, budget: budgetBlock, ui: input.ui }
+  // workspace：只在显式传入当前已应用记录时携带；不自动造 id / sidecar。
+  // 与本次 Trip / 手工预算不一致 → 整次投影失败，绝不静默选一份落盘。
+  let workspace: WorkspaceRecordV1 | null = null
+  if (input.workspace !== undefined && input.workspace !== null) {
+    const checked = validateWorkspaceRecord(input.workspace)
+    if (!checked.ok) return null
+    if (!workspaceMatchesSessionPayload(checked.value, input.trip, budgetBlock)) return null
+    workspace = checked.value
+  }
+
+  return { trip: input.trip, draft: draftBlock, budget: budgetBlock, ui: input.ui, workspace }
 }
 
 /* ───────── 写入 ───────── */
@@ -356,18 +465,45 @@ export interface SessionWriteInput {
   readonly payload: SessionResumePayload
   /** 冻结的存储现值（上次读取/写入的 raw）；null 表示存储应为空 */
   readonly expectedRaw: string | null
+  /**
+   * 显式允许把现有 v2 副本降级写回 v1（仅在用户明确删除工作区 / 放弃工作区数据时）。
+   * 缺省 false：当前存储是 v2 而本次 payload 没有 workspace → workspace_conflict，
+   * 避免旧调用方静默丢掉 sidecar。
+   */
+  readonly allowWorkspaceDrop?: boolean
+}
+
+/** 只读识别当前 raw 的外层版本；坏 JSON / 未知版本返回 null（不参与降级判断）。 */
+function readStoredSessionVersion(raw: string | null): 1 | 2 | null {
+  if (raw === null || raw.trim() === '') return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!isRecord(parsed)) return null
+    if (parsed.format !== SESSION_RESUME_FORMAT) return null
+    if (parsed.version === SESSION_RESUME_VERSION) return 1
+    if (parsed.version === SESSION_RESUME_VERSION_V2) return 2
+    return null
+  } catch {
+    return null
+  }
 }
 
 /**
- * 有界自动留存写入。门禁顺序：
- * 1. 整包可序列化（失败 → snapshot_failed）；
- * 2. 整包 ≤ 1.5 MiB；
- * 3. Trip 单记录 ≤ 640 KiB（复用 savedTrips 口径）；
- * 4. 实际写出的 Trip 通过 checkTripShape（与读端同尺；序列化副作用如 toJSON
- *    改变了结构也在这里拒绝 → snapshot_failed，避免落下一份读端必拒的副本。
- *    排在体积门禁之后：超限行程维持既有 too_large 分类，不因结构同时非法而改判）；
- * 5. 写前重读与 expectedRaw 严格相等（不同 → conflict，保旧）；
- * 6. setItem，quota/SecurityError → typed 失败。
+ * 有界自动留存写入。写策略：
+ * - 有当前有效 workspace 记录 → 外层 version 2，session.workspace 只含
+ *   workspaceId / ownerId / revision / updatedAt / sidecar / meta（不重复 Trip / 预算）；
+ * - 没有 workspace → 外层 version 1，session 仍只含 trip/draft/budget/ui，旧读取器可读。
+ *
+ * 门禁顺序：
+ * 1. workspace 若存在：完整 validate + Trip/预算与本次 payload 一致（失败 →
+ *    workspace_invalid / workspace_conflict，绝不把冲突静默写成 v1 或 v2）；
+ * 2. 整包可序列化（失败 → snapshot_failed）；
+ * 3. v1 ≤ 1.5 MiB；v2 ≤ 3 MiB（独立上限，见常量注释）；
+ * 4. Trip 单记录 ≤ 640 KiB（复用 savedTrips 口径）；
+ * 5. 实际写出的 Trip 通过 checkTripShape；v2 还按写出字节重新解析 workspace 块并
+ *    完整重建记录，避免 toJSON 等序列化副作用产出读端必拒的副本；
+ * 6. 写前重读与 expectedRaw 严格相等（不同 → conflict，保旧）；
+ * 7. setItem，quota/SecurityError → typed 失败。
  * 任一步失败存储原样，调用方应停写。
  */
 export function writeSessionResume(
@@ -378,20 +514,55 @@ export function writeSessionResume(
     return { ok: false, reason: 'unavailable', message: writeFailureMessage('unavailable') }
   }
 
+  const workspace = input.payload.workspace ?? null
+  let version: 1 | 2 = SESSION_RESUME_VERSION
+  let workspaceBlock: SessionWorkspaceBlockV1 | null = null
+
+  if (workspace !== null) {
+    const checked = validateWorkspaceRecord(workspace)
+    if (!checked.ok) {
+      return { ok: false, reason: 'workspace_invalid', message: writeFailureMessage('workspace_invalid') }
+    }
+    if (!workspaceMatchesSessionPayload(checked.value, input.payload.trip, input.payload.budget)) {
+      return { ok: false, reason: 'workspace_conflict', message: writeFailureMessage('workspace_conflict') }
+    }
+    const block = createSessionWorkspaceBlock(checked.value)
+    if (!block.ok) {
+      return { ok: false, reason: 'workspace_invalid', message: writeFailureMessage('workspace_invalid') }
+    }
+    workspaceBlock = block.value
+    version = SESSION_RESUME_VERSION_V2
+  }
+
   let json: string
   try {
     json = JSON.stringify({
       format: SESSION_RESUME_FORMAT,
-      version: SESSION_RESUME_VERSION,
+      version,
       savedAt: Date.now(),
-      session: input.payload,
+      session:
+        workspaceBlock === null
+          ? {
+              trip: input.payload.trip,
+              draft: input.payload.draft,
+              budget: input.payload.budget,
+              ui: input.payload.ui,
+            }
+          : {
+              trip: input.payload.trip,
+              draft: input.payload.draft,
+              budget: input.payload.budget,
+              ui: input.payload.ui,
+              workspace: workspaceBlock,
+            },
     })
   } catch {
     return { ok: false, reason: 'snapshot_failed', message: writeFailureMessage('snapshot_failed') }
   }
 
   const bytes = utf8ByteLength(json)
-  if (bytes > MAX_SESSION_RESUME_BYTES) {
+  const cap = version === SESSION_RESUME_VERSION_V2 ? MAX_SESSION_RESUME_V2_BYTES : MAX_SESSION_RESUME_BYTES
+  if (bytes > cap) {
     return { ok: false, reason: 'too_large', message: writeFailureMessage('too_large') }
   }
 
@@ -403,15 +574,24 @@ export function writeSessionResume(
 
   // 同尺校验按「实际写出的字节」做：序列化（含 toJSON）可能改变 Trip 结构，
   // 内存形状合法不等于写出的形状合法。读端对 session.trip 用的是同一把尺子。
-  let writtenTrip: unknown
+  let writtenSession: Record<string, unknown>
   try {
-    writtenTrip = (JSON.parse(json) as { session: { trip: unknown } }).session.trip
+    writtenSession = (JSON.parse(json) as { session: Record<string, unknown> }).session
   } catch {
     // json 来自刚成功的 JSON.stringify，必然可解析；这里兜底与 snapshot_failed 同类
     return { ok: false, reason: 'snapshot_failed', message: writeFailureMessage('snapshot_failed') }
   }
-  if (!checkTripShape(writtenTrip).ok) {
+  if (!checkTripShape(writtenSession.trip).ok) {
     return { ok: false, reason: 'snapshot_failed', message: writeFailureMessage('snapshot_failed') }
+  }
+  if (version === SESSION_RESUME_VERSION_V2) {
+    // 按真正写出的字节重建一次：workspace 块未知字段 / sidecar / 预算任意一处读端
+    // 会拒绝，这里就拒绝，绝不落下一份下次读取必成 invalid 的副本。
+    const readBack = buildSessionFromStored(writtenSession, SESSION_RESUME_VERSION_V2)
+    if (!readBack.ok) {
+      const reason = readBack.message.includes('工作区') ? 'workspace_invalid' : 'snapshot_failed'
+      return { ok: false, reason, message: writeFailureMessage(reason) }
+    }
   }
 
   let current: string | null
@@ -423,6 +603,12 @@ export function writeSessionResume(
   }
   if (current !== input.expectedRaw) {
     return { ok: false, reason: 'conflict', message: writeFailureMessage('conflict') }
+  }
+  // 防静默降级：当前是 v2、本次却没有 workspace 时，必须由调用方显式允许丢弃。
+  if (version === SESSION_RESUME_VERSION && input.allowWorkspaceDrop !== true) {
+    if (readStoredSessionVersion(current) === SESSION_RESUME_VERSION_V2) {
+      return { ok: false, reason: 'workspace_conflict', message: writeFailureMessage('workspace_conflict') }
+    }
   }
 
   try {
@@ -464,7 +650,9 @@ export function loadSessionResumeRecord(storage: StorageLike | null): SessionRes
     return { status: 'unavailable', message: '读取留存副本失败，存储原样保留。' }
   }
   if (raw === null || raw.trim() === '') return { status: 'empty', raw }
-  if (utf8ByteLength(raw) > MAX_SESSION_RESUME_RAW_BYTES) {
+  const rawBytes = utf8ByteLength(raw)
+  // 先按「所有已知版本里最大的 raw 上限」挡解析；v1 的真实上限在下文按版本复核。
+  if (rawBytes > MAX_SESSION_RESUME_V2_RAW_BYTES) {
     return { status: 'corrupt', message: '留存副本体积异常，已停止读取；原始数据保留，等待显式删除或修复。' }
   }
 
@@ -481,8 +669,15 @@ export function loadSessionResumeRecord(storage: StorageLike | null): SessionRes
   if (format !== SESSION_RESUME_FORMAT) {
     return { status: 'unknown_version', message: '留存副本的格式标识不受支持；原始数据保留。' }
   }
-  if (version !== SESSION_RESUME_VERSION) {
+  if (version !== SESSION_RESUME_VERSION && version !== SESSION_RESUME_VERSION_V2) {
     return { status: 'unknown_version', message: '留存副本的结构版本不受支持；原始数据保留。' }
+  }
+  if (version === SESSION_RESUME_VERSION && rawBytes > MAX_SESSION_RESUME_RAW_BYTES) {
+    // v1 原读取上限保持不变：旧副本的读写行为不因 v2 支线而放宽。
+    return { status: 'corrupt', message: '留存副本体积异常，已停止读取；原始数据保留，等待显式删除或修复。' }
+  }
+  if (version === SESSION_RESUME_VERSION_V2 && rawBytes > MAX_SESSION_RESUME_V2_BYTES) {
+    return { status: 'corrupt', message: '留存副本体积异常，已停止读取；原始数据保留，等待显式删除或修复。' }
   }
   if (typeof savedAt !== 'number' || !Number.isFinite(savedAt) || savedAt <= 0) {
     return { status: 'invalid', message: '留存副本的保存时间无效；原始数据保留。' }
@@ -497,13 +692,14 @@ export function loadSessionResumeRecord(storage: StorageLike | null): SessionRes
     return { status: 'invalid', message: '留存副本缺少会话数据；原始数据保留。' }
   }
 
-  const built = buildSessionFromStored(session)
+  const built = buildSessionFromStored(session, version)
   if (!built.ok) {
     return { status: 'invalid', message: built.message }
   }
 
   return {
     status: 'pending',
+    version,
     record: {
       savedAt,
       session: {
@@ -511,6 +707,7 @@ export function loadSessionResumeRecord(storage: StorageLike | null): SessionRes
         draft: built.draft,
         budget: built.budget,
         ui: built.ui,
+        workspace: built.workspace,
       },
     },
     raw,
@@ -526,6 +723,7 @@ type SessionBuildResult =
       draft: SessionResumeDraftPayload | null
       budget: SessionResumeBudgetBlock | null
       ui: SessionResumeUiLoaded
+      workspace: WorkspaceRecordV1 | null
     }
   | { ok: false; message: string }
 
@@ -540,18 +738,27 @@ function isValidCategoryId(value: unknown): value is BudgetCategoryId {
   )
 }
 
-function buildSessionFromStored(session: Record<string, unknown>): SessionBuildResult {
+function buildSessionFromStored(
+  session: Record<string, unknown>,
+  version: 1 | 2,
+): SessionBuildResult {
   // trip：复用 checkTripShape（与本地保存/导入同一套结构约束，兼容宽字段）
   if (!checkTripShape(session.trip).ok) {
     return { ok: false, message: INVALID_TRIP_MESSAGE }
   }
   const trip = session.trip as Trip
 
-  // 顶层只认四个声明键
+  // v1 只认四个声明键；v2 额外必须有 workspace 键（null 或对象）。
+  const allowedSessionKeys = version === 2
+    ? (['trip', 'draft', 'budget', 'ui', 'workspace'] as const)
+    : (['trip', 'draft', 'budget', 'ui'] as const)
   for (const key of Object.keys(session)) {
-    if (key !== 'trip' && key !== 'draft' && key !== 'budget' && key !== 'ui') {
+    if (!(allowedSessionKeys as readonly string[]).includes(key)) {
       return { ok: false, message: '留存副本的会话数据包含未声明字段；原始数据保留。' }
     }
+  }
+  if (version === 2 && !Object.prototype.hasOwnProperty.call(session, 'workspace')) {
+    return { ok: false, message: '留存副本的 v2 会话缺少 workspace 字段；原始数据保留。' }
   }
 
   // draft 块
@@ -675,6 +882,21 @@ function buildSessionFromStored(session: Record<string, unknown>): SessionBuildR
     }
   }
 
+  // v2 workspace 块：严格重建完整记录；不接受块内重复 Trip / 预算，不 salvage 半条 sidecar。
+  let workspace: WorkspaceRecordV1 | null = null
+  if (version === 2) {
+    const mappedBudget = sessionBudgetSnapshot(budget, trip.id)
+    const rehydrated = rehydrateWorkspaceFromSession({
+      trip,
+      budget: mappedBudget,
+      workspace: session.workspace,
+    })
+    if (!rehydrated.ok) {
+      return { ok: false, message: workspaceInvalidMessage(rehydrated) }
+    }
+    workspace = rehydrated.value
+  }
+
   // ui 块
   if (!isRecord(session.ui)) return { ok: false, message: INVALID_UI_MESSAGE }
   const ui = session.ui
@@ -704,7 +926,22 @@ function buildSessionFromStored(session: Record<string, unknown>): SessionBuildR
     draft,
     budget,
     ui: { activeDay: ui.activeDay, draftMode: ui.draftMode, openedFromFile },
+    workspace,
   }
+}
+
+/**
+ * v2 workspace 块损坏时的提示。清单段是唯一需要在 UI 上点明“人工修复”的段：
+ * 会话恢复不做 salvage、不自动写空清单，否则会把损坏伪装成成功恢复。
+ */
+function workspaceInvalidMessage(failure: WorkspaceValidationFailure): string {
+  if (failure.path.includes('checklist')) {
+    return '留存副本里的工作区清单段损坏，整份恢复已拒绝；原始数据保留。请先在工作区面板中人工修复清单（或显式删除本机恢复副本），系统不会自动写回空清单。'
+  }
+  if (failure.path.includes('sidecar')) {
+    return '留存副本里的工作区 sidecar 段损坏，整份恢复已拒绝；原始数据保留，不做部分恢复。'
+  }
+  return `留存副本里的工作区数据没有通过校验（${failure.path}），整份恢复已拒绝；原始数据保留，不做部分恢复。`
 }
 
 /* ───────── 恢复重建 ───────── */
@@ -852,8 +1089,18 @@ export type SessionRestorePreview =
 export function previewSessionResume(
   record: SessionResumeRecord,
   nextRevision: number,
+  options: { readonly allowWorkspace?: boolean } = {},
 ): SessionRestorePreview {
   const session = record.session
+  // v2 带 workspace 时，旧调用方只恢复 Trip / 草稿 / 预算会把 sidecar 留在旧状态。
+  // 默认 fail closed；只有 workspaceSessionRestore 的整份恢复预览可以显式放行。
+  if (session.workspace && options.allowWorkspace !== true) {
+    return {
+      ok: false,
+      message:
+        '这份留存包含工作区 sidecar，不能用只恢复 Trip 的旧预览；请使用整份工作区恢复（prepareSessionWorkspaceRestore / previewSessionResumeWithWorkspace）。',
+    }
+  }
 
   // draft 重建
   const rebuiltDraft = rebuildDraftFromTrip({ trip: session.trip, draft: session.draft, budget: session.budget, ui: { activeDay: session.ui.activeDay, draftMode: session.ui.draftMode, openedFromFile: session.ui.openedFromFile } })
