@@ -20,8 +20,8 @@ from mcp.server.fastmcp import FastMCP
 # 初始化 MCP 服务器
 mcp = FastMCP("WriteServer")
 
-# 默认输出目录：锚定到本模块所在的项目根目录，不随进程工作目录变化
-OUTPUT_DIR = str(Path(__file__).resolve().parent / "outputs")
+# 默认输出目录：锚定在仓库根目录的 outputs/（backend 的上一级），不受进程工作目录变化
+OUTPUT_DIR = str(Path(__file__).resolve().parent.parent / "outputs")
 
 # Windows 保留设备名（不区分大小写，CON.txt 这类带扩展名的形式同样保留）
 _WINDOWS_RESERVED = {

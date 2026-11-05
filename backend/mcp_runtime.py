@@ -30,8 +30,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-# 项目根目录：mcp_runtime.py 与 client*.py、servers_config.json 同层
+# 后端目录：mcp_runtime.py 与 client*.py、servers_config.json、agent_prompts.txt 同层
 PROJECT_DIR = Path(__file__).resolve().parent
+# 仓库根目录（backend 的上一级）：真实 .env 与 outputs/ 所在层
+PROJECT_ROOT = PROJECT_DIR.parent
 
 DEFAULT_CONFIG_FILENAME = "servers_config.json"
 DEFAULT_PROMPT_FILENAME = "agent_prompts.txt"

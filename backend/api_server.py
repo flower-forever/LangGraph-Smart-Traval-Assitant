@@ -77,10 +77,11 @@ from poi_sources_api import poi_sources_router_factory
 from tavily_web_api import tavily_web_router_factory
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent  # 仓库根目录：真实 .env 与 outputs/ 所在层
 
-# 加载环境变量：优先当前工作目录，其次项目目录，兼容从任意目录启动
-load_dotenv()
-load_dotenv(BASE_DIR / ".env")
+# 本地化环境变量：只显式读仓库根目录的 .env（PROJECT_ROOT）；
+# 进程带 PYTHON_DOTENV_DISABLED=1 时 load_dotenv 为 no-op，不触磁盘
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ==================== 可选的重依赖 ====================
 # FastAPI 示例接口不依赖这些库。缺失时只禁用对应的动态能力，不阻止导入与启动。

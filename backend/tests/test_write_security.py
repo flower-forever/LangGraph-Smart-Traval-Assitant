@@ -337,15 +337,15 @@ def test_save_travel_plan_existing_directory_not_replaced(outputs_dir, monkeypat
 
 
 def test_default_output_dir_anchored_to_module_location():
-    """默认 OUTPUT_DIR 必须锚定在模块所在目录，而不是相对进程 cwd 的 ./outputs。"""
-    expected = Path(write_server.__file__).resolve().parent / "outputs"
+    """默认 OUTPUT_DIR 锚定在仓库根 outputs/（模块位置的上一级），不随进程 cwd 漂移。"""
+    expected = Path(write_server.__file__).resolve().parent.parent / "outputs"
     assert Path(write_server.OUTPUT_DIR).is_absolute()
     assert Path(write_server.OUTPUT_DIR).resolve() == expected
 
 
-def test_module_copy_writes_to_module_dir_not_cwd(tmp_path, monkeypatch):
-    """从另一个 cwd 导入模块副本并写文件，实际写入模块所在目录的 outputs，
-    而不是当前工作目录；也不碰真实项目的 outputs。"""
+def test_module_copy_writes_to_simulated_repo_root_not_cwd(tmp_path, monkeypatch):
+    """复制一份到 cwd 无关的目录后写文件，实际写到「模块位置上两级」的 outputs（模拟仓库根）。
+    （而不是当前工作目录下，也不是真实项目 outputs）"""
     module_dir = tmp_path / "project_root"
     module_dir.mkdir()
     shutil.copyfile(
@@ -361,7 +361,7 @@ def test_module_copy_writes_to_module_dir_not_cwd(tmp_path, monkeypatch):
     copied = _load_module_copy(module_dir / "write_server.py", module_name)
     try:
         # 副本的默认输出目录应锚定在副本自己所在目录
-        expected = (module_dir / "outputs").resolve()
+        expected = (module_dir.parent / "outputs").resolve()
         assert Path(copied.OUTPUT_DIR).resolve() == expected
 
         # 写入前给真实项目 outputs 拍快照，事后对比证明没被碰
@@ -378,10 +378,10 @@ def test_module_copy_writes_to_module_dir_not_cwd(tmp_path, monkeypatch):
         plan_result = run(copied.save_travel_plan, "杭州", "锚定计划")
         assert "✅" in plan_result, plan_result
 
-        # 文件确实落在模块所在目录的 outputs
-        written = module_dir / "outputs" / "锚定测试.md"
+        # 文件确实落在模拟仓库根的 outputs
+        written = module_dir.parent / "outputs" / "锚定测试.md"
         assert written.read_text(encoding="utf-8") == "锚定内容"
-        plans = list((module_dir / "outputs").glob("travel_plan_杭州_*.md"))
+        plans = list((module_dir.parent / "outputs").glob("travel_plan_杭州_*.md"))
         assert len(plans) == 1
         assert "锚定计划" in plans[0].read_text(encoding="utf-8")
 

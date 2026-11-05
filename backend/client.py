@@ -22,9 +22,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 import mcp_runtime
 
-# 加载环境变量：先看当前工作目录，再补项目目录，从任意目录启动都能读到 .env
-load_dotenv()
-load_dotenv(mcp_runtime.PROJECT_DIR / ".env")
+# 本地化环境变量：只显式读仓库根目录的 .env（mcp_runtime.PROJECT_ROOT）；
+# PYTHON_DOTENV_DISABLED=1 时为 no-op，不触磁盘
+load_dotenv(mcp_runtime.PROJECT_ROOT / ".env")
 
 # 尝试导入 rich 库（用于美化输出）
 try:
@@ -134,7 +134,7 @@ async def run_chat_loop() -> None:
     if not cfg.api_key:
         mcp_runtime.safe_print("❌ 错误: 未检测到有效的 DASHSCOPE_API_KEY 环境变量")
         mcp_runtime.safe_print("   请在项目目录的 .env 文件中配置 DASHSCOPE_API_KEY，")
-        mcp_runtime.safe_print(f"   或在启动前设置该环境变量后重新运行（项目目录: {mcp_runtime.PROJECT_DIR}）")
+        mcp_runtime.safe_print(f"   （程序当前用仓库根目录作为项目目录: {mcp_runtime.PROJECT_ROOT}）。")
         return
     
     print("🔄 正在初始化...")

@@ -49,7 +49,7 @@ Windows 推荐用 uv 建环境。本机验证时 `python -m venv` 和 `pip insta
 
 ```powershell
 uv venv .venv --python 3.12
-uv pip install --python .venv/Scripts/python.exe -r requirements-dev.txt
+uv pip install --python .venv/Scripts/python.exe -r backend/requirements-dev.txt
 ```
 
 之后所有后端命令都使用 `.venv\Scripts\python.exe`，或者先激活虚拟环境再直接用 `python`。
@@ -58,7 +58,7 @@ macOS / Linux 对应写法（解释器路径为 `.venv/bin/python`）：
 
 ```bash
 uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python -r requirements-dev.txt
+uv pip install --python .venv/bin/python -r backend/requirements-dev.txt
 ```
 
 其他环境用标准 pip 安装也可以（PowerShell 与 bash 命令二选一）：
@@ -67,7 +67,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 python -m venv .venv
 .venv\Scripts\Activate.ps1      # Windows PowerShell 激活
 source .venv/bin/activate       # macOS / Linux 激活
-pip install -r requirements-dev.txt
+pip install -r backend/requirements-dev.txt
 ```
 
 `requirements-dev.txt` = 运行时依赖（`-r requirements.txt`）+ pytest，装这一个文件就够跑服务和测试；只需要运行时的话装 `requirements.txt`。
@@ -113,18 +113,18 @@ cp .env.example .env
 
 ```powershell
 # Windows
-.venv\Scripts\python.exe api_server.py
+.venv\Scripts\python.exe backend\api_server.py
 ```
 
 ```bash
 # macOS / Linux
-.venv/bin/python api_server.py
+.venv/bin/python backend/api_server.py
 ```
 
 等价于（host/port 来自 `API_HOST`/`API_PORT`）：
 
 ```bash
-uvicorn api_server:app --reload --host 127.0.0.1 --port 8000
+uvicorn --app-dir backend api_server:app --reload --host 127.0.0.1 --port 8000
 ```
 
 启动成功的标志：控制台打印服务地址，且健康检查有返回：
@@ -399,12 +399,12 @@ HTTP 语义：
 
 ```powershell
 # Windows
-.venv\Scripts\python.exe -m pytest tests/ -q
+.venv\Scripts\python.exe -m pytest backend/tests/ -q
 ```
 
 ```bash
 # macOS / Linux
-.venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m pytest backend/tests/ -q
 ```
 
 测试文件（按模块划分，新增测试随代码补进清单即可）：`test_coordinates.py`（坐标转换）、`test_amap_client.py`（高德客户端）、`test_itinerary.py`（行程归一化/降级/提示词）、`test_map_resilience.py`（地图数据可信度与降级回归）、`test_map_timeout.py`（地图增强独立超时、客户端关闭与配置回退）、`test_route_quality.py`（异常几何不得以 navigation 输出、时间冲突告警）、`test_schedule_safety.py`（无地图/超时下的时刻表冲突、占位时间与来源丢失后的措辞、提醒上限与防伪）、`test_api.py`（FastAPI 接口与降级行为）、`test_api_compatibility.py`（兼容旧字段）、`test_weather_client.py`（天气客户端）与 `test_weather_client_regressions.py`（客户端回归）、`test_weather_api.py`（天气路由、422/503、生命周期与生产接线）、`test_mcp_runtime.py`（MCP 配置解析、跨目录启动、真实 stdio 握手）、`test_calculator_security.py` 与 `test_write_security.py`（计算器沙箱与文件写入安全）。
@@ -425,7 +425,7 @@ pnpm preview       # 本地预览 dist 产物
 
 `.github/workflows/ci.yml` 定义了两个并行 job，`push` 到 `feat/interactive-travel-planner` / `main` 或任意 Pull Request 都会触发；同一分支有新推送时自动取消还在跑的旧任务。所有外部 action 只授予 `contents: read` 权限，不注入任何密钥。
 
-- **后端**：Windows runner + Python 3.12，装 `requirements-dev.txt` 后跑 `pytest tests -q`。设置了 `PYTHON_DOTENV_DISABLED=1` 和 `PYTHONDONTWRITEBYTECODE=1`，与本地离线测试的约定一致：测试全部走 MockTransport / 假 Agent，不读取实际 `.env`，也不需要任何 API Key。
+- **后端**：Windows runner + Python 3.12，装 `backend/requirements-dev.txt` 再跑 `pytest backend/tests -q`。设置了 `PYTHON_DOTENV_DISABLED=1` 和 `PYTHONDONTWRITEBYTECODE=1`，与本地离线测试的约定一致：测试全部走 MockTransport / 假 Agent，不读取实际 `.env`，也不需要任何 API Key。
 - **前端**：Node 22 + pnpm（lockfile 是 `lockfileVersion: '9.0'`，pnpm 9+ 可读，CI 固定 pnpm 11，与本机开发环境一致），`pnpm install --frozen-lockfile` 后跑完整 `pnpm test` 和 `pnpm build`（含 `tsc -b` 类型检查）。
 
 本地运行同样两条命令即可复现 CI 的核心检查（仓库根目录装好依赖后）：
@@ -444,14 +444,14 @@ CI 已经实际建立并运行：触发条件与上面描述一致，运行状�
 
 ```powershell
 # Windows
-.venv\Scripts\python.exe client.py          # 多轮交互客户端
-.venv\Scripts\python.exe client_simple.py   # 单次问答示例
+.venv\Scripts\python.exe backend\client.py          # 多轮交互客户端
+.venv\Scripts\python.exe backend\client_simple.py   # 单次问答示例
 ```
 
 ```bash
 # macOS / Linux
-.venv/bin/python client.py
-.venv/bin/python client_simple.py
+.venv/bin/python backend/client.py
+.venv/bin/python backend/client_simple.py
 ```
 
 - `client.py` 是多轮对话（命令：`quit` 退出、`clear` 清屏、`help` 帮助），`client_simple.py` 是单次问答示例，两者都需要 `DASHSCOPE_API_KEY`：检测不到 Key 会直接退出并给出配置提示，不进入对话。
@@ -465,7 +465,7 @@ CI 已经实际建立并运行：触发条件与上面描述一致，运行状�
 ```
 
 实际回答取决于工具调用与上游服务返回，不是固定话术。
-- MCP 配置与系统提示词锚定在项目根目录，从任何工作目录启动都能找到。`servers_config.json` 磁盘内容里写的 `.\\venv\\Scripts\\python.exe` 如果不存在，运行时自动回退到当前 Python 解释器，`*.py` 脚本参数也会解析成绝对路径（只改内存配置，不动磁盘文件）。想用自定义配置文件时，设置 `MCP_CONFIG` 环境变量指向它（CLI 专属；api_server.py 固定读取项目根的 servers_config.json）。
+- MCP 配置与系统提示词锚定在 backend 目录，从任何工作目录启动都能找到。`servers_config.json` 磁盘内容里写的 `.\\venv\\Scripts\\python.exe` 如果不存在，运行时自动回退到当前 Python 解释器，`*.py` 脚本参数也会解析成绝对路径（只改内存配置，不动磁盘文件）。想用自定义配置文件时，设置 `MCP_CONFIG` 环境变量指向它（CLI 专属；api_server.py 固定读取 backend/ 的 servers_config.json）。
 
 ## 🏗️ 架构说明
 
@@ -507,30 +507,33 @@ CI 已经实际建立并运行：触发条件与上面描述一致，运行状�
 
 ```
 LangGraph-Smart-Traval-Assitant/
-├── client.py                  # CLI 多轮交互客户端
-├── client_simple.py           # 单次问答示例
-├── mcp_runtime.py             # CLI 共用 MCP 运行时：配置/提示词定位、解释器回退、路径解析
-├── api_server.py              # FastAPI HTTP 服务器
-├── weather_client.py          # Open-Meteo 每日预报客户端（独立信封，离线可测）
-├── weather_api.py             # 天气日预报 APIRouter（/api/weather/day）
-├── travel_itinerary.py        # 结构化行程领域逻辑（契约/解析/高德客户端/坐标转换/降级）
-├── day_replan.py              # 单日 AI 重规划（请求校验/提示词/归一化/地图状态）
-├── weather_server.py          # 天气 MCP 服务器 (STDIO)
-├── amap_server.py             # 高德地图 MCP 服务器 (STDIO)
-├── calculator_server.py       # 计算器 MCP 服务器 (STDIO)
-├── write_server.py            # 文件写入 MCP 服务器 (STDIO)
-├── servers_config.json        # MCP 服务器配置
-├── agent_prompts.txt          # Agent 系统提示词
-├── requirements.txt           # 运行时依赖
-├── requirements-dev.txt       # 开发/测试依赖（runtime + pytest）
-├── .env.example               # 环境变量模板（复制为 .env）
-├── tests/                     # pytest：坐标 / 高德客户端 / 行程 / 地图降级与超时 / 天气 / API / MCP 运行时 / 安全
-├── frontend/                  # React + Vite 前端（pnpm 管理），详见 frontend/README.md
-│   ├── dev-stub/server.mjs    # 契约桩：固定示例 + 探活，不提供规划
-│   ├── src/components/        # PlanForm（规划表单）/ ItineraryList（逐日清单）/ TripMap（Leaflet 地图）
-│   ├── src/lib/               # api（后端客户端）/ format / mapData
-│   └── vite.config.ts         # 开发代理：/api → 127.0.0.1:8000
-├── 测试示例.md                 # 20 个 MCP 工具的测试提问示例
+├── backend/                        # 后端（Python）：所有模块与配置同层平铺
+│   ├── api_server.py               # FastAPI HTTP 服务（BASE_DIR/PROJECT_ROOT 锚定 backend 与仓库根）
+│   ├── client.py / client_simple.py # CLI 多轮对话客户端 / 单次问答示例
+│   ├── mcp_runtime.py              # MCP 配置/提示词定位（相对路径解析、venv 回退）
+│   ├── travel_itinerary.py         # 结构化行程规划核心（约束/校验/高德客户端/坐标转换）
+│   ├── day_replan.py               # 单日 AI 重规划（合并校验/提示词/下一步/地图状态）
+│   ├── leg_refresh.py              # 固定端点衔接路线 service
+│   ├── weather_client.py           # Open-Meteo 每日预报客户端（无需密钥，离线可测）
+│   ├── weather_api.py              # 天气日预报 APIRouter（/api/weather/day）
+│   ├── weather_server.py / amap_server.py / calculator_server.py / write_server.py  # 4 个 MCP server (STDIO)
+│   ├── poi_sources_client.py / poi_sources_api.py # OSM/Overpass 资料候选客户端与路由
+│   ├── tavily_web_client.py / tavily_web_api.py   # Tavily 网页资料搜索客户端与路由
+│   ├── qwen_model.py               # DashScope/ChatTongyi 适配
+│   ├── config_preflight.py         # 启动前配置体检（只读，不改 .env）
+│   ├── servers_config.json         # MCP 服务器配置
+│   ├── agent_prompts.txt           # Agent 系统提示词
+│   ├── requirements.txt / requirements-dev.txt  # 运行时 / 开发测试依赖
+│   └── tests/                      # pytest（坐标 / 高德客户端 / 行程 / 地图并发与超时 / 安全 / API / MCP 运行时）
+├── frontend/                       # React + Vite 前端（pnpm 管理，详见 frontend/README.md）
+│   ├── dev-stub/server.mjs         # 契约桩（固定示例 + 探针，替代真实规划）
+│   ├── src/components/             # PlanForm（规划表单）/ ItineraryList（行程清单）/ TripMap（Leaflet 地图）
+│   ├── src/lib/                    # api（后端客户端）/ format / mapData
+│   └── vite.config.ts              # 开发代理 /api 到 127.0.0.1:8000
+├── database/README.md              # 数据层说明（当前无业务 DB；浏览器 localStorage + 导出文件）
+├── docs/                           # 功能契约与验收文档
+├── .env.example                    # 环境变量模板（复制为 .env）
+├── 测试示例.md                      # 20 条 MCP 工具的本地调用示例
 └── README.md
 ```
 

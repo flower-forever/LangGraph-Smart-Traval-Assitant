@@ -32,16 +32,16 @@
 
 ```bash
 # 检查当前进程环境（默认；只读 os.environ，不读 .env）
-python config_preflight.py
+python backend/config_preflight.py
 
 # 全空配置：看默认口径（默认 host/port、缺 key 的降级说明）
-python config_preflight.py --empty-env
+python backend/config_preflight.py --empty-env
 
 # 内置纯假示例配置：演示自定义端口、空 CORS、占位 key 等提示
-python config_preflight.py --example
+python backend/config_preflight.py --example
 
 # JSON 输出（可与其他开关组合）
-python config_preflight.py --empty-env --json
+python backend/config_preflight.py --empty-env --json
 ```
 
 参数 `--empty-env` 与 `--example` 互斥；都不传时读进程环境。
@@ -135,7 +135,7 @@ CORS 提示只复述现行的默认/覆盖/fail-closed 语义，不含一套独�
 ## 测试
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/test_config_preflight.py -v
+.venv/Scripts/python.exe -m pytest backend/tests/test_config_preflight.py -v
 ```
 
 测试全部离线：空配置、显式默认值、自定义端口、非法/越界/0 端口、
