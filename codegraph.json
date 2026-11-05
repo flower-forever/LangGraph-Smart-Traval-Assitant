@@ -1,0 +1,22 @@
+{
+  "exclude": [
+    ".env",
+    ".env.*",
+    "**/.env",
+    "**/.env.*",
+    "**/_repro_surrogate.py",
+    "_repro_surrogate.py",
+    ".git/**",
+    ".venv/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "frontend/dist/**",
+    "frontend/e2e/artifacts/**",
+    "frontend/verify/**",
+    "**/.dsh-ops-update-*.lock",
+    "**/nul",
+    "archive/**"
+  ]
+}

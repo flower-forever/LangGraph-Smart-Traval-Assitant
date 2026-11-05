@@ -42,3 +42,6 @@ Thumbs.db
 nul
 # 本地浏览器检查脚本与截图（本机生成，不提交；文件保留在磁盘上）
 /frontend/verify/
+
+# ==== CodeGraph (local graph db, not for commit) ====
+.codegraph/
