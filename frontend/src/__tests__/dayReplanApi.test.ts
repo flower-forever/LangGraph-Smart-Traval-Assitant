@@ -114,6 +114,17 @@ describe('dayReplanApi', () => {
     expect(JSON.stringify(body)).not.toContain('120.57')
   })
 
+  it('省略 planningConstraints 时请求体保持旧版逐字内容', async () => {
+    const base = makeBase()
+    const request = buildRequest(base)
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(makeCandidateResponse(base)))
+    vi.stubGlobal('fetch', fetchMock)
+    await replanDay(request)
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.body).toBe(JSON.stringify(request))
+    expect(JSON.parse(init.body)).not.toHaveProperty('constraints')
+  })
+
   it('合法响应通过 validateDayReplanResponse 后原样返回', async () => {
     const base = makeBase()
     const request = buildRequest(base)

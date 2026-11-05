@@ -1,5 +1,11 @@
 /** 与后端约定的行程数据契约（travel_itinerary.py 输出结构） */
 
+import {
+  buildTripPlanConstraintsWire,
+  PlanningConstraintsError,
+} from './planningConstraintsApi'
+import type { ConstraintsV1 } from './workspaceTypes'
+
 export type TravelMode = 'walking' | 'driving'
 
 export type RouteType = 'navigation' | 'straight_line' | 'unavailable'
@@ -533,8 +539,33 @@ export async function fetchExampleTrip(options?: ApiOptions): Promise<Trip> {
   return data
 }
 
-export async function planTrip(payload: PlanRequest, options?: ApiOptions): Promise<Trip> {
-  const data = await postJson<unknown>('/api/trips/plan', payload, options)
+/**
+ * 初始规划的可选参数。`planningConstraints` 省略时请求体与旧版逐字一致；
+ * 给出时先在 fetch 前构造严格 wire，任何失败都抛 PlanningConstraintsError，
+ * 绝不回退成不带 constraints 的旧请求。
+ */
+export interface PlanTripApiOptions extends ApiOptions {
+  planningConstraints?: ConstraintsV1
+}
+
+export async function planTrip(payload: PlanRequest, options?: PlanTripApiOptions): Promise<Trip> {
+  let body: unknown = payload
+  let apiOptions: ApiOptions | undefined = options
+  if (options?.planningConstraints !== undefined) {
+    const built = buildTripPlanConstraintsWire(options.planningConstraints)
+    if (!built.ok) throw new PlanningConstraintsError(built)
+    if (Object.prototype.hasOwnProperty.call(payload, 'constraints')) {
+      throw new PlanningConstraintsError({
+        ok: false,
+        reason: 'reserved_field',
+        message: '规划 payload 已自带 constraints 字段；拒绝覆盖或重复发送。',
+      })
+    }
+    const { planningConstraints: _planningConstraints, ...rest } = options
+    body = { ...payload, constraints: built.constraints }
+    apiOptions = rest
+  }
+  const data = await postJson<unknown>('/api/trips/plan', body, apiOptions)
   if (!isTripLike(data)) {
     throw new ApiError('bad_payload', '规划结果结构不符合契约')
   }

@@ -83,6 +83,19 @@ describe('api client', () => {
     expect(JSON.parse(init.body)).toMatchObject({ destination: '杭州', days: 3 })
   })
 
+  it('省略 planningConstraints 时请求体保持旧版逐字内容', async () => {
+    const payload = {
+      destination: '杭州', days: 3, departure_date: null, travelers: 2,
+      preferences: '', travel_mode: 'walking' as const,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(MOCK_TRIP))
+    vi.stubGlobal('fetch', fetchMock)
+    await planTrip(payload)
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.body).toBe(JSON.stringify(payload))
+    expect(JSON.parse(init.body)).not.toHaveProperty('constraints')
+  })
+
   it('网络失败抛 ApiError(network)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
     const err = await fetchExampleTrip().catch((e) => e)
