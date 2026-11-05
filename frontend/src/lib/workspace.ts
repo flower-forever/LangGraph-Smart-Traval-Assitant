@@ -129,17 +129,22 @@ function hasOwn(value: JsonObject, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key)
 }
 
-/** 严格对象：未知键拒绝，声明的键必须存在（缺省值由 builder 显式写入）。 */
+/**
+ * 严格对象：未知键拒绝。
+ * requiredKeys 必须存在；optionalKeys 可出现且只做已知字段校验，缺省合法（用于旧 v1
+ * 兼容字段，不能把缺省自动补成 null）。
+ */
 function readObject(
   value: unknown,
   path: string,
   requiredKeys: readonly string[],
+  optionalKeys: readonly string[] = [],
 ): WorkspaceValidationResult<JsonObject> {
   if (!isRecord(value)) {
     return fail('not_object', path, `${path} 必须是对象。`)
   }
   for (const key of Object.keys(value)) {
-    if (!requiredKeys.includes(key)) {
+    if (!requiredKeys.includes(key) && !optionalKeys.includes(key)) {
       return fail(
         'unknown_field',
         `${path}.${key}`,
@@ -987,18 +992,23 @@ export function emptyConstraints(): ConstraintsV1 {
 /* ───────── F5：清单校验 ───────── */
 
 function parseChecklistItem(value: unknown, path: string): WorkspaceValidationResult<ChecklistItemV1> {
-  const object = readObject(value, path, [
-    'id',
-    'category',
-    'title',
-    'done',
-    'date',
-    'day',
-    'stopId',
-    'originalStopId',
-    'notes',
-    'updatedAt',
-  ])
+  const object = readObject(
+    value,
+    path,
+    [
+      'id',
+      'category',
+      'title',
+      'done',
+      'date',
+      'day',
+      'stopId',
+      'originalStopId',
+      'notes',
+      'updatedAt',
+    ],
+    ['constraintId'],
+  )
   if (!object.ok) return object
   const v = object.value
   const id = requiredId(v.id, `${path}.id`)
@@ -1023,6 +1033,12 @@ function parseChecklistItem(value: unknown, path: string): WorkspaceValidationRe
   if (!stopId.ok) return stopId
   const originalStopId = optionalId(v.originalStopId, `${path}.originalStopId`)
   if (!originalStopId.ok) return originalStopId
+  let constraintId: string | null | undefined
+  if (hasOwn(v, 'constraintId')) {
+    const parsedConstraintId = optionalId(v.constraintId, `${path}.constraintId`)
+    if (!parsedConstraintId.ok) return parsedConstraintId
+    constraintId = parsedConstraintId.value
+  }
   const notes = optionalText(v.notes, `${path}.notes`, { max: MAX_CHECKLIST_NOTES_LENGTH })
   if (!notes.ok) return notes
   const updatedAt = requiredTimestamp(v.updatedAt, `${path}.updatedAt`)
@@ -1038,6 +1054,7 @@ function parseChecklistItem(value: unknown, path: string): WorkspaceValidationRe
       day: day.value,
       stopId: stopId.value,
       originalStopId: originalStopId.value,
+      ...(constraintId !== undefined ? { constraintId } : {}),
       notes: notes.value,
       updatedAt: updatedAt.value,
     },

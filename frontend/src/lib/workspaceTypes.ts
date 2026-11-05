@@ -227,6 +227,13 @@ export interface ChecklistItemV1 {
   stopId: string | null
   /** stop 被删 / 解绑后保留的追溯 id；正常关联时为 null。 */
   originalStopId: string | null
+  /**
+   * 关联的预约约束 id（`ConstraintItemV1.id`）。
+   * 可选以兼容旧 v1：缺省表示旧记录未携带，读取/重写时不得自动补 null。
+   * 显式 null = 明确未关联；非 null 只校验 id 格式，允许约束删除后保留 dangling，
+   * 由 F5 audit 结合当前 constraints 提示 needsRelink，不自动按同名/日期重绑。
+   */
+  constraintId?: string | null
   notes: string | null
   updatedAt: number
 }

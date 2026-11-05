@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MOCK_TRIP } from './fixtures/trip'
 import type { Trip } from '../lib/api'
+import { canonicalJson } from '../lib/workspaceFingerprint'
 import {
   BACKUP_VERSION,
   CANDIDATES_BACKUP_FORMAT,
@@ -14,6 +15,7 @@ import {
   MAX_VERSION_SNAPSHOT_BYTES,
   MAX_VERSIONS_COUNT,
   MAX_WORKSPACE_BACKUP_FILE_BYTES,
+  MAX_WORKSPACE_ID_LENGTH,
   MAX_WORKSPACE_RECORD_BYTES,
   MAX_WORKSPACE_SIDECAR_BYTES,
   VERSIONS_BACKUP_FORMAT,
@@ -84,6 +86,13 @@ const NOW = 1_760_000_000_000
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+function canonicalText(value: unknown): string {
+  const result = canonicalJson(value)
+  expect(result.ok).toBe(true)
+  if (!result.ok) throw new Error(`${result.path}: ${result.message}`)
+  return result.text
 }
 
 function expectOk<T>(result: WorkspaceValidationResult<T>): T {
@@ -638,6 +647,167 @@ describe('F5 checklist', () => {
     expect(expectFailure(validateChecklist({ items, appliedTemplates: [] })).reason).toBe(
       'limit_exceeded',
     )
+  })
+
+  it('keeps legacy checklist items without constraintId and explicit null distinct', () => {
+    const legacy = {
+      items: [makeChecklistItem()],
+      appliedTemplates: [],
+    }
+    const validatedLegacy = expectOk(validateChecklist(legacy))
+    expect('constraintId' in validatedLegacy.items[0]).toBe(false)
+    expect(canonicalText(validatedLegacy)).toBe(canonicalText(legacy))
+
+    const legacyRecord = expectOk(
+      createWorkspaceRecord({
+        workspaceId: 'workspace-legacy',
+        ownerId: 'owner-legacy',
+        trip: makeTrip(),
+        workspaceRevision: 0,
+        now: NOW,
+        sidecar: { ...emptySidecar(), checklist: legacy },
+        budget: null,
+      }),
+    )
+    expect('constraintId' in legacyRecord.sidecar.checklist.items[0]).toBe(false)
+
+    const explicitNull = expectOk(
+      validateChecklist({
+        items: [makeChecklistItem({ constraintId: null })],
+        appliedTemplates: [],
+      }),
+    )
+    expect('constraintId' in explicitNull.items[0]).toBe(true)
+    expect(explicitNull.items[0].constraintId).toBeNull()
+  })
+
+  it('validates constraintId as an optional strict id and keeps unknown fields rejected', () => {
+    const maxId = 'x'.repeat(MAX_WORKSPACE_ID_LENGTH)
+    const valid = expectOk(
+      validateChecklist({
+        items: [
+          makeChecklistItem({ constraintId: 'constraint-1' }),
+          makeChecklistItem({ id: 'check-2', constraintId: maxId }),
+        ],
+        appliedTemplates: [],
+      }),
+    )
+    expect(valid.items.map((item) => item.constraintId)).toEqual(['constraint-1', maxId])
+
+    for (const bad of ['', '   ', 'x'.repeat(MAX_WORKSPACE_ID_LENGTH + 1), 42]) {
+      const result = validateChecklist({
+        items: [{ ...makeChecklistItem(), constraintId: bad }],
+        appliedTemplates: [],
+      })
+      expect(expectFailure(result).reason).toBe('invalid_field')
+    }
+
+    expect(
+      expectFailure(
+        validateChecklist({
+          items: [{ ...makeChecklistItem(), constraintId: 'constraint-1', extra: true }],
+          appliedTemplates: [],
+        }),
+      ).reason,
+    ).toBe('unknown_field')
+    expect(
+      expectFailure(
+        validateChecklist({
+          items: [{ ...makeChecklistItem(), constraint_id: 'constraint-1' }],
+          appliedTemplates: [],
+        }),
+      ).reason,
+    ).toBe('unknown_field')
+  })
+
+  it('preserves constraintId through record, transition, backup and version construction', () => {
+    const checklist = {
+      items: [makeChecklistItem({ constraintId: 'constraint-1' })],
+      appliedTemplates: [],
+    }
+    const sidecar = { ...emptySidecar(), checklist }
+    const created = expectOk(
+      createWorkspaceRecord({
+        workspaceId: 'workspace-link',
+        ownerId: 'owner-link',
+        trip: makeTrip(),
+        workspaceRevision: 0,
+        now: NOW,
+        sidecar,
+        budget: null,
+      }),
+    )
+    expect(created.sidecar.checklist.items[0].constraintId).toBe('constraint-1')
+    expect(
+      expectOk(validateWorkspaceRecord(created)).sidecar.checklist.items[0].constraintId,
+    ).toBe('constraint-1')
+
+    const transitioned = expectOk(commitWorkspaceTransition(created, { sidecar }, NOW + 1))
+    expect(transitioned.sidecar.checklist.items[0].constraintId).toBe('constraint-1')
+
+    const backup = expectOk(
+      validateWorkspaceBackup({
+        format: WORKSPACE_BACKUP_FORMAT,
+        version: BACKUP_VERSION,
+        exportedAt: NOW,
+        workspace: created,
+      }),
+    )
+    expect(backup.workspace.sidecar.checklist.items[0].constraintId).toBe('constraint-1')
+
+    const version = expectOk(validateVersionSnapshot({ ...makeVersion(), sidecar }))
+    expect(version.sidecar.checklist.items[0].constraintId).toBe('constraint-1')
+    const versions = expectOk(createVersionsRecord([version], NOW))
+    expect(versions.items[0].sidecar.checklist.items[0].constraintId).toBe('constraint-1')
+    const versionsBackup = expectOk(
+      validateVersionsBackup({
+        format: VERSIONS_BACKUP_FORMAT,
+        version: BACKUP_VERSION,
+        exportedAt: NOW,
+        versions,
+      }),
+    )
+    expect(
+      versionsBackup.versions.items[0].sidecar.checklist.items[0].constraintId,
+    ).toBe('constraint-1')
+
+    const plain = makeRecord({
+      sidecar: {
+        ...emptySidecar(),
+        checklist: { items: [makeChecklistItem()], appliedTemplates: [] },
+      },
+    })
+    const linked = makeRecord({ sidecar })
+    expect(measureWorkspaceRecordBytes(linked) ?? 0).toBeGreaterThan(
+      measureWorkspaceRecordBytes(plain) ?? 0,
+    )
+  })
+
+  it('keeps dangling constraint ids structurally valid and invalidates owner content guards', () => {
+    const linked = makeRecord({
+      sidecar: {
+        ...emptySidecar(),
+        checklist: {
+          items: [makeChecklistItem({ constraintId: 'constraint-missing' })],
+          appliedTemplates: [],
+        },
+      },
+    })
+    expect(linked.sidecar.constraints.items).toEqual([])
+    expect(validateWorkspaceRecord(linked).ok).toBe(true)
+
+    const owner = expectOk(createWorkspaceOwner(linked, 4))
+    expect(workspaceOwnerMatches(owner, linked, 4)).toBe(true)
+
+    const changed = clone(linked)
+    changed.sidecar.checklist.items[0].constraintId = 'constraint-other'
+    expect(validateWorkspaceRecord(changed).ok).toBe(true)
+    expect(workspaceOwnerMatches(owner, changed, 4)).toBe(false)
+
+    const removed = clone(linked)
+    delete removed.sidecar.checklist.items[0].constraintId
+    expect(validateWorkspaceRecord(removed).ok).toBe(true)
+    expect(workspaceOwnerMatches(owner, removed, 4)).toBe(false)
   })
 })
 

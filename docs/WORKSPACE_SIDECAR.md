@@ -1,15 +1,15 @@
 # 工作区 sidecar 与三个逻辑库契约 v1
 
-> 状态：**S1 公共契约阶段 + R1/C1 最小修订（2026-11-06 00:30）**。本文是唯一权威；代码中的
-> `frontend/src/lib/workspaceTypes.ts` / `workspace.ts` / `workspaceFingerprint.ts`
-> 与本文同步。**`workspaceStorage.ts`、恢复模块、后端 F2 实现不在本阶段交付**；
-> 本文只定契约与可测纯函数，不声称这些能力已经落地。
+> 状态：**S1 公共契约阶段 + R1/C1 最小修订 + F5 constraintId 兼容（2026-11-06 01:10）**。
+> 本文是唯一权威；代码中的 `frontend/src/lib/workspaceTypes.ts` / `workspace.ts` /
+> `workspaceFingerprint.ts` 与本文同步。**`workspaceStorage.ts`、恢复模块、后端 F2
+> 实现不在本阶段交付**；本文只定契约与可测纯函数，不声称这些能力已经落地。
 >
 > 适用基线：`F:/MunderDifflin/Travel-Assistant/LangGraph-Smart-Traval-Assitant`。
-> 契约起草时 HEAD 为 `2cc9d60b7972793975523b4d3778ef6e877109b3`；当前工作区 HEAD
-> 已推进到 `426fb4b221a1aa33bdc8eec37b68bf9634f67454`，该提交只改 7 个旧 UI / E2E
-> 文件，未触及本契约、`backend/**` 或下述基线事实。本文不修改 Trip v1、旧备份
-> 格式、旧会话恢复 v1 读取语义或任何既有 UI。
+> 契约起草时 HEAD 为 `2cc9d60b7972793975523b4d3778ef6e877109b3`；S1 公共契约已
+> 提交到 `2341be4adecd7b8e1b4a3ae38c35edb2198af3d8`（feature/main CI 绿）。本批只
+> 增加 checklist 兼容字段，不改 Trip v1、旧备份格式、旧会话恢复 v1 读取语义或任何
+> 既有 UI。
 
 ---
 
@@ -306,6 +306,9 @@ interface ConstraintsV1 { items: ConstraintItemV1[] }
   `validateConstraintsForScope` 对非 null `stopId` 检查目标日存在性。结构上允许
   dangling `stopId` 以便读出旧数据，但 `trip_plan` 一律要求 null，day/day_tail 绑定
   时不存在即 `invalid_field`；apply 仍要报 H / stale。
+- 删除 / 修改约束只改 `sidecar.constraints`，**不级联删除清单**；F5 通过清单项的
+  `constraintId` 发现 needsRelink，不能按同名 / 相同日期自动重绑；只有用户显式解除
+  关联才清空。清单的 stop/day/date 关联与预约关联相互独立。
 - 约束条数 ≤ 24；F2 发后端前另有 16 KiB payload 上限（见 §11）。
 - `durationMinutes: null` 与 `0` 语义不同；任何 null 都不补 0。
 - `09:00` 可能是后端 `_time_origins=placeholder` 的占位值；本契约只保存原值，不能
@@ -325,6 +328,7 @@ interface ChecklistItemV1 {
   day: number | null
   stopId: string | null
   originalStopId: string | null // stop 被删 / 解绑后保留最后一次已知 id
+  constraintId?: string | null // 缺省 = 旧 v1 未记录；null = 明确未关联
   notes: string | null
   updatedAt: number
 }
@@ -341,6 +345,18 @@ interface ChecklistV1 {
   用「已准备 / 未准备」。
 - 删除被引用的 stop：条目**不删除**；`stopId=null`，`originalStopId` 保留原 id，
   `notes` 追加「需重新关联」提示（由 F5 写）；结构 validator 允许 dangling 引用。
+- `constraintId` 是**可选已知字段**：旧 v1 缺省合法，读取 / 重写不得自动补 `null`，
+  旧 raw / canonical 不变；显式 `null` = 明确未关联。非 null 时复用
+  `ConstraintItemV1.id` 的规则（1..200 字符、非空白），不得另造格式。
+- 关联存在性不在结构 validator：删除 / 修改约束后条目**不删除、不整条损坏**；保留
+  可能 dangling 的 `constraintId`，由 F5 audit 结合当前 constraints 显示 needsRelink。
+  **不得**按同名 / 相同 date/day 自动重绑；只有用户显式 unlink 才写 `null` 或移除。
+  stop/day/date 关联与预约关联独立，拷贝日期或站点不等于建立关联。
+- `constraintId` 必须经 `createWorkspaceRecord` / `validateWorkspaceRecord` / 版本 /
+  workspace 与 versions 备份路径原样保留（含显式 `null`）。旧 reader 不支持该新字段时
+  按既有严格策略 fail closed、保留原 bytes；**不声称旧程序能读新字段**。
+- F6 导出按当前有效清单状态显示；`constraintId` dangling / 未关联时只能显示
+  「需重新关联」，不得写成「预约已确认」。
 - 模板只产生**未勾选**建议；不自动写入，需逐条采纳；`appliedTemplates` 只记录已采纳。
 - 清单最多 300 项；`done` / 清单状态不进 Trip。
 - 清单段损坏不得牵连 Trip；工作区导入 / 备份覆盖清单（见 §6 / §7）。
@@ -435,6 +451,8 @@ interface VersionsRecordV1 {
   明确拒绝，不静默换工作区。
 - 快照里的额外 / 当前工作区有但快照没有的约束等条目，由 F4 列入「需重新确认」，
   不静默套用、不静默丢弃。
+- 快照 sidecar 原样保留 checklist 的可选 `constraintId`（含显式 `null`）；旧快照缺省
+  不补 `null`，旧 reader 不支持该新字段时 fail closed、保留原 bytes。
 - 版本数 10 / 总量 4 MiB / 单快照 2 MiB；超限明确失败，不驱逐旧版本。
 - 版本库独立键；写入不触碰工作区 / 候选库。
 
@@ -461,6 +479,8 @@ interface VersionsRecordV1 {
   daily entry、day anchor、transport、constraints、constraint item、checklist、
   checklist item、apply link、budget、budget row、candidate、candidate record、
   version snapshot、versions record、三个 backup envelope、owner/binding/ack）。
+- 旧 v1 兼容例外：`ChecklistItemV1.constraintId` 是可选的**已知**字段，缺省合法；这
+  不是放宽 unknown field，其它未声明字段仍拒绝。validator 不得把缺省自动补 `null`。
 - `Trip` 例外说明：Trip 是既有 v1 数据模型，唯一门禁是 `checkTripShape`；本契约不
   另造 Trip 的严格投影，也不因为 Trip 既有宽字段而拒绝整个工作区。**新结构**仍然
   拒未知字段。
@@ -491,6 +511,8 @@ interface VersionsRecordV1 {
 - 纯 feature 模块优先接受调用方传入的 id（方便测试与统一撤销）。
 - 引用既有 stop 的 id 可能是旧数据（最多 200 字符）；F1 生成酒店 occurrence 时必须
   遵守既有 id 唯一规则，**不改已有 stop 的冻结 id**。
+- 清单 `constraintId` 复用 `ConstraintItemV1.id` 的 1..200 / 非空白规则；它是弱引用，
+  允许指向已删除约束（dangling），由 F5 audit 提示 needsRelink，不自动重绑。
 
 ---
 
@@ -718,6 +740,9 @@ scope / epoch。任何一项变化 → 确认失效；**不能把 null 补 0 后
 - **不声称**跨三库原子恢复 / 一键全套恢复；不把三个 envelope 合并成一个。
 - 旧 Trip JSON / ICS / Markdown 文件行为不变；新增 sidecar 字段的保存 / 备份 / 恢复
   必须有端到端读回测试（不是只测内存对象）。
+- workspace / versions 备份与导入必须原样保留 `ChecklistItemV1.constraintId`（含显式
+  `null`）；旧记录缺省不补 `null`。旧程序不支持新字段时按严格策略 fail closed、保留原
+  文件，不静默剥离或改写。
 
 ---
 
@@ -829,8 +854,8 @@ scope / epoch。任何一项变化 → 确认失效；**不能把 null 补 0 后
 | **F2** 必去与预约 | `ConstraintsV1`、`ConstraintItemV1`、`validateConstraints`、`validateConstraintsForScope`、`PlanScopeV1`、`createConstraintsBinding`、`constraintsBindingMatches`、`createUnverifiedConstraintsAck`、`unverifiedConstraintsAckMatches`、`validatePlanScope` | `constraints.ts`、`ConstraintsPanel.*`、`docs/CONSTRAINTS.md`；H/U 判定与目标匹配；backend contract tests | 只改 `sidecar.constraints`；候选 apply 前必须重验；`trip_plan` 不伪造 stopId；backend 约束字段按 §11 |
 | **F3** 候选池 | `CandidateItemV1`、`CandidatesRecordV1`、`validateCandidateItem`、`validateCandidatesRecord`、`createCandidatesRecord`、`createApplyLink`、`MAX_CANDIDATES_*` | `candidatePool.ts`、面板、去重提示、独立备份 / 导入 | 只写 `KEY_CANDIDATES`；加入草稿走 `tripDraft`；不写工作区键 |
 | **F4** 版本 | `VersionSnapshotV1`、`VersionsRecordV1`、`validateVersionSnapshot`、`validateVersionsRecord`、`createVersionsRecord`、`commitWorkspaceTransition`、`nextWorkspaceRevision` | `versionSnapshots.ts`、面板、diff、采用 / undo 计划 | 只写 `KEY_VERSIONS`；采用 / 撤销整体 Trip+sidecar+budget，revision 当前 +1 |
-| **F5** 清单 | `ChecklistV1`、`ChecklistItemV1`、`validateChecklist`、`emptyChecklist` | `checklist.ts`、面板、模板建议、重新关联规则 | 只改 `sidecar.checklist`；done 不进 Trip |
-| **F6** 离线页 | `WorkspaceRecordV1` 的只读快照、`validateWorkspaceRecord`、`canonicalJson` / `fingerprintOf`（如需导出绑定） | `offlineTripHtml.ts`、`offlineTripHtmlFile.ts`、面板、`docs/OFFLINE_TRIP_HTML.md` | **只读**当前选定有效快照；不写 storage；不含候选 / 其他版本 / 会话 raw / key；不依赖外链 |
+| **F5** 清单 | `ChecklistV1`、`ChecklistItemV1`（含可选 `constraintId`）、`validateChecklist`、`emptyChecklist` | `checklist.ts`、面板、模板建议、`constraintId` 审计 / needsRelink 规则 | 只改 `sidecar.checklist`；done 不进 Trip；删除约束不自动重绑 |
+| **F6** 离线页 | `WorkspaceRecordV1` 的只读快照、`validateWorkspaceRecord`、`canonicalJson` / `fingerprintOf`（如需导出绑定） | `offlineTripHtml.ts`、`offlineTripHtmlFile.ts`、面板、`docs/OFFLINE_TRIP_HTML.md` | **只读**当前选定有效快照；不写 storage；不含候选 / 其他版本 / 会话 raw / key；不依赖外链；清单 dangling / 未关联只提示，不宣称预约已确认 |
 
 共同约束：
 
@@ -850,7 +875,7 @@ scope / epoch。任何一项变化 → 确认失效；**不能把 null 补 0 后
 
 | 模块 | 稳定导出（本阶段已实现） |
 |---|---|
-| `workspaceTypes.ts` | 三个 `*_STORAGE_KEY`、`*_FORMAT` / `*_VERSION` / `BACKUP_VERSION`、全部 `MAX_*` 常量、`WorkspaceRecordV1` / `WorkspaceSidecarV1` / `AnchorsV1` / `ConstraintsV1` / `ChecklistV1` / `ApplyLinkV1` / `CandidateItemV1` / `CandidatesRecordV1` / `VersionSnapshotV1` / `VersionsRecordV1` / 三个 backup、`WorkspaceFingerprintV1` / `WorkspaceIdentityV1` / `WorkspaceOwnerV1` / `PlanScopeV1` / `ConstraintsBindingV1` / `UnverifiedConstraintsAckV1`、`WorkspaceStoreStatus` |
+| `workspaceTypes.ts` | 三个 `*_STORAGE_KEY`、`*_FORMAT` / `*_VERSION` / `BACKUP_VERSION`、全部 `MAX_*` 常量、`WorkspaceRecordV1` / `WorkspaceSidecarV1` / `AnchorsV1` / `ConstraintsV1` / `ChecklistV1` / `ChecklistItemV1`（含可选 `constraintId`）/ `ApplyLinkV1` / `CandidateItemV1` / `CandidatesRecordV1` / `VersionSnapshotV1` / `VersionsRecordV1` / 三个 backup、`WorkspaceFingerprintV1` / `WorkspaceIdentityV1` / `WorkspaceOwnerV1` / `PlanScopeV1` / `ConstraintsBindingV1` / `UnverifiedConstraintsAckV1`、`WorkspaceStoreStatus` |
 | `workspace.ts`（并 re-export `workspaceTypes`） | `validateAnchors` / `emptyAnchors`、`validateConstraints` / `validateConstraintsForScope` / `emptyConstraints`、`validateChecklist` / `emptyChecklist`、`validateApplyLink(s)` / `createApplyLink`、`validateBudgetSnapshot` / `emptyBudgetSnapshot`、`validateWorkspaceSidecar` / `emptySidecar`、`validateWorkspaceRecord` / `createWorkspaceRecord`、`commitWorkspaceTransition` / `nextWorkspaceRevision`、`validateCandidateItem` / `validateCandidatesRecord` / `createCandidatesRecord`、`validateVersionSnapshot` / `validateVersionsRecord` / `createVersionsRecord`、三个 `validate*Backup`、`validateWorkspaceIdentity` / `workspaceIdentityOf` / `workspaceIdentityMatches`、`captureWorkspaceRuntime` / `workspaceRuntimeRefsMatch` / `WorkspaceRuntimeCaptureV1` / `WorkspaceRuntimeExtrasV1`、`validatePlanScope` / `planScopeMatchesRecord`、`validateWorkspaceOwner` / `createWorkspaceOwner` / `workspaceOwnerMatches`、`validateConstraintsBinding` / `createConstraintsBinding` / `constraintsBindingMatches`、`validateUnverifiedConstraintsAck` / `createUnverifiedConstraintsAck` / `unverifiedConstraintsAckMatches`、`check*Limits` / `measure*`、`createLogicalId` |
 | `workspaceFingerprint.ts` | `canonicalJson`、`fingerprintOf`、`fingerprintsMatch`、`canonicalValuesEqual`、`shortFingerprint`、`isShortFingerprint`、`SHORT_FINGERPRINT_ALGORITHM` |
 
@@ -1062,17 +1087,18 @@ owner 新增；六线不要自行复制 schema 或常量。
 |---|---|
 | `frontend/src/lib/workspaceTypes.ts` | 常量 + 全部 v1 类型（唯一 schema 定义） |
 | `frontend/src/lib/workspaceFingerprint.ts` | canonical JSON + FNV-1a 短指纹 + 全文比较 |
-| `frontend/src/lib/workspace.ts` | 严格 validator / 白名单 builder / 容量测量 / revision transition / owner / binding / ack / plan scope / scope-aware constraints / runtime ref capture |
+| `frontend/src/lib/workspace.ts` | 严格 validator / 白名单 builder / 容量测量 / revision transition / owner / binding / ack / plan scope / scope-aware constraints / runtime ref capture / checklist 可选 constraintId |
 | `frontend/src/__tests__/workspaceFingerprint.test.ts` | canonical / hash / 比较测试 |
-| `frontend/src/__tests__/workspace.test.ts` | 记录 / sidecar / F1-F5 结构 / 容量 / owner / runtime refs / transition / backup 测试 |
+| `frontend/src/__tests__/workspace.test.ts` | 记录 / sidecar / F1-F5 结构 / 容量 / owner / runtime refs / transition / backup / checklist constraintId 兼容测试 |
 | `docs/WORKSPACE_SIDECAR.md` | 本文（唯一权威） |
 
 本阶段实测（仅这两个测试文件 + 目标 TypeScript noEmit）：
 
 - `vitest run src/__tests__/workspace.test.ts src/__tests__/workspaceFingerprint.test.ts --no-cache`：
-  `workspaceFingerprint.test.ts` 9 tests、`workspace.test.ts` 42 tests，合计 **51 passed**
-  （原 48 项全部保留 + R1/C1 新增目标回归）；
-- `tsc -p tsconfig.app.json --composite false --noEmit --pretty false`：通过（无输出）。
+  `workspaceFingerprint.test.ts` 9 tests、`workspace.test.ts` 46 tests，合计 **55 passed**
+  （原 51 项全部保留 + checklist constraintId 兼容 4 项）；
+- `tsc`（scoped 仅本文 5 个前端文件，`--composite false --noEmit`）：通过；当前 moving
+  tree 中其它 owner 的 WIP 类型错误不在本批类型门内。
 - **未跑**：full 前端 suite、build、E2E、backend pytest；**未实现** storage / 恢复 /
   backend；这些不属于本阶段完成态。
 
