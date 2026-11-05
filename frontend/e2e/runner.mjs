@@ -16,6 +16,8 @@ import { createServer as createViteServer } from 'vite'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import {
   createContractServer,
@@ -38,6 +40,14 @@ import {
   runWebSourcesLateAndNarrowScenario,
   setWebSourcesAppOrigin,
 } from './webSourcesScenarios.mjs'
+import {
+  runTailBoundaryReadyScenario,
+  runTailBoundaryNoKeyScenario,
+  runTailBoundaryStopWaitingScenario,
+  runTailBoundaryZeroDistanceScenario,
+  runTailBoundaryNarrowScenario,
+  setTailBoundaryAppOrigin,
+} from './tailBoundaryScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -66,6 +76,18 @@ function listenOnLoopback(server, port = 0) {
       resolveListen(typeof address === 'object' && address ? address.port : port)
     })
   })
+}
+
+/**
+ * 预留一个空闲回环端口给 Vite 用：内核随机分配后立即释放。
+ * 并行 worker 常占着默认 5173，验收进程必须避开固定端口（实际绑定端口仍从
+ * httpServer.address() 读回，不假设任何固定值）。
+ */
+async function reserveLoopbackPort() {
+  const probe = createServer()
+  const port = await listenOnLoopback(probe)
+  await new Promise((resolveClose) => probe.close(() => resolveClose()))
+  return port
 }
 
 function closeServer(server) {
@@ -1002,6 +1024,73 @@ async function scenarioWebSourcesLateAndNarrow() {
   }
 }
 
+/** ───────────────────────── 场景 13–17：后段衔接路线（tailBoundaryScenarios.mjs） ───────────────────────── */
+
+async function scenarioTailBoundaryReady() {
+  const { context, page } = await newOfflineContext('tailReady')
+  const rec = makeStepRecorder('tailReady', 'desktop-1440')
+  try {
+    await runTailBoundaryReadyScenario({ page, rec, control, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios.tailReady = rec.state
+    control.legRefreshMode = null
+    control.legRefreshDelay = null
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioTailBoundaryNoKey() {
+  const { context, page } = await newOfflineContext('tailNoKey')
+  const rec = makeStepRecorder('tailNoKey', 'desktop-1440')
+  try {
+    await runTailBoundaryNoKeyScenario({ page, rec, control, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios.tailNoKey = rec.state
+    control.legRefreshMode = null
+    control.legRefreshDelay = null
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioTailBoundaryStopWaiting() {
+  const { context, page } = await newOfflineContext('tailStop')
+  const rec = makeStepRecorder('tailStop', 'desktop-1440')
+  try {
+    await runTailBoundaryStopWaitingScenario({ page, rec, control, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios.tailStop = rec.state
+    control.legRefreshMode = null
+    control.legRefreshDelay = null
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioTailBoundaryZeroDistance() {
+  const { context, page } = await newOfflineContext('tailZero')
+  const rec = makeStepRecorder('tailZero', 'desktop-1440')
+  try {
+    await runTailBoundaryZeroDistanceScenario({ page, rec, control, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios.tailZero = rec.state
+    control.legRefreshMode = null
+    control.legRefreshDelay = null
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioTailBoundaryNarrow() {
+  const { context, page } = await newOfflineContext('tailNarrow', { width: 390, height: 844 })
+  const rec = makeStepRecorder('tailNarrow', 'mobile-390')
+  try {
+    await runTailBoundaryNarrowScenario({ page, rec, control, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios.tailNarrow = rec.state
+    control.legRefreshMode = null
+    control.legRefreshDelay = null
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1009,6 +1098,9 @@ try {
   stubPort = await listenOnLoopback(stubServer)
   stubOrigin = `http://127.0.0.1:${stubPort}`
 
+  // Vite 端口：预留一个空闲回环端口，避免与并行 worker 的 dev server 抢固定端口；
+  // strictPort=false 兜住「预留后被抢占」的竞态，实际端口从 httpServer 读回。
+  const reservedVitePort = await reserveLoopbackPort()
   vite = await createViteServer({
     configFile: false,
     // 钉死 import.meta.env.VITE_API_BASE 为空串：不读 .env，也不继承 process.env（D 项）
@@ -1018,12 +1110,14 @@ try {
     },
     envDir: false,
     root: frontendRoot,
+    // 依赖预构建缓存写到 Temp 区，不写共享 node_modules/.vite
+    cacheDir: resolve(tmpdir(), 'opencode', 'night-20261105', 'vite-cache'),
     plugins: [react()],
     appType: 'spa',
     server: {
       host: '127.0.0.1',
-      port: 0,
-      strictPort: true,
+      port: reservedVitePort,
+      strictPort: false,
       proxy: { '/api': { target: stubOrigin, changeOrigin: true } },
     },
   })
@@ -1055,6 +1149,12 @@ try {
   await scenarioWebSourcesMain()
   await scenarioWebSourcesFailureModes()
   await scenarioWebSourcesLateAndNarrow()
+  setTailBoundaryAppOrigin(appOrigin)
+  await scenarioTailBoundaryReady()
+  await scenarioTailBoundaryNoKey()
+  await scenarioTailBoundaryStopWaiting()
+  await scenarioTailBoundaryZeroDistance()
+  await scenarioTailBoundaryNarrow()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))
@@ -1095,6 +1195,7 @@ try {
     '/api/trips/plan',
     '/api/trips/days/replan',
     '/api/trips/days/map-refresh',
+    '/api/trips/days/leg-refresh',
     '/api/weather/day',
     '/api/poi-sources/nearby',
     '/api/web-sources/search',

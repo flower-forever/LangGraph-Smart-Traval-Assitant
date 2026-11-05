@@ -28,6 +28,8 @@ import {
   applyDayReplanTail,
   type DayReplanTailApplyResult,
   type DayReplanTailScope,
+  type TailBoundaryCurrent,
+  type TailBoundarySelection,
 } from './lib/dayReplanTail'
 import { replanDay } from './lib/dayReplanApi'
 import {
@@ -1436,20 +1438,34 @@ export default function App() {
    * 绝不直接 setTrip 旧响应。过期、容量、跨天 id 冲突等失败原样返回给面板显示，
    * 当前行程保持不变；成功才采纳新 fork、递增统一 revision 并关闭面板。
    * 应用快照与本地编辑共用一次「撤销应用」，但不写 localStorage。
+   * 带衔接路线的后段应用：第 4 参为已绑定 selection、第 5 参为面板当前实时上下文
+   * （真实 epochs，非哨兵）；两者必须成对出现，且与最新 trip/revision 重新核对，
+   * 任何不配对/缺失都类型化失败，绝不忽略 boundary 走整天或 unknown。
    */
   const handleAiApply = useCallback(
     (
       request: DayReplanRequest,
       response: DayReplanResponse,
       tailScope?: DayReplanTailScope,
+      boundary?: TailBoundarySelection,
+      boundaryCurrent?: TailBoundaryCurrent,
     ): DayReplanApplyResult | DayReplanTailApplyResult => {
       const latestTrip = tripRef.current
       if (!latestTrip) {
         return { ok: false, reason: 'invalid_base', message: '当前没有可应用的行程，AI 候选未应用。' }
       }
+      if (tailScope === undefined && boundary !== undefined) {
+        return {
+          ok: false,
+          reason: 'invalid_boundary',
+          message: '衔接路线必须与后段候选一起应用；当前没有后段范围，衔接路线未应用。',
+        }
+      }
       // 只有 scope === undefined 才走旧整天应用；任何有参（含非法 falsy 值）都走后段
       // 应用路径并由 verifyTailScope 做类型化失败，绝不降级成整天替换。
       // 传入 request 供指纹核对：预览组合与应用用的必须是同一份生成时请求。
+      // App 覆盖 current 的 trip/revision 为最新值（Panel 点击时同步传入真实 epochs），
+      // 不允许从 boundary.owner.captured 反推；纯层会再次核 current 与实参一致。
       const applied =
         tailScope === undefined
           ? applyDayReplan({
@@ -1466,6 +1482,20 @@ export default function App() {
               response,
               currentRevision: tripRevisionRef.current,
               forkTripId: newUuid(),
+              boundary,
+              current:
+                boundary !== undefined
+                  ? {
+                      trip: latestTrip,
+                      candidate: response,
+                      scope: tailScope,
+                      revision: tripRevisionRef.current,
+                      contentEpoch:
+                        boundaryCurrent?.contentEpoch ?? Number.NaN,
+                      inputEpoch: boundaryCurrent?.inputEpoch ?? Number.NaN,
+                      boundaryEpoch: boundaryCurrent?.boundaryEpoch ?? Number.NaN,
+                    }
+                  : undefined,
             })
       if (!applied.ok) return applied
 
@@ -1485,9 +1515,18 @@ export default function App() {
       setActiveStopId((current) =>
         current && applied.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
       )
+      // 'tail' in applied 收窄 union 后按 tail.boundaryKind 分支：采用路线不再说“未重算”。
+      const boundaryKind: 'unavailable' | 'navigation' =
+        'tail' in applied
+          ? (applied as DayReplanTailApplyResult & { ok: true }).tail.boundaryKind
+          : 'unavailable'
+      const tailBoundaryNote =
+        boundaryKind === 'navigation'
+          ? `锚点与新后段首站之间的衔接路线已按两端记录坐标一并应用（高德地图 WGS84，未重新核对地址或地点身份，也不代表实时交通）。`
+          : `锚点衔接路线未重算。`
       setAppliedNotice(
         tailScope !== undefined
-          ? `已把第 ${request.day} 天锚点之后的 AI 后段候选应用到当前行程（新的行程副本）；前 ${tailScope.keptCount} 站与站间路线原样保留，其它天和已有保存记录都没有被它改动，锚点衔接路线未重算。` +
+          ? `已把第 ${request.day} 天锚点之后的 AI 后段候选应用到当前行程（新的行程副本）；前 ${tailScope.keptCount} 站与站间路线原样保留，其它天和已有保存记录都没有被它改动，${tailBoundaryNote}` +
           '这次应用本身不会自动保存，保存仍由你显式操作；导出的日历是新副本，不会更新之前导入的事件。' +
           (applied.omittedWarnings > 0
             ? ` 有 ${applied.omittedWarnings} 条提醒因 ${MAX_REPLAN_WARNINGS} 条上限被省略，具体见行程提醒里的说明。`

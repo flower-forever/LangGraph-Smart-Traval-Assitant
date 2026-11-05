@@ -14,7 +14,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
-import type { ApiError, Trip, TripDay, TravelMode } from '../lib/api'
+import type { ApiError, Trip, TripDay, TripStop, TravelMode } from '../lib/api'
 import {
   buildDayReplanRequest,
   validateDayReplanResponse,
@@ -26,17 +26,29 @@ import {
 } from '../lib/dayReplan'
 import { replanDay } from '../lib/dayReplanApi'
 import {
+  bindTailBoundaryResponse,
+  buildTailBoundaryRequest,
   buildDayReplanTailRequest,
   composeTailPreviewDay,
   type DayReplanTailApplyResult,
   type DayReplanTailScope,
+  type TailBoundaryCurrent,
+  type TailBoundarySelection,
 } from '../lib/dayReplanTail'
+import { refreshLegRoute } from '../lib/legRefreshApi'
+import type { LegRefreshRequest, LegRefreshResponse } from '../lib/legRefresh'
 import './dayReplanPanel.css'
 
 export type DayReplanAdapter = (
   request: DayReplanRequest,
   options?: { signal?: AbortSignal },
 ) => Promise<DayReplanResponse>
+
+/** 后段衔接路线查询 adapter：默认走 legRefreshApi.refreshLegRoute；测试注入 mock。 */
+export type TailLegRefreshAdapter = (
+  request: LegRefreshRequest,
+  options?: { signal?: AbortSignal },
+) => Promise<LegRefreshResponse>
 
 export type DayReplanPanelPlannerAvailability = 'ready' | 'unavailable' | 'unknown'
 
@@ -59,9 +71,13 @@ export interface DayReplanPanelProps {
     request: DayReplanRequest,
     response: DayReplanResponse,
     scope?: DayReplanTailScope,
+    boundary?: TailBoundarySelection,
+    current?: TailBoundaryCurrent,
   ) => DayReplanApplyResult | DayReplanTailApplyResult
   /** 关闭面板：只放弃候选 / 停止等待，不改旧行程。 */
   onClose: () => void
+  /** 衔接路线查询 adapter；缺省用 legRefreshApi.refreshLegRoute（显式点击才请求）。 */
+  refreshTailLeg?: TailLegRefreshAdapter
 }
 
 type PanelError = { kind: 'build' | 'network' | 'server' | 'timeout' | 'abort' | 'bad_payload'; message: string }
@@ -159,6 +175,25 @@ function modeLabel(mode: TravelMode): string {
   return mode === 'walking' ? '步行' : '驾车'
 }
 
+/** 衔接路线查询失败 → 可展示文案；typed 状态原因原样可信（后端固定安全文案）。 */
+function boundaryErrorText(err: unknown): string {
+  if (isApiError(err)) {
+    switch (err.kind) {
+      case 'timeout':
+        return '衔接路线查询超时，本次未返回路线。可以重新获取，或仅应用后段（衔接未知）。'
+      case 'abort':
+        return '已停止等待衔接路线，本次未返回路线。'
+      case 'network':
+        return '连接不上后端服务，无法查询衔接路线。可以稍后重试，或仅应用后段（衔接未知）。'
+      case 'server':
+        return '衔接路线服务暂时不可用，本次未返回路线。可以稍后重试，或仅应用后段（衔接未知）。'
+      case 'bad_payload':
+        return '衔接路线返回没有通过完整性检查，本次结果不使用。可以重新获取，或仅应用后段（衔接未知）。'
+    }
+  }
+  return '衔接路线查询出现问题，本次未返回路线。可以重新获取，或仅应用后段（衔接未知）。'
+}
+
 export default function DayReplanPanel({
   trip,
   dayNumber,
@@ -167,6 +202,7 @@ export default function DayReplanPanel({
   requestDay,
   onApply,
   onClose,
+  refreshTailLeg,
 }: DayReplanPanelProps) {
   const instructionId = useId()
   const instructionErrorId = `${instructionId}-error`
@@ -214,6 +250,27 @@ export default function DayReplanPanel({
   const [applyError, setApplyError] = useState<ApplyError | null>(null)
   const [showAllWarnings, setShowAllWarnings] = useState(false)
 
+  /* ───────── 边界衔接路线（固定端点单段查询）状态与归属守卫 ───────── */
+
+  /**
+   * 已绑定成功的衔接路线（owner + request + ready response）；只存面板内存，
+   * 不写 Trip / draft / budget / Storage。原 Trip / 候选 / scope 失效即随之失效。
+   * epochs/身份守卫与处理函数在下方 contentEpochRef / inputEpoch 就绪之后定义。
+   */
+  const [boundaryEntry, setBoundaryEntry] = useState<TailBoundarySelection | null>(null)
+  const [boundaryPending, setBoundaryPending] = useState(false)
+  const [boundaryError, setBoundaryError] = useState<string | null>(null)
+  const [boundaryNotice, setBoundaryNotice] = useState<string | null>(null)
+  /** 衔接路线查询独立序号与 abort：与候选模型请求互不影响。 */
+  const boundarySeqRef = useRef(0)
+  const boundaryAbortRef = useRef<AbortController | null>(null)
+  /**
+   * 边界路线归属版本（单调）：trip / 候选响应 / scope 任一对象引用（Object.is）、
+   * revision、day 变化即 +1；A→B→A 回到旧值也再 +1，永不复活。渲染期推进，不等 effect。
+   */
+  const boundaryEpochRef = useRef(0)
+  const lastBoundaryIdentityRef = useRef<unknown[] | null>(null)
+
   const seqRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   /** 输入指纹的单调序号：指令/方式/人数/范围/锚点任何变化都 +1，旧候选永久作废（A-B-A 不复活）。 */
@@ -251,6 +308,74 @@ export default function DayReplanPanel({
     epoch: inputEpoch,
   })
   ctxRef.current = { contentEpoch: contentEpochRef.current, epoch: inputEpoch }
+
+  /* ───────── 边界衔接路线：epochs/身份守卫（在 contentEpoch/inputEpoch 就绪后） ───────── */
+
+  // 渲染期推进 boundaryEpoch：不等 effect，同帧锁两类 apply 与旧路线预览。
+  const boundaryIdentity = [
+    trip,
+    candidate?.response ?? null,
+    candidate?.scope ?? null,
+    revision,
+    dayNumber,
+  ]
+  const lastBoundaryIdentity = lastBoundaryIdentityRef.current
+  let boundaryIdentityChanged = true
+  if (lastBoundaryIdentity !== null && lastBoundaryIdentity.length === boundaryIdentity.length) {
+    boundaryIdentityChanged = false
+    for (let i = 0; i < boundaryIdentity.length; i += 1) {
+      if (!Object.is(lastBoundaryIdentity[i], boundaryIdentity[i])) {
+        boundaryIdentityChanged = true
+        break
+      }
+    }
+  }
+  if (boundaryIdentityChanged) {
+    boundaryEpochRef.current += 1
+    lastBoundaryIdentityRef.current = boundaryIdentity
+  }
+
+  /**
+   * 当前实时上下文（每次渲染重建，绝不从 boundary.owner.captured 读取）：
+   * 引用 + revision + 三个单调 epoch，供 build/bind/compose/onApply 独立传入。
+   */
+  const boundaryCurrent: TailBoundaryCurrent = {
+    trip,
+    candidate: candidate?.response ?? (null as unknown as DayReplanResponse),
+    scope: candidate?.scope ?? (null as unknown as DayReplanTailScope),
+    revision,
+    contentEpoch: contentEpochRef.current,
+    inputEpoch,
+    boundaryEpoch: boundaryEpochRef.current,
+  }
+  const boundaryCurrentRef = useRef(boundaryCurrent)
+  boundaryCurrentRef.current = boundaryCurrent
+
+  // 归属引用/epoch 守卫；candidateStale 在下方定义后由 currentBoundary 合成“非 stale”。
+  const boundaryEpochOk =
+    boundaryEntry !== null &&
+    boundaryEntry.owner.trip === trip &&
+    boundaryEntry.owner.candidate === (candidate?.response ?? null) &&
+    boundaryEntry.owner.scope === (candidate?.scope ?? null) &&
+    boundaryEntry.owner.captured.boundaryEpoch === boundaryEpochRef.current &&
+    boundaryEntry.owner.captured.contentEpoch === contentEpochRef.current &&
+    boundaryEntry.owner.captured.inputEpoch === inputEpoch
+
+  // 归属变化 / 卸载：abort 在途路线请求并复位路线状态（展示正确性由渲染期守卫兜底）。
+  useEffect(() => {
+    boundarySeqRef.current += 1
+    boundaryAbortRef.current?.abort()
+    boundaryAbortRef.current = null
+    setBoundaryPending(false)
+    setBoundaryError(null)
+    setBoundaryEntry(null)
+    setBoundaryNotice(null)
+    return () => {
+      boundarySeqRef.current += 1
+      boundaryAbortRef.current?.abort()
+      boundaryAbortRef.current = null
+    }
+  }, [trip, revision, dayNumber, boundaryEpochRef.current])
 
   // trip 对象 / revision / day 变化：abort 在途请求、作废候选；指令保留供核对。
   useEffect(() => {
@@ -446,6 +571,131 @@ export default function DayReplanPanel({
     setApplyError({ message: result.message })
   }
 
+  /* ───────── 边界衔接路线处理 ───────── */
+
+  /** 显式获取衔接路线：一次点击恰一次请求；构造失败只显示原因，不发请求。 */
+  async function handleQueryBoundary() {
+    if (!candidate || candidate.scope === null || candidateInvalid || boundaryPending) return
+    if (currentBoundary !== null) return // 已有有效路线，不需要再查
+    const built = buildTailBoundaryRequest(
+      trip,
+      candidate.scope,
+      candidate.response,
+      revision,
+      boundaryCurrentRef.current,
+    )
+    if (!built.ok) {
+      setBoundaryError(built.message)
+      return
+    }
+    const seq = boundarySeqRef.current + 1
+    boundarySeqRef.current = seq
+    const controller = new AbortController()
+    boundaryAbortRef.current = controller
+    setBoundaryPending(true)
+    setBoundaryError(null)
+    setBoundaryEntry(null)
+    setBoundaryNotice(null)
+    const requestAtStart = built.request
+    const ownerAtStart = built.owner
+    const currentAtStart = boundaryCurrentRef.current
+    try {
+      const response = await (refreshTailLeg ?? refreshLegRoute)(built.request, {
+        signal: controller.signal,
+      })
+      if (
+        boundarySeqRef.current !== seq ||
+        controller.signal.aborted ||
+        boundaryCurrentRef.current.boundaryEpoch !== currentAtStart.boundaryEpoch ||
+        boundaryCurrentRef.current.contentEpoch !== currentAtStart.contentEpoch ||
+        boundaryCurrentRef.current.inputEpoch !== currentAtStart.inputEpoch
+      ) {
+        return
+      }
+      const bound = bindTailBoundaryResponse(
+        ownerAtStart,
+        requestAtStart,
+        response,
+        boundaryCurrentRef.current,
+      )
+      if (!bound.ok) {
+        setBoundaryError(bound.message)
+        return
+      }
+      setBoundaryEntry(bound.selection)
+    } catch (err) {
+      if (
+        boundarySeqRef.current !== seq ||
+        controller.signal.aborted ||
+        boundaryCurrentRef.current.boundaryEpoch !== currentAtStart.boundaryEpoch ||
+        boundaryCurrentRef.current.contentEpoch !== currentAtStart.contentEpoch ||
+        boundaryCurrentRef.current.inputEpoch !== currentAtStart.inputEpoch
+      ) {
+        return
+      }
+      setBoundaryError(boundaryErrorText(err))
+    } finally {
+      if (
+        boundarySeqRef.current === seq &&
+        boundaryCurrentRef.current.boundaryEpoch === currentAtStart.boundaryEpoch &&
+        boundaryCurrentRef.current.contentEpoch === currentAtStart.contentEpoch &&
+        boundaryCurrentRef.current.inputEpoch === currentAtStart.inputEpoch
+      ) {
+        setBoundaryPending(false)
+        if (boundaryAbortRef.current === controller) boundaryAbortRef.current = null
+      }
+    }
+  }
+
+  /** 停止等待衔接路线：只取消本页等待与当前结果；不删 AI 候选、不复活失效状态。 */
+  function stopBoundaryWaiting() {
+    boundarySeqRef.current += 1
+    boundaryAbortRef.current?.abort()
+    boundaryAbortRef.current = null
+    setBoundaryPending(false)
+    setBoundaryEntry(null)
+    setBoundaryNotice(
+      candidateStale
+        ? '已停止等待衔接路线；当前后段候选已失效，不能应用。'
+        : '已停止等待衔接路线；后段候选仍在，可仅应用后段（衔接未知）。',
+    )
+  }
+
+  /** 舍弃衔接路线：候选仍有效时回 unknown 预览；失效候选不受影响也不复活。 */
+  function discardBoundary() {
+    if (candidateStale) return
+    setBoundaryEntry(null)
+    setBoundaryPending(false)
+    setBoundaryError(null)
+    setBoundaryNotice(null)
+  }
+
+  /** 「仅应用后段（衔接未知）」：不带 boundary 走旧链路；失效 selection 绝不当 unknown。 */
+  function handleApplyUnknown() {
+    if (!candidate || candidateInvalid || candidateStale) return
+    const result = onApply(candidate.request, candidate.response, candidate.scope ?? undefined)
+    if (result.ok) return
+    setApplyError({ message: result.message })
+  }
+
+  /** 「应用后段与衔接路线」：携带当前渲染的 boundary + 实时 current；失效直接显示错误。 */
+  function handleApplyBoundary() {
+    if (!candidate || candidateInvalid || candidateStale) return
+    if (currentBoundary === null) {
+      setApplyError({ message: '衔接路线已失效，不能应用；请重新获取，或仅应用后段（衔接未知）。' })
+      return
+    }
+    const result = onApply(
+      candidate.request,
+      candidate.response,
+      candidate.scope ?? undefined,
+      currentBoundary,
+      boundaryCurrentRef.current,
+    )
+    if (result.ok) return
+    setApplyError({ message: result.message })
+  }
+
   if (!day) {
     return (
       <section className="drp" aria-label="AI 调整单日安排">
@@ -478,6 +728,39 @@ export default function DayReplanPanel({
     (candidate.inputEpoch !== inputEpoch ||
       candidate.contentEpoch !== contentEpochRef.current ||
       currentRequest.parent.revision !== revision)
+
+  // 渲染期守卫（在 candidateStale 定义后合成）：失效归属的路线预览与两类 apply 同帧锁死。
+  const currentBoundary: TailBoundarySelection | null =
+    boundaryEpochOk && !candidateStale ? boundaryEntry : null
+
+  // 查询按钮的前置条件：候选有效、无在途查询、无已绑定路线、锚点与候选首站都有
+  // 合法记录坐标且 id 可用于衔接接口（≤100 字、非空白、无控制字符）——缺一禁用并解释。
+  const boundaryQueryStops = (() => {
+    if (candidate === null || candidate.scope === null) return null
+    const baseDay = trip.days.find((d) => d.day === candidate.scope?.day) ?? null
+    const anchorStop = baseDay?.stops[candidate.scope.keptCount - 1] ?? null
+    const tailFirstStop = candidate.response.day.stops[0] ?? null
+    return { anchorStop, tailFirstStop }
+  })()
+  const boundaryStopUsable = (stop: TripStop | null | undefined): boolean => {
+    if (!stop || stop.location === null) return false
+    const { lng, lat } = stop.location
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false
+    if (lng < -180 || lng > 180 || lat < -90 || lat > 90) return false
+    if (stop.id.length < 1 || stop.id.length > 100 || stop.id.trim().length === 0) return false
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029]/.test(stop.id)) return false
+    return true
+  }
+  const boundaryQueryReady =
+    currentBoundary === null &&
+    candidate !== null &&
+    !candidateStale &&
+    candidateInvalid === null &&
+    !boundaryPending &&
+    candidate.scope !== null &&
+    boundaryStopUsable(boundaryQueryStops?.anchorStop) &&
+    boundaryStopUsable(boundaryQueryStops?.tailFirstStop)
 
   return (
     <section className="drp" aria-label="AI 调整单日安排">
@@ -669,12 +952,24 @@ export default function DayReplanPanel({
           onShowAllWarnings={() => setShowAllWarnings(true)}
           applyError={applyError}
           canApply={canApply && !candidateStale}
-          onApply={handleApply}
           onDiscard={() => {
             setCandidate(null)
             setCandidateInvalid(null)
             setApplyError(null)
           }}
+          boundaryEntry={currentBoundary}
+          boundaryCurrent={boundaryCurrent}
+          boundaryPending={boundaryPending}
+          boundaryError={boundaryError}
+          boundaryNotice={boundaryNotice}
+          boundaryQueryReady={boundaryQueryReady}
+          onQueryBoundary={() => {
+            void handleQueryBoundary()
+          }}
+          onStopBoundary={stopBoundaryWaiting}
+          onDiscardBoundary={discardBoundary}
+          onApplyUnknown={handleApplyUnknown}
+          onApplyBoundary={handleApplyBoundary}
         />
       ) : currentCandidate ? (
         <div className="drp-preview" aria-label="候选预览">
@@ -808,8 +1103,18 @@ function TailPreview({
   onShowAllWarnings,
   applyError,
   canApply,
-  onApply,
   onDiscard,
+  boundaryEntry,
+  boundaryCurrent,
+  boundaryPending,
+  boundaryError,
+  boundaryNotice,
+  boundaryQueryReady,
+  onQueryBoundary,
+  onStopBoundary,
+  onDiscardBoundary,
+  onApplyUnknown,
+  onApplyBoundary,
 }: {
   trip: Trip
   scope: DayReplanTailScope
@@ -823,10 +1128,31 @@ function TailPreview({
   onShowAllWarnings: () => void
   applyError: ApplyError | null
   canApply: boolean
-  onApply: () => void
   onDiscard: () => void
+  /** 当前仍有效的衔接路线；null 表示尚无路线或已失效（渲染期守卫结果）。 */
+  boundaryEntry: TailBoundarySelection | null
+  /** 当前实时上下文；带 boundary 的 compose 必须传入，纯层要求 current 与 boundary 成对。 */
+  boundaryCurrent: TailBoundaryCurrent
+  boundaryPending: boolean
+  boundaryError: string | null
+  boundaryNotice: string | null
+  /** 是否允许发起衔接路线查询（候选有效且无在途查询）。 */
+  boundaryQueryReady: boolean
+  onQueryBoundary: () => void
+  onStopBoundary: () => void
+  onDiscardBoundary: () => void
+  onApplyUnknown: () => void
+  onApplyBoundary: () => void
 }) {
-  const composed = composeTailPreviewDay(trip, scope, response, currentRevision)
+  // 带 boundary 时用同一纯组合（失效 selection 会让 composed 失败，绝不降级 unknown 预览）。
+  const composed = composeTailPreviewDay(
+    trip,
+    scope,
+    response,
+    currentRevision,
+    boundaryEntry ?? undefined,
+    boundaryEntry !== undefined ? boundaryCurrent : undefined,
+  )
   if (!composed.ok) {
     return (
       <p className="drp-error" role="alert">
@@ -842,6 +1168,8 @@ function TailPreview({
     stops: currentDay.stops.slice(0, scope.keptCount),
     legs: currentDay.legs.slice(0, Math.max(scope.keptCount - 1, 0)),
   }
+  const boundaryLeg = composed.day.legs[scope.keptCount - 1]
+  const hasBoundaryRoute = boundaryLeg !== undefined && boundaryLeg.route_type === 'navigation'
   return (
     <div className="drp-preview" aria-label="候选预览">
       <h4 className="drp-preview-title">后段候选预览（尚未应用到行程）</h4>
@@ -863,6 +1191,11 @@ function TailPreview({
           {notice}
         </p>
       ))}
+      {hasBoundaryRoute ? (
+        <p className="drp-notice" role="note">
+          {`衔接路线来源：高德地图（WGS84），按两端记录坐标取得；未重新核对地址或地点身份，也不代表实时交通。距离 ${boundaryLeg.distance_m ?? '未知'} 米、耗时${boundaryLeg.duration_minutes == null ? '未知' : `约 ${boundaryLeg.duration_minutes} 分钟`}。`}
+        </p>
+      ) : null}
       <p className="drp-map-status">
         <strong>组合后地图数据：</strong>
         {MAP_STATUS_TEXT[composed.mapStatus]}
@@ -892,26 +1225,93 @@ function TailPreview({
           ) : null}
         </div>
       ) : null}
+
+      {/* ───────── 衔接路线查询（显式一次，无自动请求/重试） ───────── */}
+      {boundaryPending ? (
+        <div className="drp-actions">
+          <button type="button" className="drp-btn" onClick={onStopBoundary}>
+            停止等待衔接路线
+          </button>
+          <p className="drp-hint">
+            已提交的衔接路线查询会继续在服务端处理；停止等待只是不再等它，不保证后端或上游已停止或不计费。
+          </p>
+        </div>
+      ) : null}
+      {boundaryError ? (
+        <p className="drp-error" role="alert">
+          {boundaryError}
+        </p>
+      ) : null}
+      {boundaryNotice ? (
+        <p className="drp-notice" role="note">
+          {boundaryNotice}
+        </p>
+      ) : null}
+      {!hasBoundaryRoute && !boundaryPending ? (
+        <div className="drp-actions">
+          <button
+            type="button"
+            className="drp-btn"
+            onClick={onQueryBoundary}
+            disabled={!boundaryQueryReady}
+          >
+            获取衔接路线
+          </button>
+          {!boundaryQueryReady ? (
+            <p className="drp-hint">
+              锚点或新后段首站缺少记录坐标（或站点 id 无法用于衔接查询）：无法按固定端点查询衔接路线；不会按地址重新定位、不会改名或截断、不会把缺失补成
+              0。仍可仅应用后段（衔接未知）。
+            </p>
+          ) : (
+            <p className="drp-hint">
+              按锚点与新后段首站记录的 WGS84 坐标向高德地图查询一次衔接路线（walking/driving
+              与候选范围一致）；不会重新定位地址。不会自动查询或重试。
+            </p>
+          )}
+        </div>
+      ) : null}
+      {hasBoundaryRoute ? (
+        <div className="drp-actions">
+          <button type="button" className="drp-btn" onClick={onDiscardBoundary}>
+            舍弃衔接路线
+          </button>
+          <p className="drp-hint">舍弃后回到「衔接路线未重算」的候选预览，可重新显式获取。</p>
+        </div>
+      ) : null}
+
       {applyError ? (
         <p className="drp-error" role="alert">
           {applyError.message}
         </p>
       ) : null}
       <div className="drp-actions">
+        {hasBoundaryRoute ? (
+          <button
+            type="button"
+            className="drp-btn drp-btn-primary"
+            onClick={onApplyBoundary}
+            disabled={!canApply || boundaryPending}
+          >
+            应用后段与衔接路线
+          </button>
+        ) : null}
         <button
           type="button"
-          className="drp-btn drp-btn-primary"
-          onClick={onApply}
-          disabled={!canApply}
+          className="drp-btn"
+          onClick={onApplyUnknown}
+          disabled={!canApply || boundaryPending}
         >
-          应用后段候选
+          仅应用后段（衔接未知）
         </button>
         <button type="button" className="drp-btn" onClick={onDiscard}>
           放弃候选
         </button>
       </div>
       <p className="drp-hint">
-        应用后段候选只替换锚点之后的部分：前段站点、时刻与站间路线原样保留，其它天不变；锚点衔接路线未重算。应用前当前行程不会被改动，也不会自动保存。
+        {hasBoundaryRoute
+          ? '「应用后段与衔接路线」会把锚点到新后段首站的衔接路线一并应用：前段站点、时刻与站间路线原样保留，其它天不变；衔接路线按两端记录坐标取得，未核对地点身份。'
+          : '「仅应用后段（衔接未知）」只替换锚点之后的部分：前段站点、时刻与站间路线原样保留，其它天不变；锚点衔接路线未重算。'}{' '}
+        应用前当前行程不会被改动，也不会自动保存。
       </p>
     </div>
   )
