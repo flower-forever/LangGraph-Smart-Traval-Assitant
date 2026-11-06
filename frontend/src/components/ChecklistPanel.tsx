@@ -39,6 +39,7 @@ import {
   linkChecklistItemToStop,
   listChecklistTemplateSuggestions,
   markChecklistItemNeedsRelink,
+  reconfirmChecklistItemWithConstraint,
   setChecklistItemDone,
   unlinkChecklistItem,
   unlinkChecklistItemFromConstraint,
@@ -60,6 +61,7 @@ export type ChecklistChangeAction =
   | 'delete'
   | 'template'
   | 'relink'
+  | 'reconfirm-constraint'
   | 'unlink'
   | 'unlink-constraint'
   | 'undo'
@@ -497,6 +499,46 @@ export default function ChecklistPanel({
     }
   }
 
+  /**
+   * 逐条「按当前预约重新核对」：只有这个动作才会把当前约束声明的锚点写回该条目，
+   * 并由 audit 逐条解除它的 constraint_changed 提示。它不等于上面的「标记」，
+   * 也影响不到关联同一约束的其它任务。
+   */
+  const handleReconfirmConstraint = async (issue: ChecklistRelinkIssue) => {
+    if (!ready || pending) return
+    const constraint =
+      typeof issue.refId === 'string' ? (constraintById.get(issue.refId) ?? null) : null
+    if (constraint === null) {
+      setError('当前约束里找不到这条预约；「标记需重新关联」不能当成重新核对。')
+      return
+    }
+    const result = reconfirmChecklistItemWithConstraint(checklist, issue.itemId, constraint, timestamp())
+    if (!result.ok) {
+      setError(result.message)
+      return
+    }
+    const nextItem = result.value.items.find((entry) => entry.id === issue.itemId)
+    if (await commitMutation(result, { action: 'reconfirm-constraint', itemId: issue.itemId })) {
+      if (nextItem && editingId === issue.itemId) {
+        setDraft((previous) => ({
+          ...previous,
+          date: nextItem.date ?? '',
+          day: nextItem.day === null ? '' : String(nextItem.day),
+          stopId: nextItem.stopId ?? '',
+          notes: nextItem.notes ?? '',
+        }))
+        setBaseline((previous) => ({
+          ...previous,
+          date: nextItem.date ?? '',
+          day: nextItem.day === null ? '' : String(nextItem.day),
+          stopId: nextItem.stopId ?? '',
+          notes: nextItem.notes ?? '',
+        }))
+      }
+      setNotice('已按当前预约重新核对；该条目的复核提示解除，其它任务不受影响。')
+    }
+  }
+
   const handleUndo = async () => {
     if (!ready || pending || !undoAvailable || !undo) return
     await commit(undo.before, { action: 'undo' })
@@ -613,14 +655,26 @@ export default function ChecklistPanel({
                   {issue.reason === 'stop_unlinked' ? (
                     <span className="chk-tag">已标记需重新关联</span>
                   ) : (
-                    <button
-                      type="button"
-                      className="chk-btn chk-btn-small"
-                      onClick={() => handleRelinkNotice(issue)}
-                      disabled={disabled}
-                    >
-                      标记需重新关联
-                    </button>
+                    <span className="chk-audit-actions">
+                      <button
+                        type="button"
+                        className="chk-btn chk-btn-small"
+                        onClick={() => handleRelinkNotice(issue)}
+                        disabled={disabled}
+                      >
+                        标记需重新关联
+                      </button>
+                      {issue.reason === 'constraint_changed' ? (
+                        <button
+                          type="button"
+                          className="chk-btn chk-btn-small"
+                          onClick={() => handleReconfirmConstraint(issue)}
+                          disabled={disabled}
+                        >
+                          按当前预约重新核对
+                        </button>
+                      ) : null}
+                    </span>
                   )}
                 </li>
               ))}

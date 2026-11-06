@@ -633,3 +633,47 @@ describe('保存 / 导出 / 导入与只读状态', () => {
     expect(window.localStorage.length).toBe(0)
   })
 })
+
+describe('加入草稿预览 · 无关渲染不失效 / 失效时显式状态', () => {
+  it('同 draft / 同 record / 同 storageRevision 的无关 rerender 不作废预览，确认仍可操作', async () => {
+    const user = userEvent.setup()
+    const candidate = makeCandidate({ name: '无关渲染候选' })
+    const draft = makeDraft()
+    const props: HarnessProps = {
+      initialRecord: makeRecord([candidate]),
+      draft,
+    }
+    const { rerender } = render(<Harness {...props} />)
+    await openDraftAdd(user, candidate.id, 2, '10:00', '')
+    expect(screen.getByTestId('candidate-pool-proposal')).toBeInTheDocument()
+
+    // 无关 rerender：props 逐字相同（对应 App 切日期页签等纯显示态变化）
+    rerender(<Harness {...props} />)
+    expect(screen.getByTestId('candidate-pool-proposal')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认加入草稿' }))
+    expect(screen.queryByTestId('candidate-pool-proposal')).toBeNull()
+  })
+
+  it('真实上下文变化失效预览时：旧成功消息清除，显示「预览已失效，请重新生成预览」', async () => {
+    const user = userEvent.setup()
+    const candidate = makeCandidate({ name: '失效提示候选' })
+    const draft = makeDraft()
+    const props: HarnessProps = {
+      initialRecord: makeRecord([candidate]),
+      draft,
+    }
+    const { rerender } = render(<Harness {...props} />)
+    await openDraftAdd(user, candidate.id, 2, '10:00', '')
+    expect(screen.getByTestId('candidate-pool-proposal')).toBeInTheDocument()
+    expect(screen.getByText(/已生成加入草稿的预览/)).toBeInTheDocument()
+
+    const changedDraft: TripDraft = { ...draft, revision: draft.revision + 1 }
+    rerender(<Harness {...props} draft={changedDraft} />)
+    await waitFor(() => {
+      expect(screen.queryByTestId('candidate-pool-proposal')).toBeNull()
+    })
+    // 旧成功消息不再残留
+    expect(screen.queryByText(/已生成加入草稿的预览/)).toBeNull()
+    expect(screen.getByText(/预览已失效，请重新生成预览/)).toBeInTheDocument()
+  })
+})

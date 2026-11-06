@@ -170,6 +170,19 @@ function appendNote(notes: string | null, message: string): string | null {
   return notes === null || notes.length === 0 ? message : `${notes}\n${message}`
 }
 
+/**
+ * 只移除「一行恰好等于该生成标记」的内容（首个匹配），其余行原样保留。
+ * 用户手写文本永远不会被此函数删除；找不到时原样返回。
+ */
+function removeNoteLine(notes: string | null, message: string): string | null {
+  if (notes === null) return null
+  const lines = notes.split('\n')
+  const index = lines.indexOf(message)
+  if (index === -1) return notes
+  const next = [...lines.slice(0, index), ...lines.slice(index + 1)].join('\n')
+  return next.length === 0 ? null : next
+}
+
 /* ───────── 新增 / 编辑 / 勾选 / 删除 ───────── */
 
 export interface ChecklistItemInput {
@@ -417,10 +430,12 @@ export function unlinkChecklistItemFromConstraint(
 }
 
 /**
- * 用户显式确认后标记「需重新关联」：
+ * 标记「需重新关联」（只标记，不承担确认）：
  * - stop 已删 / 已解绑 → stopId 置空，原 id 保留在 originalStopId；
  * - 约束已删 / 已变更 → 保留 `constraintId`（dangling 也保留）与日期 / 天 / stop，
  *   只追加复核提示；任务与 done 都不丢，不自动绑定别的约束。
+ * 标记不会解除任何提示；只有「按当前预约重新核对」（reconfirmChecklistItemWithConstraint）
+ * 才会在核对后由 audit 逐条解除该条目的 constraint_changed 提示。
  */
 export function markChecklistItemNeedsRelink(
   checklist: ChecklistV1,
@@ -456,6 +471,70 @@ export function checklistItemNeedsRelink(item: ChecklistItemV1): boolean {
   if (item.stopId === null && item.originalStopId !== null) return true
   if (item.notes === null) return false
   return Object.values(CHECKLIST_RELINK_NOTES).some((note) => item.notes?.includes(note) === true)
+}
+
+/**
+ * 条目自身锚点是否已与「当前约束声明的锚点」一致。
+ * 约束未声明（null）的日期 / 天 / 地点不参与核对；声明了的字段必须逐项相等。
+ * 这是「该条目已按当前预约重新核对」的持久表达：重新核对动作把声明锚点写回条目，
+ * 约束再次变化时条目锚点失配，提示自然恢复。不比较标题 / 时间端 / priority。
+ */
+export function checklistItemAnchorsMatchConstraint(
+  item: ChecklistItemV1,
+  constraint: ConstraintItemV1,
+): boolean {
+  if (constraint.day !== null && item.day !== constraint.day) return false
+  if (constraint.startDate !== null && item.date !== constraint.startDate) return false
+  if (constraint.stopId !== null && item.stopId !== constraint.stopId) return false
+  return true
+}
+
+/**
+ * 用户显式「按当前预约重新核对」（逐条）：
+ * - 只对已用同一真实 `constraintId` 关联该约束的条目生效；不同 ID 一律 typed 失败，
+ *   本函数不是改绑，不得当换约束能力用。
+ * - 把当前约束**声明了的** day / startDate / stopId 写回条目（`null` = 未声明，
+ *   保留条目原值，不清用户手工锚点；声明 stop 时清 `originalStopId`），
+ *   `originalStopId` 语义与 linkChecklistItemToConstraint 一致）；
+ * - 移除本动作可解决的生成标记 `constraint_changed`，其余生成标记与用户文本原样保留；
+ * - done / 标题 / 用户备注不改；previousConstraints 全局快照不在本函数内清除——
+ *   每条任务是否仍有提示由 `auditChecklistLinks` 按各自锚点逐条判定。
+ */
+export function reconfirmChecklistItemWithConstraint(
+  checklist: ChecklistV1,
+  id: string,
+  constraint: ConstraintItemV1,
+  now: number,
+): ChecklistMutationResult {
+  const current = findItem(checklist, id)
+  if (!current) {
+    return fail('item_not_found', '要重新核对的清单项不存在；原清单保持不变。', '$.items')
+  }
+  if (current.constraintId !== constraint.id) {
+    return fail(
+      'invalid_input',
+      '该清单项没有用同一约束 ID 关联这条预约；「按当前预约重新核对」不是改绑。',
+      '$.items',
+    )
+  }
+  const nextItem: ChecklistItemV1 = {
+    ...current,
+    // 只写回当前约束**声明了的**锚点（null = 未声明，保留条目原值）；
+    // 三个字段策略一致，不用 `||` 合并（避免吞掉合法的 0 / 空串类输入，
+    // 也避免把「未声明」当成「清空用户手工锚点」）。
+    day: constraint.day === null ? current.day : constraint.day,
+    date: constraint.startDate === null ? current.date : constraint.startDate,
+    stopId: constraint.stopId === null ? current.stopId : constraint.stopId,
+    originalStopId: constraint.stopId === null ? current.originalStopId : null,
+    notes: removeNoteLine(current.notes, CHECKLIST_RELINK_NOTES.constraint_changed),
+    updatedAt: now,
+  }
+  return finish(
+    copyChecklist(
+      checklist.items.map((item) => (item.id === id ? nextItem : item)),
+      checklist.appliedTemplates,
+    ),
+  )
 }
 
 /* ───────── 关联审计（纯函数，不写任何状态） ───────── */
@@ -589,7 +668,13 @@ export function auditChecklistLinks(
         continue
       }
       const previous = previousById.get(constraintId)
-      const changed = previous !== undefined && constraintAnchorsDiffer(previous, current)
+      // 逐条判定：条目锚点已与当前约束声明一致 → 该条目已按当前预约重新核对，
+      // 不再提示；其它同 constraintId 条目不受影响（无全局 baseline ack）。
+      const reconfirmedAgainstCurrent = checklistItemAnchorsMatchConstraint(item, current)
+      const changed =
+        previous !== undefined &&
+        constraintAnchorsDiffer(previous, current) &&
+        !reconfirmedAgainstCurrent
       if (changed) {
         push({
           itemId: item.id,

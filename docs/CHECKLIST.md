@@ -125,6 +125,7 @@ applyChecklistTemplate(checklist, templateId, {
 | stop 被删 | `auditChecklistLinks` 报 `stop_deleted`；用户点「标记需重新关联」后调 `markChecklistItemNeedsRelink`，保留任务与 done |
 | 约束被删 | 当前 constraints 存在且条目的非空 `constraintId` 找不到对应 ID → `constraint_deleted`；`markChecklistItemNeedsRelink(..., 'constraint_deleted')` 只追加复核备注，**保留 dangling ID、日期 / 天 / stop、任务与 done** |
 | 约束变更 | 传入 `previousConstraints` 且同 ID 的 `day` / `startDate` / `stopId` 变化 → `constraint_changed`；同样保留任务与 ID，只追加复核备注 |
+| 逐条重新核对 | `reconfirmChecklistItemWithConstraint(checklist, id, constraint, now)`：**仅当**条目 `constraintId === constraint.id`；把当前约束**声明了的** `day` / `startDate` / `stopId` 写回条目（未声明字段保留原值；约束声明 stop 时清 `originalStopId`），并移除生成标记 `constraint_changed`；done / 标题 / 用户备注与其它生成标记原样保留。ID 不同 → `invalid_input` typed 失败，本函数不是改绑 |
 
 **精确外键语义（Important-1 修复）**：
 
@@ -146,6 +147,20 @@ applyChecklistTemplate(checklist, templateId, {
 
 `checklistItemNeedsRelink(item)` 用于列表标记：`stopId=null && originalStopId!=null`
 或备注内已含固定提示文案（含 `constraint_deleted` / `constraint_changed`）。
+
+**标记 ≠ 确认（per-item 语义，2026-11-06 修订）**：
+
+- `markChecklistItemNeedsRelink` 只追加生成标记，**不承担确认**：不改日期 / 天 / stop /
+  done / constraintId，也不会让任何提示消失。
+- `checklistItemAnchorsMatchConstraint(item, constraint)`：条目自身锚点是否与当前约束
+  **声明了的**锚点逐项一致（约束未声明的 null 字段不参与核对）。这是「该条目已按当前
+  预约重新核对」的持久表达，随条目落盘，reload 后仍由 audit 依据同样数据判定。
+- `auditChecklistLinks` 的 `constraint_changed` 按条目逐条判定：`previous !== current`
+  且条目锚点与当前约束不一致才提示。逐条重新核对只解除该条目；同 constraintId 的
+  其它条目保留自己的旧锚与提示；普通勾 done / 无关编辑 / 仅再次选择同 ID 都不解除；
+  约束再次变化时，已核对到旧值的条目重新进入提示。
+- 没有全局 baseline ack：`previousConstraints` 快照只用于检测变化本身，任何 UI 动作
+  都不得整体推进它来消除提示。
 
 ### 3.5 F6 有效清单接口
 

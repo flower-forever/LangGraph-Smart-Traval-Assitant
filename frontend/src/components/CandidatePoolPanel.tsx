@@ -238,6 +238,8 @@ export default function CandidatePoolPanel({
   const [addDuration, setAddDuration] = useState('')
   const [proposal, setProposal] = useState<CandidateDraftProposal | null>(null)
   const [proposalError, setProposalError] = useState<string | null>(null)
+  /** 上下文真实变化后旧预览被作废时的显式状态；挂载首跑不提示。 */
+  const [previewInvalid, setPreviewInvalid] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const previewContextRef = useRef<{
     recordKey: string
@@ -246,16 +248,35 @@ export default function CandidatePoolPanel({
   } | null>(null)
 
   const emittedKeyRef = useRef<string | null>(null)
+  const previewContextKeyRef = useRef<{
+    recordKey: string
+    draftKey: string
+    storageRevisionKey: string
+  } | null>(null)
   const recordKey = useMemo(() => recordKeyOf(record), [record])
   const draftKey = useMemo(() => draftKeyOf(draft), [draft])
   const storageRevisionKey =
     storageRevision === undefined || storageRevision === null ? 'null' : String(storageRevision)
 
   // 候选库、草稿或父级 owner raw / revision 变化 → 旧预览立即失效。
+  // 只在「真实外部上下文变化」时给出显式失效状态并清掉旧成功消息；挂载首跑不提示，
+  // 面板自己刚提交的候选库编辑（emittedKeyRef 命中）也不改写消息状态，只按原行为清预览。
   useEffect(() => {
+    const previous = previewContextKeyRef.current
+    previewContextKeyRef.current = { recordKey, draftKey, storageRevisionKey }
     previewContextRef.current = null
     setProposal(null)
     setProposalError(null)
+    if (previous === null) return
+    const recordChangedExternally =
+      recordKey !== previous.recordKey && emittedKeyRef.current !== recordKey
+    const draftChanged = draftKey !== previous.draftKey
+    const storageChanged = storageRevisionKey !== previous.storageRevisionKey
+    if (recordChangedExternally || draftChanged || storageChanged) {
+      // 旧成功消息（如「已生成预览」）随失效一起清除，不再残留误导
+      setMessage(null)
+      setPreviewInvalid('候选库、草稿或存储 owner revision 已变化；预览已失效，请重新生成预览。')
+    }
   }, [recordKey, draftKey, storageRevisionKey])
 
   // 外部替换记录时，本组件的单步撤销快照也失效，避免把旧库写回去。
@@ -585,6 +606,7 @@ export default function CandidatePoolPanel({
     previewContextRef.current = { recordKey, draftKey, storageRevisionKey }
     setProposal(result.value)
     setProposalError(null)
+    setPreviewInvalid(null)
     setSuccess('已生成加入草稿的预览；尚未写入任何行程或存储。')
     onPreview?.(result.value)
   }
@@ -607,6 +629,7 @@ export default function CandidatePoolPanel({
     previewContextRef.current = null
     setProposal(null)
     setProposalError(null)
+    setPreviewInvalid(null)
     setAddCandidateId(null)
     setSuccess('已把这次加入交给父级草稿；本面板没有修改 Trip，也未写存储。')
   }
@@ -1119,6 +1142,7 @@ export default function CandidatePoolPanel({
                     previewContextRef.current = null
                     setProposal(null)
                     setProposalError(null)
+                    setPreviewInvalid(null)
                   }}
                 >
                   取消加入
@@ -1133,6 +1157,12 @@ export default function CandidatePoolPanel({
           {proposalError ? (
             <p className="cpl-message cpl-message-error" role="alert">
               {proposalError}
+            </p>
+          ) : null}
+
+          {previewInvalid !== null && proposal === null ? (
+            <p className="cpl-message" role="status">
+              {previewInvalid}
             </p>
           ) : null}
 

@@ -362,3 +362,9 @@
   color: var(--color-muted);
   white-space: pre-wrap;
 }
+
+.chk-audit-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}

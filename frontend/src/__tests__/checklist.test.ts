@@ -18,6 +18,7 @@ import {
   applyChecklistTemplate,
   auditChecklistLinks,
   buildEffectiveChecklist,
+  checklistItemAnchorsMatchConstraint,
   checklistItemConstraintState,
   checklistItemNeedsRelink,
   checklistSummary,
@@ -29,6 +30,7 @@ import {
   markChecklistItemNeedsRelink,
   measureChecklistBytes,
   planConstraintRemovalImpact,
+  reconfirmChecklistItemWithConstraint,
   setChecklistItemDone,
   toggleChecklistItem,
   unlinkChecklistItem,
@@ -774,5 +776,310 @@ describe('checklist effective view for F6', () => {
   it('summarizes prepared / pending without touching Trip', () => {
     const checklist = makeChecklist([makeItem({ id: 'a', done: true }), makeItem({ id: 'b' })])
     expect(checklistSummary(checklist)).toEqual({ total: 2, prepared: 1, pending: 1 })
+  })
+})
+
+describe('F5 relink 语义：标记只是标记，逐条「按当前预约重新核对」才解除', () => {
+  const anchorBefore = makeConstraint({
+    id: 'C',
+    kind: 'fixed_window',
+    title: '博物馆预约',
+    day: 1,
+    stopId: 's1',
+    startDate: '2026-04-03',
+    endDate: '2026-04-03',
+  })
+  const anchorAfter = makeConstraint({
+    id: 'C',
+    kind: 'fixed_window',
+    title: '博物馆预约',
+    day: 1,
+    stopId: 's2',
+    startDate: '2026-04-04',
+    endDate: '2026-04-04',
+  })
+  const currentConstraints = { items: [anchorAfter] }
+  const previousConstraints = { items: [anchorBefore] }
+
+  function twoLinked(): ChecklistV1 {
+    return makeChecklist([
+      makeItem({
+        id: 'i1',
+        category: 'appointment',
+        constraintId: 'C',
+        done: true,
+        date: '2026-04-03',
+        day: 1,
+        stopId: 's1',
+        notes: '手工备注A',
+      }),
+      makeItem({
+        id: 'i2',
+        category: 'appointment',
+        constraintId: 'C',
+        done: false,
+        date: '2026-04-03',
+        day: 1,
+        stopId: 's1',
+        notes: '手工备注B',
+      }),
+    ])
+  }
+
+  it('P2 固化：mark 只追加生成标记，date / day / stop / done / constraintId 全部原值', () => {
+    const snapshot = JSON.stringify(twoLinked())
+    const marked = expectOk(markChecklistItemNeedsRelink(twoLinked(), 'i1', 'constraint_changed', LATER))
+    const entry = marked.items.find((row) => row.id === 'i1')
+    expect(entry).toMatchObject({
+      constraintId: 'C',
+      done: true,
+      date: '2026-04-03',
+      day: 1,
+      stopId: 's1',
+      notes: `手工备注A\n${CHECKLIST_RELINK_NOTES.constraint_changed}`,
+    })
+    // 输入不变
+    expect(JSON.stringify(twoLinked())).toBe(snapshot)
+  })
+
+  it('P1 反转：逐条重新核对只解除该条；另一条同 constraintId 任务保留旧锚与提示', () => {
+    const reanchoredFirst = expectOk(
+      reconfirmChecklistItemWithConstraint(twoLinked(), 'i1', anchorAfter, LATER),
+    )
+    // i1 锚点推进到当前约束，i2 原样（旧锚、无生成标记）
+    expect(reanchoredFirst.items.find((row) => row.id === 'i1')).toMatchObject({
+      date: '2026-04-04',
+      day: 1,
+      stopId: 's2',
+      done: true,
+      notes: '手工备注A',
+    })
+    expect(reanchoredFirst.items.find((row) => row.id === 'i2')).toMatchObject({
+      date: '2026-04-03',
+      day: 1,
+      stopId: 's1',
+      notes: '手工备注B',
+    })
+
+    const auditAfterFirst = auditChecklistLinks(reanchoredFirst, {
+      constraints: currentConstraints,
+      previousConstraints,
+    })
+    expect(auditAfterFirst.itemsNeedingRelink).toEqual(['i2'])
+    expect(
+      auditAfterFirst.issues.filter((issue) => issue.reason === 'constraint_changed'),
+    ).toHaveLength(1)
+
+    const reanchoredBoth = expectOk(
+      reconfirmChecklistItemWithConstraint(reanchoredFirst, 'i2', anchorAfter, LATER + 1),
+    )
+    const auditAfterBoth = auditChecklistLinks(reanchoredBoth, {
+      constraints: currentConstraints,
+      previousConstraints,
+    })
+    expect(
+      auditAfterBoth.issues.filter((issue) => issue.reason === 'constraint_changed'),
+    ).toHaveLength(0)
+    expect(auditAfterBoth.itemsNeedingRelink).toHaveLength(0)
+  })
+
+  it('mark 不是确认：只 mark 不重新核对，两条任务的提示都还在', () => {
+    const marked = expectOk(markChecklistItemNeedsRelink(twoLinked(), 'i1', 'constraint_changed', LATER))
+    const audit = auditChecklistLinks(marked, {
+      constraints: currentConstraints,
+      previousConstraints,
+    })
+    expect(audit.itemsNeedingRelink).toEqual(expect.arrayContaining(['i1', 'i2']))
+  })
+
+  it('重新核对拒绝改绑：constraintId 不同直接 typed 失败', () => {
+    const other = makeConstraint({ id: 'OTHER', title: '另一条预约' })
+    const result = reconfirmChecklistItemWithConstraint(twoLinked(), 'i1', other, LATER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid_input')
+  })
+
+  it('重新核对保留 done 与用户备注，只移除本动作可解决的生成标记', () => {
+    const marked = expectOk(
+      markChecklistItemNeedsRelink(twoLinked(), 'i1', 'constraint_changed', LATER),
+    )
+    const reconfirmed = expectOk(
+      reconfirmChecklistItemWithConstraint(marked, 'i1', anchorAfter, LATER + 1),
+    )
+    const entry = reconfirmed.items.find((row) => row.id === 'i1')
+    expect(entry).toMatchObject({
+      constraintId: 'C',
+      done: true,
+      date: '2026-04-04',
+      day: 1,
+      stopId: 's2',
+      notes: '手工备注A',
+    })
+    expect(checklistItemNeedsRelink(entry as ChecklistItemV1)).toBe(false)
+    // 用户备注与其它生成标记（如 stop 类）不被误删
+    const withStopMark = expectOk(
+      markChecklistItemNeedsRelink(reconfirmed, 'i1', 'stop_deleted', LATER + 2),
+    )
+    const stopEntry = withStopMark.items.find((row) => row.id === 'i1')
+    expect(stopEntry?.notes).toContain('手工备注A')
+    expect(stopEntry?.notes).toContain(CHECKLIST_RELINK_NOTES.stop_deleted)
+  })
+
+  it('普通勾选 / 无关编辑不清提示；约束再次变化会让已核对条目重新进入提示', () => {
+    const reanchoredFirst = expectOk(
+      reconfirmChecklistItemWithConstraint(twoLinked(), 'i1', anchorAfter, LATER),
+    )
+    // i2 勾 done：与核对无关
+    const toggled = expectOk(toggleChecklistItem(reanchoredFirst, 'i2', LATER + 1))
+    const auditAfterToggle = auditChecklistLinks(toggled, {
+      constraints: currentConstraints,
+      previousConstraints,
+    })
+    expect(auditAfterToggle.itemsNeedingRelink).toContain('i2')
+
+    // 约束又变了：已核对到旧值的 i1 重新进入提示（不会被一次性确认豁免）
+    const third = makeConstraint({
+      id: 'C',
+      kind: 'fixed_window',
+      title: '博物馆预约',
+      day: 1,
+      stopId: 's3',
+      startDate: '2026-04-05',
+      endDate: '2026-04-05',
+    })
+    const auditThird = auditChecklistLinks(reanchoredFirst, {
+      constraints: { items: [third] },
+      previousConstraints: { items: [anchorAfter] },
+    })
+    expect(
+      auditThird.issues
+        .filter((issue) => issue.reason === 'constraint_changed')
+        .map((issue) => issue.itemId),
+    ).toContain('i1')
+  })
+
+  it('legacy undefined / 显式 null constraintId 不产生 change 提示，也不被重新核对触达', () => {
+    const legacy = makeItem({ category: 'appointment', stopId: 's1', date: '2026-04-03', day: 1 })
+    expect(checklistItemConstraintState(legacy)).toBe('unrecorded')
+    const audit = auditChecklistLinks(makeChecklist([legacy]), {
+      constraints: currentConstraints,
+      previousConstraints,
+    })
+    expect(audit.issues).toHaveLength(0)
+    expect(audit.unrecordedConstraintItems).toEqual(['check-1'])
+    const refused = reconfirmChecklistItemWithConstraint(
+      makeChecklist([legacy]),
+      'check-1',
+      anchorAfter,
+      LATER,
+    )
+    expect(refused.ok).toBe(false)
+  })
+
+  it('N5 混合声明：只更新约束声明了的字段，未声明的用户 day / 地点原值保留（JSON roundtrip）', () => {
+    // 约束只声明 startDate；day 未指定、stop 不绑定
+    const dateOnly = makeConstraint({
+      id: 'C',
+      kind: 'fixed_window',
+      title: '预约丙',
+      day: null,
+      stopId: null,
+      startDate: '2026-04-06',
+      endDate: null,
+    })
+    const withManualFields = makeChecklist([
+      makeItem({
+        id: 'i1',
+        category: 'appointment',
+        constraintId: 'C',
+        done: false,
+        date: '2026-03-15',
+        day: 1,
+        stopId: 's2',
+        notes: '手工备注N5',
+      }),
+    ])
+    const reconfirmed = expectOk(
+      reconfirmChecklistItemWithConstraint(withManualFields, 'i1', dateOnly, LATER),
+    )
+    const entry = reconfirmed.items.find((row) => row.id === 'i1')
+    // 声明了的 startDate 更新；未声明的 day / stopId 保留用户原值，绝不清成 null
+    expect(entry).toMatchObject({
+      constraintId: 'C',
+      date: '2026-04-06',
+      day: 1,
+      stopId: 's2',
+      done: false,
+      notes: '手工备注N5',
+    })
+    // 落盘再读回语义不变（合法 JSON roundtrip，不靠运行期记忆）
+    const roundtrip = JSON.parse(JSON.stringify(reconfirmed)) as ChecklistV1
+    expect(roundtrip.items[0]).toMatchObject({ date: '2026-04-06', day: 1, stopId: 's2' })
+    // 与当前约束比对：声明字段一致 → 该条目视为已核对
+    expect(checklistItemAnchorsMatchConstraint(roundtrip.items[0], dateOnly)).toBe(true)
+  })
+
+  it('N5 三字段策略一致：声明字段各自独立更新/保留（混合 declared + unset）', () => {
+    // 声明 day 与 stopId，不声明 startDate
+    const dayStopOnly = makeConstraint({
+      id: 'C',
+      kind: 'must_visit',
+      title: '预约丁',
+      day: 2,
+      stopId: 's3',
+      startDate: null,
+      endDate: null,
+    })
+    const reconfirmed = expectOk(
+      reconfirmChecklistItemWithConstraint(
+        makeChecklist([
+          makeItem({
+            id: 'i1',
+            category: 'appointment',
+            constraintId: 'C',
+            date: '2026-03-15',
+            day: 1,
+            stopId: 's1',
+            notes: null,
+          }),
+        ]),
+        'i1',
+        dayStopOnly,
+        LATER,
+      ),
+    )
+    expect(reconfirmed.items[0]).toMatchObject({
+      day: 2,
+      stopId: 's3',
+      date: '2026-03-15',
+    })
+    // 三字段全未声明：全部保留
+    const allUnset = makeConstraint({
+      id: 'C',
+      kind: 'reminder',
+      title: '只提醒',
+      day: null,
+      stopId: null,
+      startDate: null,
+      endDate: null,
+    })
+    const untouched = expectOk(
+      reconfirmChecklistItemWithConstraint(
+        makeChecklist([
+          makeItem({
+            id: 'i1',
+            category: 'appointment',
+            constraintId: 'C',
+            date: '2026-03-15',
+            day: 1,
+            stopId: 's1',
+          }),
+        ]),
+        'i1',
+        allUnset,
+        LATER,
+      ),
+    )
+    expect(untouched.items[0]).toMatchObject({ date: '2026-03-15', day: 1, stopId: 's1' })
   })
 })

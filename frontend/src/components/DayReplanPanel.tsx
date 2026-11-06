@@ -37,11 +37,35 @@ import {
 } from '../lib/dayReplanTail'
 import { refreshLegRoute } from '../lib/legRefreshApi'
 import type { LegRefreshRequest, LegRefreshResponse } from '../lib/legRefresh'
+import {
+  PlanningConstraintsError,
+  type DayReplanConstraintsOptions,
+} from '../lib/planningConstraintsApi'
+import type {
+  ConstraintsBindingV1,
+  ConstraintsV1,
+  PlanScopeV1,
+  WorkspaceRecordV1,
+} from '../lib/workspaceTypes'
 import './dayReplanPanel.css'
+
+/**
+ * 可选 F2 planning context：父级在面板渲染 / 打开时捕获当前内存工作区、
+ * 约束与 epoch，并提供按真实 scope 生成 binding 的纯函数。未提供时面板
+ * 请求体与旧行为完全一致（不发送 constraints）。
+ */
+export interface DayReplanPlanningContext {
+  readonly constraints: ConstraintsV1
+  readonly record: WorkspaceRecordV1
+  readonly epoch: number
+  readonly createBinding: (
+    scope: PlanScopeV1,
+  ) => { ok: true; value: ConstraintsBindingV1 } | { ok: false; message: string }
+}
 
 export type DayReplanAdapter = (
   request: DayReplanRequest,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; planningConstraints?: DayReplanConstraintsOptions },
 ) => Promise<DayReplanResponse>
 
 /** 后段衔接路线查询 adapter：默认走 legRefreshApi.refreshLegRoute；测试注入 mock。 */
@@ -78,6 +102,31 @@ export interface DayReplanPanelProps {
   onClose: () => void
   /** 衔接路线查询 adapter；缺省用 legRefreshApi.refreshLegRoute（显式点击才请求）。 */
   refreshTailLeg?: TailLegRefreshAdapter
+  /**
+   * 可选 F2 规划上下文。提供时面板在发请求前按真实 scope 生成 binding，
+   * 并把 planningConstraints 一并交给 adapter；不提供时请求体保持旧行为。
+   */
+  planningContext?: DayReplanPlanningContext | null
+  /**
+   * 可选：父级持有「实时输入快照」的 ref。面板每次渲染同步写入当前
+   * `{ trip, revision, dayNumber, contentEpoch, inputEpoch }`（单调代际，A→B→A 不复活）。
+   * App 的 U 级确认在提交时读取它做同步 final guard；未提供时旧行为不变。
+   */
+  liveInputRef?: { current: DayReplanLiveInputSnapshot | null }
+  /**
+   * 可选：影响规划的输入 / 上下文代际变化通知（指令 / 方式 / 人数 / 范围 / 锚点 /
+   * 行程内容 / revision / day）。App 用它清除挂起的 U 级确认；未提供时旧行为不变。
+   */
+  onPlanningInputChanged?: () => void
+}
+
+/** 面板实时输入快照：App U 确认的同步 final guard 依据；每次渲染整体替换。 */
+export interface DayReplanLiveInputSnapshot {
+  trip: Trip
+  revision: number
+  dayNumber: number
+  contentEpoch: number
+  inputEpoch: number
 }
 
 type PanelError = { kind: 'build' | 'network' | 'server' | 'timeout' | 'abort' | 'bad_payload'; message: string }
@@ -203,6 +252,9 @@ export default function DayReplanPanel({
   onApply,
   onClose,
   refreshTailLeg,
+  planningContext = null,
+  liveInputRef,
+  onPlanningInputChanged,
 }: DayReplanPanelProps) {
   const instructionId = useId()
   const instructionErrorId = `${instructionId}-error`
@@ -308,6 +360,16 @@ export default function DayReplanPanel({
     epoch: inputEpoch,
   })
   ctxRef.current = { contentEpoch: contentEpochRef.current, epoch: inputEpoch }
+  /** 实时输入快照（每次渲染整体替换，捕获基元代际）：App U 确认的同步 final guard 依据。 */
+  if (liveInputRef !== undefined) {
+    liveInputRef.current = {
+      trip,
+      revision,
+      dayNumber,
+      contentEpoch: contentEpochRef.current,
+      inputEpoch,
+    }
+  }
 
   /* ───────── 边界衔接路线：epochs/身份守卫（在 contentEpoch/inputEpoch 就绪后） ───────── */
 
@@ -399,6 +461,20 @@ export default function DayReplanPanel({
     setInputEpoch((epoch) => epoch + 1)
   }, [instruction, mode, travelers, rangeMode, anchorId])
 
+  // 输入 / 上下文代际变化通知（可选）：App 清除挂起的 U 级确认。
+  // 代际本身在渲染期同步推进；这里只负责让父级 UI 及时收起旧确认入口。
+  const liveInputNotifyRef = useRef(onPlanningInputChanged)
+  liveInputNotifyRef.current = onPlanningInputChanged
+  const liveEpochKey = `${contentEpochRef.current}|${inputEpoch}`
+  const liveEpochKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const previous = liveEpochKeyRef.current
+    liveEpochKeyRef.current = liveEpochKey
+    if (previous !== null && previous !== liveEpochKey) {
+      liveInputNotifyRef.current?.()
+    }
+  }, [liveEpochKey])
+
   // 范围模式或锚点变化：直接清掉旧候选与预览——后段候选不能被当成整天候选继续用，
   // 反之亦然；换锚点后的旧后段候选也作废。
   useEffect(() => {
@@ -462,7 +538,12 @@ export default function DayReplanPanel({
         setError({ kind: 'build', message: builtTail.message })
         return
       }
-      await runGenerate(builtTail.request, builtTail.scope)
+      const planning = buildPlanningConstraints(builtTail.scope)
+      if (!planning.ok) {
+        setError({ kind: 'build', message: planning.message })
+        return
+      }
+      await runGenerate(builtTail.request, builtTail.scope, planning.value)
       return
     }
     const built = buildDayReplanRequest(trip, dayNumber, instruction, options)
@@ -470,10 +551,59 @@ export default function DayReplanPanel({
       setError({ kind: 'build', message: built.message })
       return
     }
-    await runGenerate(built.request, null)
+    const planning = buildPlanningConstraints(null)
+    if (!planning.ok) {
+      setError({ kind: 'build', message: planning.message })
+      return
+    }
+    await runGenerate(built.request, null, planning.value)
   }
 
-  async function runGenerate(request: DayReplanRequest, scope: DayReplanTailScope | null) {
+  /**
+   * 请求前从父级捕获的 planning context 生成显式 scope / binding。
+   * 不解析 instruction，不把整天当后段；上下文引用或 revision 变化直接拒绝。
+   */
+  function buildPlanningConstraints(
+    scope: DayReplanTailScope | null,
+  ):
+    | { ok: true; value: DayReplanConstraintsOptions | undefined }
+    | { ok: false; message: string } {
+    if (planningContext === null) return { ok: true, value: undefined }
+    if (planningContext.record.trip !== trip) {
+      return {
+        ok: false,
+        message: '当前工作区行程对象已变化；本次没有发起请求，请关闭面板后重新打开。',
+      }
+    }
+    if (planningContext.record.workspaceRevision !== revision) {
+      return {
+        ok: false,
+        message: '当前工作区 revision 已变化；本次没有发起请求，请关闭面板后重新打开。',
+      }
+    }
+    const planScope: PlanScopeV1 =
+      scope === null
+        ? { scope: 'day', day: dayNumber, anchorStopId: null }
+        : { scope: 'day_tail', day: scope.day, anchorStopId: scope.anchorStopId }
+    const binding = planningContext.createBinding(planScope)
+    if (!binding.ok) return { ok: false, message: binding.message }
+    return {
+      ok: true,
+      value: {
+        constraints: planningContext.constraints,
+        scope: planScope,
+        record: planningContext.record,
+        binding: binding.value,
+        epoch: planningContext.epoch,
+      },
+    }
+  }
+
+  async function runGenerate(
+    request: DayReplanRequest,
+    scope: DayReplanTailScope | null,
+    planningConstraints: DayReplanConstraintsOptions | undefined,
+  ) {
     const epochAtGenerate = inputEpoch
     const ctxAtGenerate = ctxRef.current
     // 上下文不可序列化（签名 null）时 fail closed：不发起请求。
@@ -495,7 +625,10 @@ export default function DayReplanPanel({
     setCandidateInvalid(null)
     setShowAllWarnings(false)
     try {
-      const response = await (requestDay ?? replanDay)(request, { signal: controller.signal })
+      const response = await (requestDay ?? replanDay)(request, {
+        signal: controller.signal,
+        ...(planningConstraints === undefined ? {} : { planningConstraints }),
+      })
       if (seqRef.current !== seq || controller.signal.aborted) return
       // 最新上下文核对（render 期内容版本 + 输入序号）：行程内容（含同对象修改）/
       // revision / day / 原始输入任一渲染变化都作废，即使变化还没来得及触发 effect。
@@ -550,6 +683,9 @@ export default function DayReplanPanel({
             setError({ kind: 'bad_payload', message: '返回的结果没有通过完整性检查，本次未生成候选。可以重新生成试试。' })
             break
         }
+      } else if (err instanceof PlanningConstraintsError) {
+        // 约束 wire 在 fetch 之前就被拒绝：明确说明，绝不丢下 constraints 静默重试。
+        setError({ kind: 'build', message: `${err.message} 本次没有发起请求。` })
       } else {
         setError({ kind: 'network', message: '生成候选时出现问题，本地行程没有改动。可以重新生成试试。' })
       }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import './app.css'
 import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
@@ -7,13 +7,76 @@ import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
 import TripDraftEditor from './components/TripDraftEditor'
-import DayReplanPanel, { type DayReplanAdapter } from './components/DayReplanPanel'
+import DayReplanPanel, {
+  type DayReplanAdapter,
+  type DayReplanLiveInputSnapshot,
+} from './components/DayReplanPanel'
 import DayWeatherPanel from './components/DayWeatherPanel'
 import DayPoiSourcesPanel from './components/DayPoiSourcesPanel'
 import WebSourcesPanel from './components/WebSourcesPanel'
 import MapRefreshPanel from './components/MapRefreshPanel'
 import TripBudgetPanel from './components/TripBudgetPanel'
+import WorkspaceHub from './components/WorkspaceHub'
+import AnchorsPanel from './components/AnchorsPanel'
+import ConstraintsPanel, {
+  type ConstraintsPanelApplyRequest,
+} from './components/ConstraintsPanel'
+import ChecklistPanel, {
+  type ChecklistChangeHandler,
+} from './components/ChecklistPanel'
+import CandidatePoolPanel, {
+  type CandidatePoolSaveStatus,
+  type CandidatePoolStorageStatus,
+} from './components/CandidatePoolPanel'
+import OfflineTripPanel from './components/OfflineTripPanel'
 import { emptyBudgetSession, tripOwnerSnapshot, type BudgetSessionState } from './lib/tripBudget'
+import { useWorkspaceController } from './lib/useWorkspaceController'
+import { canonicalValuesEqual } from './lib/workspaceFingerprint'
+import type { VersionsBackupPreviewV1 } from './lib/versionSnapshots'
+import {
+  CANDIDATES_STORAGE_KEY,
+  type BudgetSnapshotV1,
+  type CandidatesRecordV1,
+  type ChecklistV1,
+  type ConstraintsV1,
+  type PlanScopeV1,
+  type WorkspaceRecordV1,
+} from './lib/workspaceTypes'
+import { applyAnchorsProposal, type AnchorsProposal } from './lib/anchors'
+import {
+  checkConstraintsApply,
+  evaluateConstraintsAgainstTrip,
+} from './lib/constraints'
+import {
+  createConstraintsBinding,
+  type WorkspaceRuntimeCaptureV1,
+} from './lib/workspace'
+import {
+  cancelPreparedImport,
+  confirmCandidatesImport,
+  invalidatePreparedImport,
+  prepareCandidatesImport,
+  type PreparedCandidatesImport,
+} from './lib/workspaceTransfer'
+import {
+  DEFAULT_UNDO_TTL_MS,
+  getLibraryGeneration,
+  getWorkspaceLockManager,
+  loadCandidatesRecord,
+  saveCandidatesRecord,
+  undoImport,
+  type StorageUndoHandle,
+} from './lib/workspaceStorage'
+import {
+  createCandidatesBackup,
+  createEmptyCandidateRecord,
+  type CandidateDraftProposal,
+  type CandidateStopSource,
+} from './lib/candidatePool'
+import {
+  confirmSessionWorkspaceRestore,
+  prepareSessionWorkspaceRestore,
+} from './lib/workspaceSessionRestore'
 import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
@@ -61,6 +124,54 @@ function newUuid(): string {
   const c = globalThis.crypto as Crypto | undefined
   if (c && typeof c.randomUUID === 'function') return c.randomUUID()
   return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * 版本库备份下载：面板已经生成过预览，这里只把同一份 preview.text 写成文件，
+ * 不重新生成、不改动内容；下载动作本身不触碰任何存储键。
+ */
+function downloadVersionsBackup(preview: VersionsBackupPreviewV1): void {
+  const blob = new Blob([preview.text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `travel-assistant-versions-${new Date(preview.backup.exportedAt).toISOString().slice(0, 10)}.json`
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** 当前费用草稿 → 工作区 / 版本快照；只复制用户原输入，不保存派生合计。 */
+function budgetSnapshotOfSession(session: BudgetSessionState): BudgetSnapshotV1 {
+  return {
+    budgetRaw: session.budgetRaw,
+    rows: session.rows.map((row) => ({
+      id: row.id,
+      category: row.category,
+      name: row.name,
+      amountRaw: row.amountRaw,
+    })),
+  }
+}
+
+/**
+ * AI day / day_tail 请求只携带当前 scope 可验证的约束：全局（day=null）+ 目标日，
+ * 且 stopId 必须存在于目标日。其它天的约束仍完整保存在 sidecar，不丢、不改。
+ */
+function scopedConstraintsForDay(
+  record: WorkspaceRecordV1,
+  dayNumber: number,
+): ConstraintsV1 {
+  const day = record.trip.days.find((item) => item.day === dayNumber)
+  const stopIds = new Set(day?.stops.map((stop) => stop.id) ?? [])
+  return {
+    items: record.sidecar.constraints.items.filter(
+      (item) =>
+        (item.day === null || item.day === dayNumber) &&
+        (item.stopId === null || stopIds.has(item.stopId)),
+    ),
+  }
 }
 
 /** 留存用：当前 Trip 的内容快照；序列化失败返回 null（调用方停写） */
@@ -311,6 +422,73 @@ export default function App() {
   const undoApplyRef = useRef<Trip | null>(null)
   /** 「撤销应用」是否可用（快照存在且当前行程仍是应用产物） */
   const [canUndoApply, setCanUndoApply] = useState(false)
+
+  /* ───────── F1 / F2 / F3 / F5 / F6 行程工具状态 ───────── */
+
+  const [anchorsOpen, setAnchorsOpen] = useState(false)
+  const [constraintsOpen, setConstraintsOpen] = useState(false)
+  const [checklistOpen, setChecklistOpen] = useState(false)
+  const [candidatePoolOpen, setCandidatePoolOpen] = useState(false)
+
+  /** 候选库独立键：只在显式打开 / 保存 / 导入 / 导出时读写，不挂到工作区记录。 */
+  const [candidatesRecord, setCandidatesRecord] = useState<CandidatesRecordV1 | null>(null)
+  const [candidatesStorageStatus, setCandidatesStorageStatus] =
+    useState<CandidatePoolStorageStatus>('loading')
+  const [candidatesStorageMessage, setCandidatesStorageMessage] = useState<string | null>(null)
+  const [candidatesStorageRevision, setCandidatesStorageRevision] = useState<string | null>(null)
+  const [candidatesSaveStatus, setCandidatesSaveStatus] = useState<CandidatePoolSaveStatus>('idle')
+  const [candidatesSaveMessage, setCandidatesSaveMessage] = useState<string | null>(null)
+  const [candidatesImportPreview, setCandidatesImportPreview] = useState<{
+    readonly prepared: PreparedCandidatesImport
+    readonly itemCount: number
+    readonly fileName: string
+  } | null>(null)
+  const [candidatesImportMessage, setCandidatesImportMessage] = useState<string | null>(null)
+  const [candidatesImportBusy, setCandidatesImportBusy] = useState(false)
+  const [candidatesUndo, setCandidatesUndo] = useState<StorageUndoHandle | null>(null)
+  const candidatesRawRef = useRef<string | null>(null)
+  const candidatesPreparedRef = useRef<PreparedCandidatesImport | null>(null)
+  const candidatesActionSeqRef = useRef(0)
+  const candidatesFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  /** AI 候选的 U 级独立确认：存在时面板旁显示显式确认入口；H 级永不进入这里。 */
+  const [aiPlanningAck, setAiPlanningAck] = useState<{
+    readonly applied: Extract<DayReplanApplyResult, { ok: true }> | Extract<DayReplanTailApplyResult, { ok: true }>
+    readonly request: DayReplanRequest
+    readonly response: DayReplanResponse
+    readonly tailScope?: DayReplanTailScope
+    readonly boundary?: TailBoundarySelection
+    readonly boundaryCurrent?: TailBoundaryCurrent
+    readonly latestTrip: Trip
+    readonly record: WorkspaceRecordV1 | null
+    readonly capture: WorkspaceRuntimeCaptureV1 | null
+    readonly epoch: number
+    readonly revision: number
+    /** U 确认挂起时面板的实时输入快照（内容 / 输入代际）；确认时逐字段复验。 */
+    readonly live: DayReplanLiveInputSnapshot | null
+    readonly message: string
+  } | null>(null)
+  /** 面板实时输入快照：由 DayReplanPanel 每次渲染写入；U 确认的同步 final guard 依据。 */
+  const aiPlanningLiveRef = useRef<DayReplanLiveInputSnapshot | null>(null)
+
+  /** 本地编辑 / AI / 地图应用前捕获的实际工作区引用；应用时不得现捕获自证。 */
+  const draftWorkspaceCaptureRef = useRef<WorkspaceRuntimeCaptureV1 | null>(null)
+  const aiWorkspaceCaptureRef = useRef<WorkspaceRuntimeCaptureV1 | null>(null)
+  const aiPlanningEpochRef = useRef(0)
+  const mapWorkspaceCaptureRef = useRef<WorkspaceRuntimeCaptureV1 | null>(null)
+
+  /**
+   * F5 清单审计的「上一次已应用的约束快照」（ChecklistPanel `previousConstraints`）：
+   * - 必须是同 ID 约束被修改**之前**的真实值，并在后续无关 render / transition 里保持，
+   *   直到用户对相应条目显式确认重新关联；传当前值会让 `constraint_changed` 恒不触发。
+   * - `constraintsBaselineRef` 记录最近一次安装的约束内容；任何安装看到内容变化时，
+   *   把旧 baseline 冻结为 previous。恢复 / 打开 / 新建 / 解绑都走这里，不在 effect 里改。
+   * - 初始 / reload 为 null：null 与当前比较不产生任何 needsRelink 误报，也不把
+   *   legacy / `constraintId: null` 当损坏（这些由面板现有 unrecorded 提示处理）。
+   */
+  const [checklistPreviousConstraints, setChecklistPreviousConstraints] =
+    useState<ConstraintsV1 | null>(null)
+  const constraintsBaselineRef = useRef<ConstraintsV1 | null>(null)
   /**
    * 页面行程版本号：所有会替换当前行程的入口（示例、规划成功、恢复、导入、
    * 本地应用、AI 候选应用、撤销应用）都会 +1。ref 同步可读，供事件处理器在
@@ -650,6 +828,186 @@ export default function App() {
     }
   }, [])
 
+  /**
+   * 工作区记录切换后，App 只在同一事件里投影 Trip 与费用 session。
+   * 记录本身是唯一权威；这里不是第二套独立状态，失败也不会把记录回填成旧值。
+   * 该动作会作废在途 AI / 规划 / 示例结果与旧候选，并推进页面 Trip revision。
+   */
+  const applyWorkspaceRecord = useCallback(
+    (record: WorkspaceRecordV1) => {
+      planSeqRef.current += 1
+      abortRef.current?.abort()
+      abortRef.current = null
+      loadSeqRef.current += 1
+      exampleAbortRef.current?.abort()
+      exampleAbortRef.current = null
+      aiRequestSeqRef.current += 1
+      setAiOpen(false)
+      setMapOpen(false)
+      setPlanLoading(false)
+      setPlanCancelled(false)
+      setDraft(null)
+      setDraftError(null)
+      setAppliedNotice(null)
+      undoApplyRef.current = null
+      setCanUndoApply(false)
+      setEditorEditing(false)
+      updateEditorInputDirty(false)
+      setActiveStopId(null)
+
+      bumpTripRevision()
+      const nextRevision = tripRevisionRef.current
+      setTrip(record.trip)
+      const ownerSnapshot = tripOwnerSnapshot(record.trip)
+      if (record.budget === null) {
+        setBudgetSession(emptyBudgetSession())
+      } else {
+        setBudgetSession({
+          owner: ownerSnapshot.ok
+            ? {
+                tripId: record.trip.id,
+                revision: nextRevision,
+                tripSnapshot: ownerSnapshot.value,
+                tripTitle: record.trip.title,
+              }
+            : null,
+          rows: record.budget.rows,
+          budgetRaw: record.budget.budgetRaw,
+          result: null,
+          undo: null,
+        })
+      }
+      setPhase('ready')
+      setError(null)
+      setRequestOutcome({ kind: 'none' })
+      setRestoredAt(null)
+      setOpenedFromFile(false)
+      setActiveDay(record.trip.days[0]?.day ?? 1)
+      // F5：约束内容在这次安装里变化时，把旧 baseline 冻结为清单审计的 previous；
+      // baseline 缺失（首次安装 / 解绑后重新关联）只重建 baseline，不制造 previous 误报。
+      const nextConstraints = record.sidecar.constraints
+      const constraintsBaseline = constraintsBaselineRef.current
+      if (constraintsBaseline === null) {
+        setChecklistPreviousConstraints(null)
+      } else if (!canonicalValuesEqual(constraintsBaseline, nextConstraints)) {
+        setChecklistPreviousConstraints(constraintsBaseline)
+      }
+      constraintsBaselineRef.current = nextConstraints
+    },
+    [bumpTripRevision, updateEditorInputDirty],
+  )
+
+  const handleExternalStorageChange = useCallback((key: string | null) => {
+    if (key !== null && key !== CANDIDATES_STORAGE_KEY) return
+    const prepared = candidatesPreparedRef.current
+    if (prepared !== null) {
+      invalidatePreparedImport(prepared)
+      candidatesPreparedRef.current = null
+    }
+    candidatesActionSeqRef.current += 1
+    setCandidatesImportPreview(null)
+    setCandidatesImportBusy(false)
+    setCandidatesImportMessage('另一处更新了候选库；导入预览已失效，原库字节未改动。')
+    setCandidatesStorageRevision(String(getLibraryGeneration(CANDIDATES_STORAGE_KEY).generation))
+    setCandidatesUndo(null)
+    setCandidatesSaveStatus('idle')
+    setCandidatesSaveMessage('另一处更新了候选库；当前页面只读保留，重新打开候选池可读取最新内容。')
+    setCandidatesStorageMessage('另一处更新了候选库；当前页面没有自动覆盖。重新打开候选池可读取最新内容。')
+  }, [])
+
+  const workspaceController = useWorkspaceController({
+    onRecordApplied: applyWorkspaceRecord,
+    onExternalStorageChange: handleExternalStorageChange,
+  })
+
+  const currentWorkspaceRecord = workspaceController.workspace
+  const workspaceEpoch = workspaceController.epoch
+  /** 工作区关联时，AI 请求 / 面板 revision 必须统一使用 workspaceRevision。 */
+  const planningRevision = currentWorkspaceRecord?.workspaceRevision ?? tripRevision
+  const planningRevisionRef = useRef(planningRevision)
+  planningRevisionRef.current = planningRevision
+  const workspaceRecordRef = useRef<WorkspaceRecordV1 | null>(currentWorkspaceRecord)
+  workspaceRecordRef.current = currentWorkspaceRecord
+
+  /**
+   * 所有会替换当前 Trip 的入口统一先过工作区最终 apply 门：
+   * - 工作区未关联 → 放行（旧行为不变，不读任何存储键）；
+   * - 换 trip.id → 解除关联（sidecar / 候选库 / 版本库不跟随；用户之后可显式新建或打开）；
+   * - 同 trip.id → 一次整体 transition（Trip + sidecar + 手工预算快照同时切换）。
+   * 门失败时不得 setTrip：当前行程与界面状态完全不变，错误进全局横幅。
+   * 约束 / 锚点 / 清单等 sidecar 编辑走 applyPatch，不在这个显式换行程入口里伪造已校验。
+   */
+  const commitTripChange = useCallback((next: Trip): boolean => {
+    const session = budgetRef.current
+    const budget =
+      session.owner !== null && session.owner.tripId === next.id
+        ? budgetSnapshotOfSession(session)
+        : undefined
+    const change = workspaceController.applyTripChange(next, budget)
+    if (!change.ok) {
+      setError({ title: '未能切换行程', detail: change.message ?? '工作区记录校验失败；当前行程保持不变。' })
+      return false
+    }
+    return true
+  }, [workspaceController])
+
+  /**
+   * 内部 fork（本地草稿 / AI 整日 / 尾段 / 地图刷新 / 撤销应用）的唯一 apply 门：
+   * 已关联时保留 workspaceId / ownerId / sidecar / budget，只把 tripId 重绑到新副本，
+   * revision 当前 +1；未关联时与旧行为一致。capture 必须是预览前捕获的实际引用，
+   * 不能在这里现取 getRuntime 自证。
+   */
+  const commitInternalTripFork = useCallback(
+    (
+      next: Trip,
+      capture?: WorkspaceRuntimeCaptureV1 | null,
+    ): { ok: true; projected: boolean } | { ok: false; message: string } => {
+      const actualCapture =
+        capture !== undefined ? capture : (workspaceController.getRuntime()?.capture ?? null)
+      const session = budgetRef.current
+      const budget =
+        session.owner !== null && session.owner.tripId === next.id
+          ? budgetSnapshotOfSession(session)
+          : undefined
+      const change = workspaceController.applyTripFork(next, budget, actualCapture)
+      if (!change.ok) {
+        setError({
+          title: '未能应用行程副本',
+          detail: change.message ?? '工作区记录校验失败；当前行程保持不变。',
+        })
+        return { ok: false, message: change.message ?? '工作区记录校验失败；当前行程保持不变。' }
+      }
+      // linked 时 applyTripFork 会 notify，由 applyWorkspaceRecord 统一投影 Trip + budget；
+      // 入口处理器不要再 setTrip / bump，避免 data-trip-revision 双增。
+      return { ok: true, projected: change.kind !== 'unlinked' }
+    },
+    [workspaceController],
+  )
+
+  /**
+   * 同一 trip.id 的内部副本替换后，费用草稿仍属于这份行程：只把 owner revision /
+   * snapshot 重绑到当前 revision，保留用户输入。用于没有走 applyWorkspaceRecord 的入口。
+   */
+  const rebindBudgetOwnerAfterTripChange = useCallback((nextTrip: Trip) => {
+    const snapshot = tripOwnerSnapshot(nextTrip)
+    if (!snapshot.ok) return
+    const revision = tripRevisionRef.current
+    setBudgetSession((session) => {
+      if (session.owner === null || session.owner.tripId !== nextTrip.id) return session
+      return {
+        ...session,
+        owner: {
+          tripId: nextTrip.id,
+          revision,
+          tripSnapshot: snapshot.value,
+          tripTitle: nextTrip.title,
+        },
+        result: null,
+        undo: null,
+      }
+    })
+  }, [])
+
   /** 把当前会话快照写入留存键（App 内部统一入口，含所有守卫） */
   const persistSessionResume = useCallback(
     (options?: { force?: boolean }) => {
@@ -684,6 +1042,7 @@ export default function App() {
         },
         tripRevision: tripRevisionRef.current,
         tripSnapshot: snapshot,
+        workspace: workspaceRecordRef.current,
       })
       if (payload === null) {
         // 投影失败 = 有内容无法自证归属：整次停写，绝不静默丢块落盘
@@ -743,6 +1102,11 @@ export default function App() {
     activeDay,
     draftMode,
     editorInputDirty,
+    // sidecar-only transition（清单 / 约束 / 锚点 applyPatch notify:false）不改 Trip /
+    // budget 引用，但 controller 每次 transition 都会 advanceEpoch + setEpoch；
+    // 不把 epoch 纳入依赖会让自动留存停在旧 revision 的 sidecar 上，reload 即丢编辑。
+    // persistSessionResume 本身不改 epoch，不会自触发循环。
+    workspaceController.epoch,
     persistSessionResume,
   ])
 
@@ -981,9 +1345,14 @@ export default function App() {
 
   const handleResumeRestore = useCallback(() => {
     if (resumeUi.kind !== 'pending') return
+    const storage = storageRef.current
+    if (!storage) {
+      pauseResumeWrites('浏览器本地存储不可用，恢复未执行；当前页面和已有副本都没有改变。')
+      return
+    }
     // CAS 守卫：动作前严格比对当前 raw 与「产出这份 pending 时实际解析的 raw」。
     // 不一致只停写并保留双方数据，绝不用当前值刷新 expectedRaw 去“解决”冲突。
-    const current = readDataRawForAction(storageRef.current)
+    const current = readDataRawForAction(storage)
     if (!current.ok) {
       pauseResumeWrites('读取本机留存副本失败，恢复未执行；当前页面和已有副本都没有改变。')
       return
@@ -995,11 +1364,69 @@ export default function App() {
       return
     }
     const record = resumeUi.load.record
-    // 原子预检：draft/budget 全部重建成功才动手；失败时当前页面、在飞请求、raw 全部原样
-    const preview = previewSessionResume(record, tripRevisionRef.current + 1)
-    if (!preview.ok) {
-      pauseResumeWrites(`恢复未执行：${preview.message}`)
+
+    // 父级在预览前捕获实际内存 authority；currentWorkspace 只取 controller 当前内存记录，
+    // 不用 loadWorkspaceRecord 的持久记录代替。prepared 与 confirm 必须使用同一份引用 / epoch。
+    const runtime = workspaceController.getRuntime()
+    const currentWorkspace = runtime?.record ?? null
+    const epoch = runtime?.epoch ?? workspaceController.epoch
+    const prepared = prepareSessionWorkspaceRestore({
+      session: record.session,
+      savedAt: record.savedAt,
+      raw: resumeUi.load.raw,
+      currentWorkspace,
+      epoch,
+      now: Date.now(),
+    })
+    if (!prepared.ok) {
+      pauseResumeWrites(`恢复未执行：${prepared.message}`)
       return
+    }
+    // 旧草稿 / 预算 / UI 预览单独取；workspace 仍由 prepared 整体确认，不先 setTrip。
+    const base = previewSessionResume(record, tripRevisionRef.current + 1, {
+      allowWorkspace: true,
+    })
+    if (!base.ok) {
+      pauseResumeWrites(`恢复未执行：${base.message}`)
+      return
+    }
+
+    let workspaceNote: string
+    if (prepared.status === 'ready') {
+      // fresh read → confirm → 整体内存安装之间没有 await；B vs prepare A 必须拒绝。
+      const fresh = loadSessionResumeRecord(storage)
+      if (fresh.status !== 'pending') {
+        pauseResumeWrites('留存副本在确认前已不可读（可能被外部更新或关闭留存）；恢复未执行，当前页面保持不变。')
+        return
+      }
+      const confirmed = confirmSessionWorkspaceRestore(prepared, currentWorkspace, epoch, {
+        currentRaw: fresh.raw,
+      })
+      if (!confirmed.ok) {
+        pauseResumeWrites(`恢复未执行：${confirmed.message}`)
+        return
+      }
+      const installed = workspaceController.adoptRecord(
+        confirmed.record,
+        runtime?.capture ?? null,
+        { allowNewWorkspace: true, allowTripRebind: true, notify: true },
+      )
+      if (!installed.ok) {
+        pauseResumeWrites(`恢复未执行：${installed.message ?? '工作区记录未能安装。'}`)
+        return
+      }
+      workspaceNote =
+        prepared.proposal.transition === 'replace_trip'
+          ? '工作区记录已整体恢复，并替换了当前内存里的另一行程工作区；本地存储里的旧工作区没有自动改写。'
+          : prepared.proposal.transition === 'new_workspace'
+            ? '工作区记录已整体恢复到内存（新建工作区，revision 从 1 开始）；没有自动写入工作区键。'
+            : '工作区记录（Trip + sidecar + 预算快照）已整体恢复；没有自动写入工作区键，候选库 / 版本库未改动。'
+    } else {
+      // v1 / v2 workspace:null：旧兼容流程只恢复 Trip；sidecar 视为空，不按 tripId/hash 挂接。
+      if (workspaceController.workspace !== null) workspaceController.detach()
+      if (!commitTripChange(record.session.trip)) return
+      workspaceNote =
+        '这份留存没有工作区数据（旧 v1 或 workspace:null）：只恢复 Trip，sidecar 为空；没有读取或挂接本地工作区。'
     }
 
     // 预检通过才作废全部在飞请求与旧候选
@@ -1023,10 +1450,13 @@ export default function App() {
     updateEditorInputDirty(false)
     setActiveStopId(null)
 
-    setDraft(preview.draft)
-    setTrip(record.session.trip)
-    bumpTripRevision()
-    setBudgetSession(preview.budget)
+    setDraft(base.draft)
+    if (prepared.status !== 'ready') {
+      setTrip(record.session.trip)
+      bumpTripRevision()
+      rebindBudgetOwnerAfterTripChange(record.session.trip)
+    }
+    setBudgetSession(base.budget)
 
     setPhase('ready')
     setError(null)
@@ -1035,19 +1465,19 @@ export default function App() {
     // 来源边界：快照自述来自备份文件 → 保持「未向服务器核对」提示；
     // 旧记录缺来源标记 → 保守按未知提示；应用内正常进度不冒充刚打开文件。
     const sourceNote =
-      preview.openedFromFile === true
+      base.openedFromFile === true
         ? '已从本机留存的工作进度恢复。这份进度当时的行程来自你选择的备份文件：页面仍未向服务器核对内容。'
-        : preview.openedFromFile === null
+        : base.openedFromFile === null
           ? '已从本机留存的工作进度恢复。这份进度没有记录来源标记，行程内容按未核实处理。'
           : '已从本机留存的工作进度恢复。'
     // 三态原样恢复：null（旧记录未知）必须继续保持未知，不能降成 false
-    setOpenedFromFile(preview.openedFromFile)
+    setOpenedFromFile(base.openedFromFile)
     setAppliedNotice(
-      `${sourceNote}这不是「保存的行程」：要长期留存请在下方显式保存；未应用的草稿仍需你手动应用。`,
+      `${sourceNote}${workspaceNote}这不是「保存的行程」：要长期留存请在下方显式保存；未应用的草稿仍需你手动应用。`,
     )
-    const restoredDayValid = record.session.trip.days.some((d) => d.day === preview.activeDay)
-    setActiveDay(restoredDayValid ? preview.activeDay : (record.session.trip.days[0]?.day ?? 1))
-    setDraftMode(preview.draftMode)
+    const restoredDayValid = record.session.trip.days.some((d) => d.day === base.activeDay)
+    setActiveDay(restoredDayValid ? base.activeDay : (record.session.trip.days[0]?.day ?? 1))
+    setDraftMode(base.draftMode)
 
     // 恢复不是删除：不 removeItem，也不重新读取当前 raw 覆盖冻结基准。
     // 下一次自动写仍以产出 pending 时的 raw 做单次 guarded 替换；若期间被更新则 conflict 保旧。
@@ -1055,7 +1485,399 @@ export default function App() {
     resumePausedRef.current = false
     setResumeUi({ kind: 'idle' })
     scrollToItinerary()
-  }, [resumeUi, bumpTripRevision, scrollToItinerary, pauseResumeWrites, updateEditorInputDirty])
+  }, [
+    resumeUi,
+    workspaceController,
+    bumpTripRevision,
+    rebindBudgetOwnerAfterTripChange,
+    scrollToItinerary,
+    pauseResumeWrites,
+    updateEditorInputDirty,
+    commitTripChange,
+  ])
+
+  /* ───────── F1 / F2 / F3 / F5 / F6 真实接线 ───────── */
+
+  /**
+   * 费用草稿编辑也走同一工作区 authority：先按编辑前捕获的实际引用做一次
+   * budget-only transition，成功后才更新 App 草稿；失败保留旧记录并显示原因。
+   */
+  const handleBudgetSessionChange = useCallback(
+    (next: BudgetSessionState) => {
+      const runtime = workspaceController.getRuntime()
+      if (runtime !== null) {
+        const applied = workspaceController.applyPatch(
+          { budget: budgetSnapshotOfSession(next) },
+          runtime.capture,
+          { notify: false },
+        )
+        if (!applied.ok) {
+          setError({
+            title: '未能更新费用草稿',
+            detail: applied.message ?? '工作区记录校验失败；费用输入保持原样。',
+          })
+          return
+        }
+      }
+      setBudgetSession(next)
+    },
+    [workspaceController],
+  )
+
+  /** F1：锚点 / 酒店提案先按实际引用 + epoch 校验，再安装整体记录。 */
+  const handleAnchorsApply = useCallback(
+    (proposal: AnchorsProposal): { ok: true } | { ok: false; message: string } => {
+      const runtime = workspaceController.getRuntime()
+      if (runtime === null) {
+        return { ok: false, message: '当前没有关联工作区，锚点改动未应用。' }
+      }
+      const applied = applyAnchorsProposal(runtime.record, proposal, Date.now())
+      if (!applied.ok) {
+        return { ok: false, message: applied.message }
+      }
+      const installed = workspaceController.adoptRecord(applied.value, runtime.capture, {
+        notify: false,
+      })
+      if (!installed.ok) {
+        return { ok: false, message: installed.message ?? '工作区记录没有通过校验，锚点改动未应用。' }
+      }
+      if (!canonicalValuesEqual(runtime.record.trip, applied.value.trip)) {
+        setTrip(applied.value.trip)
+        bumpTripRevision()
+        rebindBudgetOwnerAfterTripChange(applied.value.trip)
+        setActiveStopId((current) =>
+          current && applied.value.trip.days.some((d) => d.stops.some((s) => s.id === current))
+            ? current
+            : null,
+        )
+      }
+      return { ok: true }
+    },
+    [workspaceController, bumpTripRevision, rebindBudgetOwnerAfterTripChange],
+  )
+
+  /** F2：约束面板 apply 先过实际引用 / ticket / H-U / canonical 全套门，再单次 transition。 */
+  const handleConstraintsApply = useCallback(
+    (request: ConstraintsPanelApplyRequest): { ok: true } | { ok: false; message: string } => {
+      const runtime = workspaceController.getRuntime()
+      if (runtime === null) {
+        return { ok: false, message: '当前没有关联工作区，约束改动未应用。' }
+      }
+      const ticketRuntime = request.ticket.runtime
+      if (
+        ticketRuntime.record !== runtime.record ||
+        ticketRuntime.trip !== runtime.record.trip ||
+        ticketRuntime.sidecar !== runtime.record.sidecar ||
+        ticketRuntime.budget !== runtime.record.budget ||
+        ticketRuntime.input !== request.candidateTrip
+      ) {
+        return {
+          ok: false,
+          message: '工作区或候选的实际对象引用已变化；旧确认失效，请重新生成。',
+        }
+      }
+      if (!canonicalValuesEqual(request.candidateTrip, runtime.record.trip)) {
+        return { ok: false, message: '约束候选不是当前工作区行程；未应用。' }
+      }
+      const decision = checkConstraintsApply({
+        ticket: request.ticket,
+        record: runtime.record,
+        constraints: request.constraints,
+        candidateTrip: request.candidateTrip,
+        planScope: request.planScope,
+        epoch: request.epoch,
+      })
+      if (!decision.allowed) {
+        return { ok: false, message: decision.message }
+      }
+      const applied = workspaceController.applyPatch(
+        {
+          sidecar: {
+            ...runtime.record.sidecar,
+            constraints: request.constraints,
+          },
+        },
+        runtime.capture,
+        { notify: false },
+      )
+      if (!applied.ok) {
+        return { ok: false, message: applied.message ?? '约束改动未应用；工作区保持不变。' }
+      }
+      // F5：把「修改前的真实约束」冻结为清单审计的 previous，直到用户显式确认重新关联；
+      // 内容没变（原样重应用）时不制造 needsRelink。
+      if (!canonicalValuesEqual(runtime.record.sidecar.constraints, request.constraints)) {
+        setChecklistPreviousConstraints(runtime.record.sidecar.constraints)
+        constraintsBaselineRef.current = request.constraints
+      }
+      return { ok: true }
+    },
+    [workspaceController],
+  )
+
+  /**
+   * F5：清单受控 onChange 先生成整体 workspace transition；失败原记录不变。
+   * 「标记需重新关联」（action:'relink'）只是追加生成标记，App 不在这里推进任何
+   * previous 基线；逐条「按当前预约重新核对」（action:'reconfirm-constraint'）由
+   * ChecklistPanel 调 checklist 纯函数完成锚点回写，提示由 audit 按各条目锚点判定，
+   * 不存在全局 dismiss。
+   */
+  const handleChecklistChange = useCallback<ChecklistChangeHandler>((next: ChecklistV1) => {
+    const runtime = workspaceController.getRuntime()
+    if (runtime === null) {
+      return { ok: false, message: '当前没有关联工作区，清单改动未应用。' }
+    }
+    const applied = workspaceController.applyPatch(
+      {
+        sidecar: {
+          ...runtime.record.sidecar,
+          checklist: next,
+        },
+      },
+      runtime.capture,
+      { notify: false },
+    )
+    return applied.ok
+      ? { ok: true }
+      : { ok: false, message: applied.message ?? '清单改动未应用；工作区保持不变。' }
+  }, [workspaceController])
+
+  /* ───────── F3 候选库：独立键的显式读 / 存 / 导出 / 导入确认 / 撤销 ───────── */
+
+  const openCandidatePool = useCallback(() => {
+    candidatesActionSeqRef.current += 1
+    const read = loadCandidatesRecord(storageRef.current)
+    candidatesRawRef.current = read.raw
+    let record: CandidatesRecordV1 | null = read.record
+    let status: CandidatePoolStorageStatus = read.status
+    if (read.status === 'empty') {
+      const empty = createEmptyCandidateRecord(Date.now())
+      record = empty.ok ? empty.value : null
+      status = 'empty'
+    }
+    setCandidatesRecord(record)
+    setCandidatesStorageStatus(status)
+    setCandidatesStorageMessage(read.message)
+    setCandidatesStorageRevision(String(getLibraryGeneration(CANDIDATES_STORAGE_KEY).generation))
+    setCandidatesSaveStatus('idle')
+    setCandidatesSaveMessage(null)
+    setCandidatesImportMessage(null)
+    setCandidatesImportPreview(null)
+    candidatesPreparedRef.current = null
+    setCandidatesUndo(null)
+    setAnchorsOpen(false)
+    setConstraintsOpen(false)
+    setChecklistOpen(false)
+    setCandidatePoolOpen(true)
+  }, [])
+
+  const handleCandidatesRecordChange = useCallback((next: CandidatesRecordV1) => {
+    setCandidatesRecord(next)
+    setCandidatesSaveStatus('idle')
+    setCandidatesSaveMessage('候选库有未保存的内存改动；点「保存候选库」才写入本地键。')
+  }, [])
+
+  const handleSaveCandidates = useCallback((record: CandidatesRecordV1) => {
+    const storage = storageRef.current
+    const locks = getWorkspaceLockManager()
+    if (!storage || !locks) {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage('当前浏览器无法安全写入候选库；原字节未改动。')
+      return
+    }
+    const seq = candidatesActionSeqRef.current
+    setCandidatesSaveStatus('pending')
+    setCandidatesSaveMessage(null)
+    void saveCandidatesRecord(record, {
+      storage,
+      locks,
+      expectedRaw: candidatesRawRef.current,
+    }).then((result) => {
+      if (candidatesActionSeqRef.current !== seq) {
+        setCandidatesSaveStatus('idle')
+        setCandidatesSaveMessage('保存期间候选库或页面状态已变化；请重新打开候选池确认最新内容。')
+        return
+      }
+      if (!result.ok) {
+        setCandidatesSaveStatus('error')
+        setCandidatesSaveMessage(result.message)
+        return
+      }
+      candidatesRawRef.current = result.raw
+      setCandidatesRecord(result.record)
+      setCandidatesStorageStatus('ok')
+      setCandidatesStorageMessage(null)
+      setCandidatesStorageRevision(String(getLibraryGeneration(CANDIDATES_STORAGE_KEY).generation))
+      setCandidatesSaveStatus('saved')
+      setCandidatesSaveMessage(`已保存候选库（${result.record.items.length} 个候选，${result.bytes} 字节）。`)
+      setCandidatesUndo(null)
+    })
+  }, [])
+
+  const handleExportCandidates = useCallback((record: CandidatesRecordV1) => {
+    const backup = createCandidatesBackup(record, Date.now())
+    if (!backup.ok) {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage(backup.message)
+      return
+    }
+    const blob = new Blob([backup.value.json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `travel-assistant-candidates-${new Date(backup.value.backup.exportedAt)
+      .toISOString()
+      .slice(0, 10)}.json`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+    setCandidatesSaveMessage(`已导出 ${backup.value.itemCount} 个候选（${backup.value.bytes} 字节）；导出不写本地键。`)
+  }, [])
+
+  const handleCandidatesImportRequest = useCallback(() => {
+    candidatesFileInputRef.current?.click()
+  }, [])
+
+  const handleCandidatesFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] ?? null
+      event.target.value = ''
+      if (file === null) return
+      const storage = storageRef.current
+      const locks = getWorkspaceLockManager()
+      if (!storage || !locks) {
+        setCandidatesImportMessage('当前浏览器无法安全写入候选库；导入未开始。')
+        return
+      }
+      const seq = candidatesActionSeqRef.current
+      void file.text().then((text) => {
+        if (candidatesActionSeqRef.current !== seq) return
+        const prepared = prepareCandidatesImport(text, { storage, locks })
+        if (!prepared.ok) {
+          setCandidatesImportMessage(prepared.message)
+          return
+        }
+        candidatesPreparedRef.current = prepared
+        setCandidatesImportPreview({
+          prepared,
+          itemCount: prepared.importedRecord.items.length,
+          fileName: file.name,
+        })
+        setCandidatesImportMessage('备份文件已通过纯校验；确认后才会写入候选库。')
+      })
+    },
+    [],
+  )
+
+  const handleConfirmCandidatesImport = useCallback(() => {
+    const preview = candidatesImportPreview
+    const storage = storageRef.current
+    const locks = getWorkspaceLockManager()
+    if (preview === null) return
+    if (!storage || !locks) {
+      setCandidatesImportMessage('当前浏览器无法安全写入候选库；导入未执行。')
+      return
+    }
+    const seq = candidatesActionSeqRef.current
+    setCandidatesImportBusy(true)
+    setCandidatesImportMessage(null)
+    void confirmCandidatesImport(preview.prepared, {
+      storage,
+      locks,
+      now: Date.now(),
+      undoTtlMs: DEFAULT_UNDO_TTL_MS,
+    }).then((result) => {
+      if (candidatesActionSeqRef.current !== seq) {
+        setCandidatesImportBusy(false)
+        return
+      }
+      setCandidatesImportBusy(false)
+      if (!result.ok) {
+        setCandidatesImportMessage(result.message)
+        if (
+          result.reason === 'import_superseded' ||
+          result.reason === 'import_expired' ||
+          result.reason === 'import_cancelled' ||
+          result.reason === 'input_changed'
+        ) {
+          candidatesPreparedRef.current = null
+          setCandidatesImportPreview(null)
+        }
+        return
+      }
+      candidatesPreparedRef.current = null
+      setCandidatesImportPreview(null)
+      candidatesRawRef.current = result.raw
+      setCandidatesRecord(result.record)
+      setCandidatesStorageStatus('ok')
+      setCandidatesStorageMessage(null)
+      setCandidatesStorageRevision(String(getLibraryGeneration(CANDIDATES_STORAGE_KEY).generation))
+      setCandidatesSaveStatus('saved')
+      setCandidatesSaveMessage(`已导入 ${result.record.items.length} 个候选；原字节已冻结，可撤销一次。`)
+      setCandidatesImportMessage('候选库导入完成。')
+      setCandidatesUndo(result.undo)
+    })
+  }, [candidatesImportPreview])
+
+  const handleCancelCandidatesImport = useCallback(() => {
+    const prepared = candidatesPreparedRef.current
+    if (prepared !== null) cancelPreparedImport(prepared)
+    candidatesPreparedRef.current = null
+    setCandidatesImportPreview(null)
+    setCandidatesImportBusy(false)
+    setCandidatesImportMessage('已取消导入预览；候选库原字节未改动。')
+  }, [])
+
+  const handleUndoCandidatesImport = useCallback(() => {
+    const handle = candidatesUndo
+    const storage = storageRef.current
+    const locks = getWorkspaceLockManager()
+    if (handle === null || !storage || !locks) return
+    const seq = candidatesActionSeqRef.current
+    void undoImport(handle, { storage, locks, now: Date.now() }).then((result) => {
+      if (candidatesActionSeqRef.current !== seq) return
+      if (!result.ok) {
+        setCandidatesSaveStatus('error')
+        setCandidatesSaveMessage(result.message)
+        if (result.reason === 'undo_used' || result.reason === 'undo_expired') {
+          setCandidatesUndo(null)
+        }
+        return
+      }
+      setCandidatesUndo(null)
+      const read = loadCandidatesRecord(storage)
+      candidatesRawRef.current = read.raw
+      let record: CandidatesRecordV1 | null = read.record
+      let status: CandidatePoolStorageStatus = read.status
+      if (read.status === 'empty') {
+        const empty = createEmptyCandidateRecord(Date.now())
+        record = empty.ok ? empty.value : null
+        status = 'empty'
+      }
+      setCandidatesRecord(record)
+      setCandidatesStorageStatus(status)
+      setCandidatesStorageMessage(read.message)
+      setCandidatesStorageRevision(String(getLibraryGeneration(CANDIDATES_STORAGE_KEY).generation))
+      setCandidatesSaveStatus('idle')
+      setCandidatesSaveMessage('已撤销最近一次候选库导入，恢复导入前字节。')
+    })
+  }, [candidatesUndo])
+
+  /** F3 加入草稿：只更新父级草稿；真正应用到 Trip 仍走既有草稿应用流程。 */
+  const handleCandidateAddToDraft = useCallback(
+    (proposal: CandidateDraftProposal) => {
+      if (draftRef.current === null) {
+        draftWorkspaceCaptureRef.current = workspaceController.getRuntime()?.capture ?? null
+      }
+      setDraft(proposal.draft)
+      setDraftMode(proposal.draft.newLegMode)
+      setDraftError(null)
+      setAppliedNotice(null)
+      setActiveDay(proposal.day)
+      setCandidatePoolOpen(false)
+    },
+    [workspaceController],
+  )
 
   const handleResumeDiscardAndStart = useCallback(() => {
     if (resumeUi.kind !== 'pending') return
@@ -1092,6 +1914,7 @@ export default function App() {
       },
       tripRevision: tripRevisionRef.current,
       tripSnapshot: snapshot,
+      workspace: workspaceRecordRef.current,
     })
     if (payload === null) {
       pauseResumeWrites('当前行程或费用内容无法自证归属，未替换副本；上次进度原样保留。')
@@ -1124,6 +1947,13 @@ export default function App() {
     try {
       const t = await planTrip(payload, { signal: controller.signal })
       if (sequence !== planSeqRef.current) return
+      // 新规划是显式新 owner：不继承当前工作区 sidecar / 候选 / 版本；先解除关联再应用。
+      if (workspaceRecordRef.current !== null) workspaceController.detach()
+      // 工作区最终 apply 门：门失败时不替换行程，本次规划结果不采纳
+      if (!commitTripChange(t)) {
+        setRequestOutcome({ kind: 'failed', destination: payload.destination })
+        return
+      }
       setTrip(t)
       bumpTripRevision()
       setPhase('ready')
@@ -1181,6 +2011,7 @@ export default function App() {
    * 旧草稿立即作废而不是带着新 base 应用。
    */
   const handleRestoreSavedTrip = useCallback((restored: Trip, savedAt: number) => {
+    if (!commitTripChange(restored)) return
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -1201,6 +2032,7 @@ export default function App() {
     updateEditorInputDirty(false)
     setTrip(restored)
     bumpTripRevision()
+    rebindBudgetOwnerAfterTripChange(restored)
     setPhase('ready')
     setError(null)
     setRequestOutcome({ kind: 'none' })
@@ -1222,6 +2054,8 @@ export default function App() {
    * - 回到第一天并清空选中站点，避免停在上一个行程的某天 / 某个站点上。
    */
   const handleOpenImportedTrip = useCallback((imported: Trip) => {
+    // 旧 Trip JSON 导入是显式新 owner：即使 trip.id 相同也不继承 sidecar / 约束 / 清单。
+    if (workspaceRecordRef.current !== null) workspaceController.detach()
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -1268,6 +2102,7 @@ export default function App() {
    */
   const handleStartEditing = useCallback(() => {
     if (!trip || draft || aiOpen || mapOpen) return
+    draftWorkspaceCaptureRef.current = workspaceController.getRuntime()?.capture ?? null
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -1306,14 +2141,21 @@ export default function App() {
    */
   const handleDraftApply = useCallback((result: DraftApplySuccess) => {
     if (!result.changed) return
+    // 内部 fork：同一工作区保留 sidecar / budget，只重绑 tripId；capture 在开始编辑前已捕获。
+    const committed = commitInternalTripFork(result.trip, draftWorkspaceCaptureRef.current)
+    if (!committed.ok) return
+    draftWorkspaceCaptureRef.current = null
     undoApplyRef.current = trip
     setCanUndoApply(true)
     setDraft(null)
     setDraftError(null)
     setEditorEditing(false)
     updateEditorInputDirty(false)
-    setTrip(result.trip)
-    bumpTripRevision()
+    if (!committed.projected) {
+      setTrip(result.trip)
+      bumpTripRevision()
+      rebindBudgetOwnerAfterTripChange(result.trip)
+    }
     setPhase('ready')
     setError(null)
     setRequestOutcome({ kind: 'none' })
@@ -1329,10 +2171,19 @@ export default function App() {
       current && result.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
     )
     scrollToItinerary()
-  }, [trip, activeDay, bumpTripRevision, scrollToItinerary, updateEditorInputDirty])
+  }, [
+    trip,
+    activeDay,
+    bumpTripRevision,
+    rebindBudgetOwnerAfterTripChange,
+    commitInternalTripFork,
+    scrollToItinerary,
+    updateEditorInputDirty,
+  ])
 
   /** 放弃草稿：回到原视图；原行程从未被改过，无需恢复 */
   const handleDraftDiscard = useCallback(() => {
+    draftWorkspaceCaptureRef.current = null
     setDraft(null)
     setDraftError(null)
     setEditorEditing(false)
@@ -1343,14 +2194,20 @@ export default function App() {
   const handleUndoApply = useCallback(() => {
     const snapshot = undoApplyRef.current
     if (!snapshot || !canUndoApply) return
+    // 撤销应用也是内部 fork：回到应用前行程，同时保留工作区 sidecar / budget。
+    const committed = commitInternalTripFork(snapshot)
+    if (!committed.ok) return
     undoApplyRef.current = null
     setCanUndoApply(false)
     setDraft(null)
     setDraftError(null)
     setEditorEditing(false)
     updateEditorInputDirty(false)
-    setTrip(snapshot)
-    bumpTripRevision()
+    if (!committed.projected) {
+      setTrip(snapshot)
+      bumpTripRevision()
+      rebindBudgetOwnerAfterTripChange(snapshot)
+    }
     setPhase('ready')
     setError(null)
     setRequestOutcome({ kind: 'none' })
@@ -1362,7 +2219,15 @@ export default function App() {
       current && snapshot.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
     )
     scrollToItinerary()
-  }, [canUndoApply, activeDay, bumpTripRevision, scrollToItinerary, updateEditorInputDirty])
+  }, [
+    canUndoApply,
+    activeDay,
+    bumpTripRevision,
+    rebindBudgetOwnerAfterTripChange,
+    commitInternalTripFork,
+    scrollToItinerary,
+    updateEditorInputDirty,
+  ])
 
   /* ───────── AI 单日调整：打开 / 请求适配 / 应用 / 关闭 ───────── */
 
@@ -1373,6 +2238,10 @@ export default function App() {
    */
   const handleOpenAiPanel = useCallback(() => {
     if (!trip || draft || aiOpen || mapOpen) return
+    const runtime = workspaceController.getRuntime()
+    aiWorkspaceCaptureRef.current = runtime?.capture ?? null
+    aiPlanningEpochRef.current = runtime?.epoch ?? workspaceController.epoch
+    setAiPlanningAck(null)
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -1395,7 +2264,17 @@ export default function App() {
   /** 关闭面板：作废在途候选请求；当前行程不变，也不代表服务端停止处理。 */
   const handleCloseAiPanel = useCallback(() => {
     aiRequestSeqRef.current += 1
+    setAiPlanningAck(null)
     setAiOpen(false)
+  }, [])
+
+  /**
+   * 面板实时输入代际变化（指令 / 方式 / 人数 / 范围 / 锚点 / 行程内容 / day）：
+   * 清除挂起的 U 级确认入口。提交侧另有同步 final guard（比较面板 live 快照），
+   * 不依赖这里的 effect 时序。
+   */
+  const handleAiPlanningInputChanged = useCallback(() => {
+    setAiPlanningAck(null)
   }, [])
 
   /**
@@ -1434,82 +2313,40 @@ export default function App() {
   )
 
   /**
-   * 面板里点了「应用候选」：父级用最新行程引用与 revision 重新走 applyDayReplan，
-   * 绝不直接 setTrip 旧响应。过期、容量、跨天 id 冲突等失败原样返回给面板显示，
-   * 当前行程保持不变；成功才采纳新 fork、递增统一 revision 并关闭面板。
-   * 应用快照与本地编辑共用一次「撤销应用」，但不写 localStorage。
-   * 带衔接路线的后段应用：第 4 参为已绑定 selection、第 5 参为面板当前实时上下文
-   * （真实 epochs，非哨兵）；两者必须成对出现，且与最新 trip/revision 重新核对，
-   * 任何不配对/缺失都类型化失败，绝不忽略 boundary 走整天或 unknown。
+   * 应用 AI 候选的最终提交：内部 fork 保留 sidecar / budget；U 级确认已经由调用方
+   * 在独立动作里完成。提交失败返回 typed 失败，当前行程不变。
    */
-  const handleAiApply = useCallback(
+  const finishAiApply = useCallback(
     (
+      applied: Extract<DayReplanApplyResult, { ok: true }> | Extract<DayReplanTailApplyResult, { ok: true }>,
+      latestTrip: Trip,
       request: DayReplanRequest,
-      response: DayReplanResponse,
       tailScope?: DayReplanTailScope,
-      boundary?: TailBoundarySelection,
-      boundaryCurrent?: TailBoundaryCurrent,
     ): DayReplanApplyResult | DayReplanTailApplyResult => {
-      const latestTrip = tripRef.current
-      if (!latestTrip) {
-        return { ok: false, reason: 'invalid_base', message: '当前没有可应用的行程，AI 候选未应用。' }
-      }
-      if (tailScope === undefined && boundary !== undefined) {
+      const committed = commitInternalTripFork(applied.trip, aiWorkspaceCaptureRef.current)
+      if (!committed.ok) {
         return {
           ok: false,
-          reason: 'invalid_boundary',
-          message: '衔接路线必须与后段候选一起应用；当前没有后段范围，衔接路线未应用。',
+          reason: 'invalid_base',
+          message: '工作区记录校验未通过；AI 候选未应用，当前行程保持不变。',
         }
       }
-      // 只有 scope === undefined 才走旧整天应用；任何有参（含非法 falsy 值）都走后段
-      // 应用路径并由 verifyTailScope 做类型化失败，绝不降级成整天替换。
-      // 传入 request 供指纹核对：预览组合与应用用的必须是同一份生成时请求。
-      // App 覆盖 current 的 trip/revision 为最新值（Panel 点击时同步传入真实 epochs），
-      // 不允许从 boundary.owner.captured 反推；纯层会再次核 current 与实参一致。
-      const applied =
-        tailScope === undefined
-          ? applyDayReplan({
-              baseTrip: latestTrip,
-              request,
-              response,
-              currentRevision: tripRevisionRef.current,
-              forkTripId: newUuid(),
-            })
-          : applyDayReplanTail({
-              baseTrip: latestTrip,
-              scope: tailScope,
-              request,
-              response,
-              currentRevision: tripRevisionRef.current,
-              forkTripId: newUuid(),
-              boundary,
-              current:
-                boundary !== undefined
-                  ? {
-                      trip: latestTrip,
-                      candidate: response,
-                      scope: tailScope,
-                      revision: tripRevisionRef.current,
-                      contentEpoch:
-                        boundaryCurrent?.contentEpoch ?? Number.NaN,
-                      inputEpoch: boundaryCurrent?.inputEpoch ?? Number.NaN,
-                      boundaryEpoch: boundaryCurrent?.boundaryEpoch ?? Number.NaN,
-                    }
-                  : undefined,
-            })
-      if (!applied.ok) return applied
-
+      aiWorkspaceCaptureRef.current = null
       aiRequestSeqRef.current += 1
       undoApplyRef.current = latestTrip
       setCanUndoApply(true)
-      setTrip(applied.trip)
-      bumpTripRevision()
+      if (!committed.projected) {
+        setTrip(applied.trip)
+        bumpTripRevision()
+        rebindBudgetOwnerAfterTripChange(applied.trip)
+      }
       setPhase('ready')
       setError(null)
       setRequestOutcome({ kind: 'none' })
       // 新副本不是本浏览器保存的那份记录，不能继续显示「从已保存副本恢复」
       setRestoredAt(null)
       setAiOpen(false)
+      setAiPlanningAck(null)
       const dayValid = applied.trip.days.some((d) => d.day === activeDay)
       if (!dayValid) setActiveDay(applied.trip.days[0]?.day ?? 1)
       setActiveStopId((current) =>
@@ -1517,9 +2354,7 @@ export default function App() {
       )
       // 'tail' in applied 收窄 union 后按 tail.boundaryKind 分支：采用路线不再说“未重算”。
       const boundaryKind: 'unavailable' | 'navigation' =
-        'tail' in applied
-          ? (applied as DayReplanTailApplyResult & { ok: true }).tail.boundaryKind
-          : 'unavailable'
+        'tail' in applied ? applied.tail.boundaryKind : 'unavailable'
       const tailBoundaryNote =
         boundaryKind === 'navigation'
           ? `锚点与新后段首站之间的衔接路线已按两端记录坐标一并应用（高德地图 WGS84，未重新核对地址或地点身份，也不代表实时交通）。`
@@ -1548,8 +2383,235 @@ export default function App() {
       scrollToItinerary()
       return applied
     },
-    [activeDay, bumpTripRevision, openedFromFile, scrollToItinerary],
+    [
+      activeDay,
+      bumpTripRevision,
+      rebindBudgetOwnerAfterTripChange,
+      commitInternalTripFork,
+      openedFromFile,
+      scrollToItinerary,
+    ],
   )
+
+  /**
+   * 面板里点了「应用候选」：父级用最新行程引用与统一 revision 重新走 applyDayReplan，
+   * 绝不直接 setTrip 旧响应。工作区关联时先核对预览前的实际引用 + epoch，再在最终
+   * 候选上跑 F2 的 H/U 门；H 硬冲突直接拒绝，U 级要求独立确认后才提交。
+   */
+  const handleAiApply = useCallback(
+    (
+      request: DayReplanRequest,
+      response: DayReplanResponse,
+      tailScope?: DayReplanTailScope,
+      boundary?: TailBoundarySelection,
+      boundaryCurrent?: TailBoundaryCurrent,
+    ): DayReplanApplyResult | DayReplanTailApplyResult => {
+      const latestTrip = tripRef.current
+      if (!latestTrip) {
+        return { ok: false, reason: 'invalid_base', message: '当前没有可应用的行程，AI 候选未应用。' }
+      }
+      if (tailScope === undefined && boundary !== undefined) {
+        return {
+          ok: false,
+          reason: 'invalid_boundary',
+          message: '衔接路线必须与后段候选一起应用；当前没有后段范围，衔接路线未应用。',
+        }
+      }
+      const runtime = workspaceController.getRuntime()
+      const revision = planningRevisionRef.current
+      if (runtime !== null) {
+        if (
+          runtime.record.trip !== latestTrip ||
+          runtime.epoch !== aiPlanningEpochRef.current ||
+          runtime.record.workspaceRevision !== revision
+        ) {
+          return {
+            ok: false,
+            reason: 'invalid_base',
+            message: '工作区或行程在候选预览后已变化；请关闭面板后重新生成候选。',
+          }
+        }
+      }
+      // 只有 scope === undefined 才走旧整天应用；任何有参（含非法 falsy 值）都走后段
+      // 应用路径并由 verifyTailScope 做类型化失败，绝不降级成整天替换。
+      const applied =
+        tailScope === undefined
+          ? applyDayReplan({
+              baseTrip: latestTrip,
+              request,
+              response,
+              currentRevision: revision,
+              forkTripId: newUuid(),
+            })
+          : applyDayReplanTail({
+              baseTrip: latestTrip,
+              scope: tailScope,
+              request,
+              response,
+              currentRevision: revision,
+              forkTripId: newUuid(),
+              boundary,
+              current:
+                boundary !== undefined
+                  ? {
+                      trip: latestTrip,
+                      candidate: response,
+                      scope: tailScope,
+                      revision,
+                      contentEpoch: boundaryCurrent?.contentEpoch ?? Number.NaN,
+                      inputEpoch: boundaryCurrent?.inputEpoch ?? Number.NaN,
+                      boundaryEpoch: boundaryCurrent?.boundaryEpoch ?? Number.NaN,
+                    }
+                  : undefined,
+            })
+      if (!applied.ok) return applied
+
+      if (runtime !== null) {
+        const scope: PlanScopeV1 =
+          tailScope === undefined
+            ? { scope: 'day', day: request.day, anchorStopId: null }
+            : { scope: 'day_tail', day: tailScope.day, anchorStopId: tailScope.anchorStopId }
+        const constraints = scopedConstraintsForDay(runtime.record, scope.day ?? request.day)
+        const evaluation = evaluateConstraintsAgainstTrip({
+          constraints,
+          trip: applied.trip,
+          sourceTrip: latestTrip,
+          record: runtime.record,
+          planScope: scope,
+        })
+        if (!evaluation.ok) {
+          return { ok: false, reason: 'request_mismatch', message: evaluation.message }
+        }
+        if (evaluation.verdict === 'blocked') {
+          return {
+            ok: false,
+            reason: 'request_mismatch',
+            message: '存在 H 级硬冲突；AI 候选不能应用，也不能靠用户确认绕过。',
+          }
+        }
+        if (evaluation.requiresAck) {
+          setAiPlanningAck({
+            applied,
+            request,
+            response,
+            ...(tailScope === undefined ? {} : { tailScope }),
+            ...(boundary === undefined ? {} : { boundary }),
+            ...(boundaryCurrent === undefined ? {} : { boundaryCurrent }),
+            latestTrip,
+            record: runtime.record,
+            capture: aiWorkspaceCaptureRef.current,
+            epoch: aiPlanningEpochRef.current,
+            revision,
+            live: aiPlanningLiveRef.current,
+            message: '候选含未核实时间端：必须独立确认「仍采用含未核实时间方案」后才能应用。',
+          })
+          return {
+            ok: false,
+            reason: 'request_mismatch',
+            message: '候选含未核实时间端；请在面板下方独立确认后再应用。',
+          }
+        }
+      }
+
+      return finishAiApply(applied, latestTrip, request, tailScope)
+    },
+    [workspaceController, finishAiApply],
+  )
+
+  /** U 级独立确认：重新核对当前工作区 / 行程 / revision / 面板实时输入，再提交同一份候选。 */
+  const handleAiPlanningAckConfirm = useCallback(() => {
+    const pending = aiPlanningAck
+    if (pending === null) return
+    if (tripRef.current !== pending.latestTrip) {
+      setAiPlanningAck(null)
+      setError({
+        title: 'AI 候选已失效',
+        detail: '当前行程在确认前已变化；旧确认已作废，请重新生成候选。',
+      })
+      return
+    }
+    // 同步 final guard（不等 effect / 下一 render）：面板实时输入代际必须与确认挂起时
+    // 逐字段一致。指令 / 方式 / 人数 / 范围 / 锚点 / 行程内容 / day 任一变化都会推进
+    // 单调 contentEpoch（A→B→A 也 +1），旧确认（连同旧点击闭包）在这里被拒。
+    const live = aiPlanningLiveRef.current
+    if (
+      pending.live === null ||
+      live === null ||
+      live.contentEpoch !== pending.live.contentEpoch ||
+      live.inputEpoch !== pending.live.inputEpoch ||
+      live.revision !== pending.live.revision ||
+      live.dayNumber !== pending.live.dayNumber ||
+      live.trip !== pending.live.trip
+    ) {
+      setAiPlanningAck(null)
+      setError({
+        title: 'AI 候选已失效',
+        detail:
+          '调整指令 / 出行方式 / 同行人数或范围在确认前已变化；旧确认已作废，请重新生成候选。当前行程与工作区没有改动。',
+      })
+      return
+    }
+    const runtime = workspaceController.getRuntime()
+    if (
+      (pending.record === null && runtime !== null) ||
+      (pending.record !== null &&
+        (runtime === null ||
+          runtime.record !== pending.record ||
+          runtime.epoch !== pending.epoch))
+    ) {
+      setAiPlanningAck(null)
+      setError({
+        title: 'AI 候选已失效',
+        detail: '工作区或 epoch 在确认前已变化；旧确认已作废，请重新生成候选。',
+      })
+      return
+    }
+    if (planningRevisionRef.current !== pending.revision) {
+      setAiPlanningAck(null)
+      setError({
+        title: 'AI 候选已失效',
+        detail: '工作区 revision 在确认前已变化；旧确认已作废，请重新生成候选。',
+      })
+      return
+    }
+    if (pending.record !== null) {
+      const scope: PlanScopeV1 =
+        pending.tailScope === undefined
+          ? { scope: 'day', day: pending.request.day, anchorStopId: null }
+          : {
+              scope: 'day_tail',
+              day: pending.tailScope.day,
+              anchorStopId: pending.tailScope.anchorStopId,
+            }
+      const evaluation = evaluateConstraintsAgainstTrip({
+        constraints: scopedConstraintsForDay(pending.record, scope.day ?? pending.request.day),
+        trip: pending.applied.trip,
+        sourceTrip: pending.latestTrip,
+        record: pending.record,
+        planScope: scope,
+      })
+      if (!evaluation.ok || evaluation.verdict === 'blocked') {
+        setAiPlanningAck(null)
+        setError({
+          title: 'AI 候选未应用',
+          detail: !evaluation.ok
+            ? evaluation.message
+            : '存在 H 级硬冲突；AI 候选不能应用，也不能靠用户确认绕过。',
+        })
+        return
+      }
+    }
+    const result = finishAiApply(
+      pending.applied,
+      pending.latestTrip,
+      pending.request,
+      pending.tailScope,
+    )
+    if (!result.ok) {
+      setAiPlanningAck(null)
+      setError({ title: 'AI 候选未应用', detail: result.message })
+    }
+  }, [aiPlanningAck, workspaceController, finishAiApply])
 
   /* ───────── 仅刷新地图：打开 / 应用 / 关闭 ───────── */
 
@@ -1560,6 +2622,7 @@ export default function App() {
    */
   const handleOpenMapRefresh = useCallback(() => {
     if (!trip || !currentDay || draft || aiOpen || mapOpen) return
+    mapWorkspaceCaptureRef.current = workspaceController.getRuntime()?.capture ?? null
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -1601,15 +2664,29 @@ export default function App() {
         baseTrip: latestTrip,
         request,
         response,
-        currentRevision: tripRevisionRef.current,
+        currentRevision: planningRevisionRef.current,
         forkTripId: newUuid(),
       })
       if (!applied.ok || !applied.changed) return applied
 
+      // 内部 fork：工作区关联时保留 sidecar / budget；capture 在打开面板时已捕获。
+      const committed = commitInternalTripFork(applied.trip, mapWorkspaceCaptureRef.current)
+      if (!committed.ok) {
+        return {
+          ok: false,
+          reason: 'invalid_base',
+          message: '工作区记录校验未通过；地图刷新未应用，当前行程保持不变。',
+        } as MapRefreshApplyResult
+      }
+      mapWorkspaceCaptureRef.current = null
+
       undoApplyRef.current = latestTrip
       setCanUndoApply(true)
-      setTrip(applied.trip)
-      bumpTripRevision()
+      if (!committed.projected) {
+        setTrip(applied.trip)
+        bumpTripRevision()
+        rebindBudgetOwnerAfterTripChange(applied.trip)
+      }
       setPhase('ready')
       setError(null)
       setRequestOutcome({ kind: 'none' })
@@ -1630,7 +2707,13 @@ export default function App() {
       scrollToItinerary()
       return applied
     },
-    [activeDay, bumpTripRevision, scrollToItinerary],
+    [
+      activeDay,
+      bumpTripRevision,
+      rebindBudgetOwnerAfterTripChange,
+      commitInternalTripFork,
+      scrollToItinerary,
+    ],
   )
 
   /**
@@ -1701,6 +2784,84 @@ export default function App() {
   const amapNote = backend.checked && backend.reachable && backend.amap === 'not_configured'
     ? '当前后端服务没有配置地图 Key：新规划的行程不会有站点坐标和导航路线。已经生成的行程（包括导入或恢复的）不受此说明影响，它们的坐标取决于各自生成时的服务配置。'
     : null
+
+  const workspaceBudgetSnapshot = budgetSnapshotOfSession(budgetSession)
+  const workspaceBudgetDirty =
+    workspaceController.workspace !== null &&
+    !canonicalValuesEqual(workspaceController.workspace.budget, workspaceBudgetSnapshot)
+
+  /** 渲染期读取 controller 实际 refs：只用于给 F2 面板 / 离线导出传当前 capture。 */
+  const workspaceRuntime = workspaceController.getRuntime()
+  const constraintsScope: PlanScopeV1 | null =
+    currentWorkspaceRecord === null
+      ? null
+      : {
+          scope: 'day',
+          day: currentWorkspaceRecord.trip.days.some((d) => d.day === activeDay)
+            ? activeDay
+            : (currentWorkspaceRecord.trip.days[0]?.day ?? 1),
+          anchorStopId: null,
+        }
+  const constraintsRuntimeCapture =
+    workspaceRuntime !== null && workspaceRuntime.record === currentWorkspaceRecord
+      ? workspaceRuntime.capture
+      : null
+
+  /**
+   * AI 单日 / 后段的 F2 planning context：只发当前天 + 全局约束；binding 绑定
+   * 当前内存 record / revision / epoch。父级在面板渲染时捕获，不用请求时现取。
+   */
+  const aiPlanningContext = (() => {
+    if (currentWorkspaceRecord === null || trip === null) return null
+    if (currentWorkspaceRecord.trip !== trip) return null
+    const day = currentWorkspaceRecord.trip.days.some((d) => d.day === activeDay)
+      ? activeDay
+      : currentWorkspaceRecord.trip.days[0]?.day
+    if (day === undefined) return null
+    const constraints = scopedConstraintsForDay(currentWorkspaceRecord, day)
+    const record = currentWorkspaceRecord
+    const epoch = workspaceEpoch
+    return {
+      constraints,
+      record,
+      epoch,
+      createBinding: (scope: PlanScopeV1) => {
+        const result = createConstraintsBinding(record, constraints, scope, epoch)
+        return result.ok
+          ? ({ ok: true, value: result.value } as const)
+          : ({ ok: false, message: result.message } as const)
+      },
+    }
+  })()
+
+  /**
+   * F3 没有打开草稿时用于「加入草稿」预览的临时 base；确认加入后才进入编辑。
+   * 必须 useMemo 稳定：forkTripId 只随真实业务上下文（当前 Trip 副本 / 新路段方式）
+   * 重新生成。若每次 render 都 newUuid()，切日期页签等无关渲染也会换掉 forkTripId，
+   * CandidatePoolPanel 的 draftKey 随之失配，把「加入草稿」预览静默作废。
+   * Trip / draftMode 变化 = 真实 owner / 输入上下文变化，此时旧预览本就应当失效。
+   */
+  const candidateDraftBase = useMemo(() => {
+    if (trip === null) return null
+    const result = createTripDraft(trip, { forkTripId: newUuid(), newLegMode: draftMode })
+    return result.ok ? result.draft : null
+  }, [trip, draftMode])
+  const candidateCopySources: readonly CandidateStopSource[] = (() => {
+    const sourceDays = draft?.days ?? trip?.days ?? []
+    const sources: CandidateStopSource[] = []
+    for (const day of sourceDays) {
+      for (const stop of day.stops) {
+        sources.push({
+          stopId: stop.id,
+          name: stop.name,
+          address: stop.address ?? null,
+          location: stop.location ?? null,
+          day: day.day,
+        })
+      }
+    }
+    return sources
+  })()
 
   return (
     <div className="app-shell">
@@ -1864,6 +3025,255 @@ export default function App() {
               <>
                 <SavedTripsPanel trip={trip} onRestore={handleRestoreSavedTrip} />
                 <IcsExportPanel trip={trip} key={`ics:${trip.id}`} />
+                <WorkspaceHub
+                  workspace={workspaceController.workspace}
+                  workspaceStatus={workspaceController.workspaceStatus}
+                  workspaceMessage={workspaceController.workspaceMessage}
+                  workspaceExternallyChanged={workspaceController.workspaceExternallyChanged}
+                  versions={workspaceController.versions}
+                  versionsStatus={workspaceController.versionsStatus}
+                  versionsMessage={workspaceController.versionsMessage}
+                  versionsLoaded={workspaceController.versionsLoaded}
+                  versionsExternallyChanged={workspaceController.versionsExternallyChanged}
+                  epoch={workspaceController.epoch}
+                  busy={workspaceController.busy}
+                  canWrite={workspaceController.canWrite}
+                  undoProposal={workspaceController.undoProposal}
+                  notice={workspaceController.notice}
+                  budgetDirty={workspaceBudgetDirty}
+                  onOpenWorkspace={() => {
+                    workspaceController.openWorkspace()
+                  }}
+                  onCreateWorkspace={() => {
+                    workspaceController.createWorkspace({
+                      trip,
+                      budget: budgetSnapshotOfSession(budgetSession),
+                      label: trip.title,
+                    })
+                  }}
+                  onOpenVersions={() => {
+                    workspaceController.openVersions()
+                  }}
+                  onSaveWorkspace={() => {
+                    void workspaceController.saveWorkspace(budgetSnapshotOfSession(budgetSession))
+                  }}
+                  onDetach={() => {
+                    workspaceController.detach()
+                  }}
+                  onSaveVersion={(request) => {
+                    void workspaceController.saveVersion(request.name)
+                  }}
+                  onAdoptVersion={(proposal) => {
+                    workspaceController.adoptVersion(proposal)
+                  }}
+                  onUndoAdopt={(proposal) => {
+                    workspaceController.undoAdopt(proposal)
+                  }}
+                  onImportVersions={(preview) => {
+                    void workspaceController.importVersions(preview)
+                  }}
+                  onDownloadVersionsBackup={downloadVersionsBackup}
+                  onUndoVersionsImport={() => {
+                    void workspaceController.undoVersionsImport()
+                  }}
+                  versionsImportUndoExpiresAt={workspaceController.versionsImportUndoExpiresAt}
+                  onDismissNotice={workspaceController.dismissNotice}
+                >
+                  <section className="wsh-tools" aria-label="行程工具">
+                    <div className="wsh-tools-head">
+                      <div>
+                        <p className="wsh-eyebrow">行程工具</p>
+                        <p className="wsh-tool-note">
+                          锚点 / 约束 / 清单 / 离线导出使用当前已应用的工作区记录；每次改动只做一次内存 transition，
+                          不会自动写库。候选地点池是独立键，打开 / 保存 / 导入都需要你显式操作。
+                        </p>
+                      </div>
+                    </div>
+                    <div className="wsh-tool-actions">
+                      <button
+                        type="button"
+                        className="wsh-btn"
+                        aria-expanded={anchorsOpen}
+                        onClick={() => {
+                          setAnchorsOpen((open) => !open)
+                          setConstraintsOpen(false)
+                          setChecklistOpen(false)
+                          setCandidatePoolOpen(false)
+                        }}
+                        disabled={currentWorkspaceRecord === null}
+                      >
+                        锚点与酒店
+                      </button>
+                      <button
+                        type="button"
+                        className="wsh-btn"
+                        aria-expanded={constraintsOpen}
+                        onClick={() => {
+                          setConstraintsOpen((open) => !open)
+                          setAnchorsOpen(false)
+                          setChecklistOpen(false)
+                          setCandidatePoolOpen(false)
+                        }}
+                        disabled={currentWorkspaceRecord === null}
+                      >
+                        必去点与预约
+                      </button>
+                      <button
+                        type="button"
+                        className="wsh-btn"
+                        aria-expanded={checklistOpen}
+                        onClick={() => {
+                          setChecklistOpen((open) => !open)
+                          setAnchorsOpen(false)
+                          setConstraintsOpen(false)
+                          setCandidatePoolOpen(false)
+                        }}
+                        disabled={currentWorkspaceRecord === null}
+                      >
+                        出行清单
+                      </button>
+                      <button
+                        type="button"
+                        className="wsh-btn"
+                        aria-expanded={candidatePoolOpen}
+                        onClick={() => {
+                          if (candidatePoolOpen) {
+                            setCandidatePoolOpen(false)
+                          } else {
+                            openCandidatePool()
+                          }
+                        }}
+                      >
+                        候选地点池
+                      </button>
+                    </div>
+                    {currentWorkspaceRecord === null ? (
+                      <p className="wsh-tool-note">
+                        锚点 / 约束 / 清单 / 离线导出需要先关联工作区；候选地点池可以独立使用。
+                      </p>
+                    ) : null}
+
+                    {anchorsOpen && currentWorkspaceRecord !== null ? (
+                      <div className="wsh-tool-panel">
+                        <AnchorsPanel
+                          key={`anchors:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
+                          record={currentWorkspaceRecord}
+                          epoch={workspaceEpoch}
+                          newLegMode={draftMode}
+                          onApply={handleAnchorsApply}
+                          onClose={() => setAnchorsOpen(false)}
+                        />
+                      </div>
+                    ) : null}
+
+                    {constraintsOpen && currentWorkspaceRecord !== null ? (
+                      <div className="wsh-tool-panel">
+                        <ConstraintsPanel
+                          key={`constraints:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
+                          constraints={currentWorkspaceRecord.sidecar.constraints}
+                          trip={currentWorkspaceRecord.trip}
+                          workspaceRevision={currentWorkspaceRecord.workspaceRevision}
+                          epoch={workspaceEpoch}
+                          candidateTrip={currentWorkspaceRecord.trip}
+                          record={currentWorkspaceRecord}
+                          runtimeCapture={constraintsRuntimeCapture}
+                          planScope={constraintsScope}
+                          onApply={handleConstraintsApply}
+                          onClose={() => setConstraintsOpen(false)}
+                        />
+                      </div>
+                    ) : null}
+
+                    {checklistOpen && currentWorkspaceRecord !== null ? (
+                      <div className="wsh-tool-panel">
+                        <ChecklistPanel
+                          key={`checklist:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
+                          checklist={currentWorkspaceRecord.sidecar.checklist}
+                          trip={currentWorkspaceRecord.trip}
+                          constraints={currentWorkspaceRecord.sidecar.constraints}
+                          previousConstraints={checklistPreviousConstraints}
+                          status="ready"
+                          onChange={handleChecklistChange}
+                          onClose={() => setChecklistOpen(false)}
+                        />
+                      </div>
+                    ) : null}
+
+                    {candidatePoolOpen ? (
+                      <div className="wsh-tool-panel">
+                        <CandidatePoolPanel
+                          record={candidatesRecord}
+                          draft={draft ?? candidateDraftBase}
+                          copySources={candidateCopySources}
+                          storageStatus={candidatesStorageStatus}
+                          storageMessage={candidatesStorageMessage}
+                          storageRevision={candidatesStorageRevision}
+                          saveStatus={candidatesSaveStatus}
+                          saveMessage={candidatesSaveMessage}
+                          onRecordChange={handleCandidatesRecordChange}
+                          onSave={handleSaveCandidates}
+                          onExport={handleExportCandidates}
+                          onImportRequest={handleCandidatesImportRequest}
+                          onAddToDraft={handleCandidateAddToDraft}
+                          onClose={() => setCandidatePoolOpen(false)}
+                        />
+                        {candidatesImportPreview !== null ? (
+                          <div className="wsh-tool-panel" role="region" aria-label="候选库导入预览">
+                            <p className="wsh-tool-note">
+                              文件《{candidatesImportPreview.fileName}》已通过纯校验，共{' '}
+                              {candidatesImportPreview.itemCount} 个候选。确认后才会写入候选库；不会改动工作区或版本库。
+                            </p>
+                            <div className="wsh-tool-actions">
+                              <button
+                                type="button"
+                                className="wsh-btn wsh-btn-primary"
+                                onClick={handleConfirmCandidatesImport}
+                                disabled={candidatesImportBusy}
+                              >
+                                确认导入候选库
+                              </button>
+                              <button
+                                type="button"
+                                className="wsh-btn"
+                                onClick={handleCancelCandidatesImport}
+                                disabled={candidatesImportBusy}
+                              >
+                                取消导入
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {candidatesImportMessage !== null ? (
+                          <p className="wsh-tool-note" role="status">
+                            {candidatesImportMessage}
+                          </p>
+                        ) : null}
+                        {candidatesUndo !== null ? (
+                          <button type="button" className="wsh-btn" onClick={handleUndoCandidatesImport}>
+                            撤销最近一次候选库导入
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <input
+                      ref={candidatesFileInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      hidden
+                      onChange={handleCandidatesFileChange}
+                    />
+
+                    {currentWorkspaceRecord !== null ? (
+                      <div className="wsh-tool-panel">
+                        <OfflineTripPanel
+                          record={currentWorkspaceRecord}
+                          epoch={workspaceEpoch}
+                        />
+                      </div>
+                    ) : null}
+                  </section>
+                </WorkspaceHub>
               </>
             )}
 
@@ -1977,7 +3387,7 @@ export default function App() {
                 <MapRefreshPanel
                   trip={trip}
                   day={currentDay ?? null}
-                  revision={tripRevision}
+                  revision={planningRevision}
                   openedFromFile={openedFromFile === true}
                   onApply={handleMapApply}
                   onClose={handleCloseMapRefresh}
@@ -1994,12 +3404,39 @@ export default function App() {
                 <DayReplanPanel
                   trip={trip}
                   dayNumber={activeDay}
-                  revision={tripRevision}
+                  revision={planningRevision}
                   plannerAvailability={backend.planner}
                   requestDay={handleAiRequestDay}
                   onApply={handleAiApply}
                   onClose={handleCloseAiPanel}
+                  planningContext={aiPlanningContext}
+                  liveInputRef={aiPlanningLiveRef}
+                  onPlanningInputChanged={handleAiPlanningInputChanged}
                 />
+                {aiPlanningAck !== null ? (
+                  <div className="ai-panel-slot" role="region" aria-label="未核实时间确认">
+                    <p className="ai-pause-note" role="note">
+                      {aiPlanningAck.message}
+                      确认只对当前候选有效；H 级硬冲突没有确认入口。
+                    </p>
+                    <div className="edit-entry-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleAiPlanningAckConfirm}
+                      >
+                        仍采用含未核实时间方案并应用
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setAiPlanningAck(null)}
+                      >
+                        取消这次确认
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -2182,7 +3619,7 @@ export default function App() {
                     trip={trip}
                     revision={tripRevision}
                     session={budgetSession}
-                    onSessionChange={setBudgetSession}
+                    onSessionChange={handleBudgetSessionChange}
                     onClose={handleBudgetClose}
                   />
                 ) : (

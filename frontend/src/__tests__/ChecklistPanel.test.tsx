@@ -4,7 +4,7 @@
  * 撤销提案在清单变化后失效。
  */
 import { useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Trip, TripStop } from '../lib/api'
@@ -678,5 +678,119 @@ describe('ChecklistPanel · 失败与只读', () => {
     fireEvent.click(screen.getByRole('button', { name: '重建清单（需确认）' }))
     expect(rebuild).toHaveBeenCalledTimes(1)
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('ChecklistPanel · 逐条「按当前预约重新核对」', () => {
+  const anchorBefore = makeConstraint({
+    id: 'C',
+    title: '博物馆预约',
+    day: 1,
+    stopId: 's1',
+    startDate: '2026-04-03',
+    endDate: '2026-04-03',
+  })
+  const anchorAfter = makeConstraint({
+    id: 'C',
+    title: '博物馆预约',
+    day: 1,
+    stopId: 's2',
+    startDate: '2026-04-04',
+    endDate: '2026-04-04',
+  })
+
+  function twoLinkedInitial(): ChecklistV1 {
+    return makeChecklist([
+      makeItem({
+        id: 'i1',
+        title: '核对A',
+        category: 'appointment',
+        done: true,
+        constraintId: 'C',
+        date: '2026-04-03',
+        day: 1,
+        stopId: 's1',
+        notes: '手工备注A',
+      }),
+      makeItem({
+        id: 'i2',
+        title: '核对B',
+        category: 'appointment',
+        done: false,
+        constraintId: 'C',
+        date: '2026-04-03',
+        day: 1,
+        stopId: 's1',
+        notes: '手工备注B',
+      }),
+    ])
+  }
+
+  it('mark 只标记：两条任务的「已变更」提示都保留，且 action 仍是 relink', async () => {
+    const calls: Array<{ next: ChecklistV1; context: ChecklistChangeContext }> = []
+    render(
+      <Harness
+        initial={twoLinkedInitial()}
+        trip={makeTrip([makeStop('s1', '博物馆'), makeStop('s2', '新馆')])}
+        constraints={{ items: [anchorAfter] }}
+        previousConstraints={{ items: [anchorBefore] }}
+        onCall={(next, context) => calls.push({ next, context })}
+      />,
+    )
+    const audit = screen.getByRole('region', { name: '需重新关联的清单项' })
+    expect(audit.textContent).toContain('核对A')
+    expect(audit.textContent).toContain('核对B')
+    const markButtons = within(audit).getAllByRole('button', { name: '标记需重新关联' })
+    expect(markButtons).toHaveLength(2)
+    fireEvent.click(markButtons[0])
+    await waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0].context.action).toBe('relink')
+    // 标记后两条提示都还在（mark ≠ 确认）
+    expect(screen.getByRole('region', { name: '需重新关联的清单项' }).textContent).toContain('核对A')
+    expect(screen.getByRole('region', { name: '需重新关联的清单项' }).textContent).toContain('核对B')
+  })
+
+  it('按当前预约重新核对：只解除该条，另一条保留；锚点更新、done / 用户备注保留', async () => {
+    const calls: Array<{ next: ChecklistV1; context: ChecklistChangeContext }> = []
+    render(
+      <Harness
+        initial={twoLinkedInitial()}
+        trip={makeTrip([makeStop('s1', '博物馆'), makeStop('s2', '新馆')])}
+        constraints={{ items: [anchorAfter] }}
+        previousConstraints={{ items: [anchorBefore] }}
+        onCall={(next, context) => calls.push({ next, context })}
+      />,
+    )
+    const audit = screen.getByRole('region', { name: '需重新关联的清单项' })
+    const rows = within(audit).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    // 第一行是核对A：先标记（只标记），再真正重新核对
+    fireEvent.click(within(rows[0]).getByRole('button', { name: '标记需重新关联' }))
+    await waitFor(() => expect(calls).toHaveLength(1))
+    fireEvent.click(within(rows[0]).getByRole('button', { name: '按当前预约重新核对' }))
+    await waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls[1].context.action).toBe('reconfirm-constraint')
+    expect(calls[1].context.itemId).toBe('i1')
+    const reconfirmed = calls[1].next.items.find((entry) => entry.id === 'i1')
+    expect(reconfirmed).toMatchObject({
+      constraintId: 'C',
+      done: true,
+      date: '2026-04-04',
+      day: 1,
+      stopId: 's2',
+    })
+    expect(reconfirmed?.notes).toBe('手工备注A')
+
+    // A 的审计行消失，B 的仍在
+    await waitFor(() => {
+      const next = screen.getByRole('region', { name: '需重新关联的清单项' })
+      expect(next.textContent).not.toContain('核对A')
+      expect(next.textContent).toContain('核对B')
+    })
+    // A 条目本体：锚点已更新、done 保留、用户备注保留
+    expect(screen.getByText('核对A')).toBeInTheDocument()
+    expect(screen.getByLabelText('核对A：已准备')).toBeInTheDocument()
+    expect(screen.getByText('手工备注A')).toBeInTheDocument()
+    expect(screen.getByText(/日期 2026-04-04/)).toBeInTheDocument()
   })
 })

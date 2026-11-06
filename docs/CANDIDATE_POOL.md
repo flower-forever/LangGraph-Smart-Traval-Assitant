@@ -201,6 +201,21 @@ buildCandidateDraftProposal({
 固定写明这一点，并固定写明「预览未写入任何行程或本地存储」「确认加入只改父级草稿，
 真正应用到行程仍需既有草稿应用流程」。
 
+**预览失效的语义（2026-11-06 修订）**：
+
+- 面板用 `draftKey = base.id | forkTripId | draft.revision`、`recordKey`、`storageRevision`
+  三个真实业务上下文判断预览是否仍有效。**父级必须为「没有打开草稿」的场景提供稳定
+  base**（App 用 `useMemo` 按 `trip` / `draftMode` 持有 `candidateDraftBase`，forkTripId 只随
+  真实 owner / 输入上下文重新生成）：否则切日期页签等无关渲染也会换掉 forkTripId，把
+  预览静默作废。draft / record / storageRevision 的真实变化仍必须使旧预览失效。
+- 上下文真实变化使预览作废时，面板清除旧预览、旧 proposal 错误与**旧成功消息**
+  （如「已生成加入草稿的预览」不再残留），并显示显式状态
+  「候选库、草稿或存储 owner revision 已变化；预览已失效，请重新生成预览。」
+  （`role="status"`）。挂载首跑与面板自己刚提交的候选库编辑（`emittedKeyRef` 命中）
+  不算外部变化，不改写消息状态。
+- 面板自己提交候选库编辑（add / edit / delete / undo）仍按原行为清预览，但不冒充
+  「外部失效」，也不覆盖该次操作自己的消息。
+
 ---
 
 ## 6. 面板回调与 adapter 契约
