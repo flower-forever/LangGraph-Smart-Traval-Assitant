@@ -11,6 +11,7 @@ import DayReplanPanel, {
   type DayReplanAdapter,
   type DayReplanLiveInputSnapshot,
 } from './components/DayReplanPanel'
+import AssistantDialogPanel, { type ReplanCandidateBase } from './components/AssistantDialogPanel'
 import DayWeatherPanel from './components/DayWeatherPanel'
 import DayPoiSourcesPanel from './components/DayPoiSourcesPanel'
 import WebSourcesPanel from './components/WebSourcesPanel'
@@ -31,7 +32,7 @@ import CandidatePoolPanel, {
 import OfflineTripPanel from './components/OfflineTripPanel'
 import { emptyBudgetSession, tripOwnerSnapshot, type BudgetSessionState } from './lib/tripBudget'
 import { useWorkspaceController } from './lib/useWorkspaceController'
-import { canonicalValuesEqual } from './lib/workspaceFingerprint'
+import { canonicalValuesEqual, fingerprintOf, fingerprintsMatch } from './lib/workspaceFingerprint'
 import type { VersionsBackupPreviewV1 } from './lib/versionSnapshots'
 import {
   CANDIDATES_STORAGE_KEY,
@@ -95,6 +96,7 @@ import {
   type TailBoundarySelection,
 } from './lib/dayReplanTail'
 import { replanDay } from './lib/dayReplanApi'
+import type { DayReplanConstraintsOptions } from './lib/planningConstraintsApi'
 import {
   applyMapRefresh,
   type MapRefreshApplyResult,
@@ -584,6 +586,8 @@ export default function App() {
   const [aiOpen, setAiOpen] = useState(false)
   /** 仅刷新地图面板是否打开；与本地草稿 / AI 面板互斥，打开期间暂停会替换行程的入口 */
   const [mapOpen, setMapOpen] = useState(false)
+  /** A 切片 · AI 行程助手（对话式行程编辑）面板是否打开；与单日调整面板互斥 */
+  const [assistantOpen, setAssistantOpen] = useState(false)
 
   /** 当前是否处于本地编辑状态（草稿已打开） */
   const editingDraft = draft !== null
@@ -2242,6 +2246,8 @@ export default function App() {
     aiWorkspaceCaptureRef.current = runtime?.capture ?? null
     aiPlanningEpochRef.current = runtime?.epoch ?? workspaceController.epoch
     setAiPlanningAck(null)
+    // 与 AI 行程助手互斥：两个面板都改行程，同时开着只会互相作废对方的候选。
+    setAssistantOpen(false)
     planSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -2612,6 +2618,133 @@ export default function App() {
       setError({ title: 'AI 候选未应用', detail: result.message })
     }
   }, [aiPlanningAck, workspaceController, finishAiApply])
+
+  /* ───────── A 切片 · AI 行程助手（对话式行程编辑） ───────── */
+
+  /**
+   * 打开 AI 行程助手：只挂载面板，不发请求、不写存储。
+   * 与单日调整面板互斥：两个面板都会改行程，同时开着只会互相作废对方的候选。
+   */
+  const handleOpenAssistant = useCallback(() => {
+    if (!trip || draft || assistantOpen) return
+    // 打开面板是显式用户动作：此时才读一次候选库（独立键，只读），
+    // 让「从收藏池加入」这类指令用得上候选；不读就不读，绝不写。
+    if (candidatesRecord === null) {
+      const read = loadCandidatesRecord(storageRef.current)
+      if (read.record !== null) setCandidatesRecord(read.record)
+    }
+    // 重排类建议复用既有的单日重排落地流程（handleAiApply）：那里按「候选预览时
+    // 的工作区引用 + epoch」核对基准，所以这里也必须在打开面板时捕获一次。
+    // 否则工作区关联时，重排候选会被判成「预览后已变化」而永远落不了地。
+    const runtime = workspaceController.getRuntime()
+    aiWorkspaceCaptureRef.current = runtime?.capture ?? null
+    aiPlanningEpochRef.current = runtime?.epoch ?? workspaceController.epoch
+    setAiOpen(false)
+    setAiPlanningAck(null)
+    setAssistantOpen(true)
+  }, [trip, draft, assistantOpen, candidatesRecord, workspaceController])
+
+  /** 关闭 AI 行程助手：放弃在途提案；行程与已保存记录都不动。 */
+  const handleCloseAssistant = useCallback(() => {
+    setAssistantOpen(false)
+  }, [])
+
+  /**
+   * 应用一次对话式改动：面板已经按工作区规则算好下一条记录（workspaceRevision + 1）。
+   * 有关联工作区时用 controller 的 adoptRecord 装下这条记录（notify:false，面板要保持
+   * 打开并显示「已应用 / 撤销」）；没有关联工作区时只换页面行程。
+   * 失败时页面完全不变，也不碰已保存的记录。
+   */
+  const handleAssistantApplyRecord = useCallback(
+    (next: WorkspaceRecordV1): { ok: boolean; message?: string } => {
+      const runtime = workspaceController.getRuntime()
+      if (runtime !== null) {
+        const adopted = workspaceController.adoptRecord(next, runtime.capture, { notify: false })
+        if (!adopted.ok) {
+          const message = adopted.message ?? '工作区记录校验失败；当前行程保持不变。'
+          setError({ title: '未能应用这条建议', detail: message })
+          return { ok: false, message }
+        }
+      }
+      // 两套 undo 互不干扰：助手这一层自带独立撤销（面板里的「撤销这条建议」），
+      // 页面草稿栈那条「撤销应用」回退的是助手改动之前的行程 —— 助手一旦改动行程，
+      // 它就不再指向「当前行程的上一层」，留着会被误点成连带撤销助手这次改动。
+      // 助手应用（含撤销）都走这里，所以这里让旧入口彻底失效。
+      undoApplyRef.current = null
+      setCanUndoApply(false)
+      setAppliedNotice(null)
+      setTrip(next.trip)
+      bumpTripRevision()
+      rebindBudgetOwnerAfterTripChange(next.trip)
+      setActiveStopId((current) =>
+        current && next.trip.days.some((d) => d.stops.some((s) => s.id === current)) ? current : null,
+      )
+      setPhase('ready')
+      setError(null)
+      setRequestOutcome({ kind: 'none' })
+      setRestoredAt(null)
+      return { ok: true }
+    },
+    [bumpTripRevision, rebindBudgetOwnerAfterTripChange, workspaceController],
+  )
+
+  /**
+   * 时间偏好 / 节奏调整类建议：交给既有的单日重排通道与既有应用流程，
+   * 不新增端点，也不另起一套应用逻辑。
+   *
+   * 这里还有第二道闸门（面板那边已经按快照拒过一次）：候选是按「请求发出时」的
+   * 工作区快照算出来的，行程在别处改过旧候选就绝不套用。
+   * 底下单日重排只比版本，同版本内容变了它认不出来，所以这里把内容指纹也比上。
+   */
+  const handleAssistantReplanApply = useCallback(
+    (
+      request: DayReplanRequest,
+      response: DayReplanResponse,
+      base?: ReplanCandidateBase,
+    ) => {
+      if (base !== undefined) {
+        if (planningRevisionRef.current !== base.revision) {
+          return {
+            ok: false,
+            message: '行程在候选生成之后已经改过，这条重排候选没有应用；请重新生成建议。',
+          }
+        }
+        // 有关联工作区时按整条记录比对指纹；没关联时页面版本号每次换行程都会推进，
+        // 版本核对已经够用（此时没有可跨会话漂移的工作区记录）。
+        const record = currentWorkspaceRecord
+        if (record !== null) {
+          const printed = fingerprintOf(record)
+          if (!printed.ok || !fingerprintsMatch(printed.fingerprint, base.fingerprint)) {
+            return {
+              ok: false,
+              message:
+                '行程在候选生成之后已经改过（同版本内容变化也算），这条重排候选没有应用；请重新生成建议。',
+            }
+          }
+        }
+      }
+      const result = handleAiApply(request, response)
+      return { ok: result.ok, message: result.ok ? undefined : result.message }
+    },
+    [currentWorkspaceRecord, handleAiApply],
+  )
+
+  /**
+   * 单日重排请求的 planningConstraints：复用既有 F2 约束绑定（同一套 scope 口径）。
+   * 没关联工作区时不发 constraints，请求体与旧行为一致。
+   */
+  const buildAssistantPlanningConstraints = useCallback(
+    (request: DayReplanRequest): DayReplanConstraintsOptions | undefined => {
+      const record = currentWorkspaceRecord
+      if (record === null) return undefined
+      const scope: PlanScopeV1 = { scope: 'day', day: request.day, anchorStopId: null }
+      const constraints = scopedConstraintsForDay(record, request.day)
+      const binding = createConstraintsBinding(record, constraints, scope, workspaceEpoch)
+      if (!binding.ok) return undefined
+      return { constraints, scope, record, binding: binding.value, epoch: workspaceEpoch }
+    },
+    [currentWorkspaceRecord, workspaceEpoch],
+  )
 
   /* ───────── 仅刷新地图：打开 / 应用 / 关闭 ───────── */
 
@@ -3378,6 +3511,33 @@ export default function App() {
               </div>
             )}
 
+            {!aiOpen && !mapOpen && !assistantOpen && (
+              <div className="ai-entry" data-testid="assistant-entry">
+                <div className="ai-entry-copy">
+                  <p className="field-label">AI 行程助手（用一句话改行程）</p>
+                  <p className="field-help">
+                    说一句想怎么改，助手会先列出改动清单、标出还不确定的地方和冲突，你确认后才改当前行程。
+                    改的是内存里的行程，不会自动保存；行程在别处变了，这条建议就作废。
+                  </p>
+                  {editingDraft ? (
+                    <p className="field-help" role="note">
+                      本地草稿正在编辑：先「应用草稿」或「放弃草稿」，再用行程助手；草稿输入不会因此丢失。
+                    </p>
+                  ) : null}
+                </div>
+                <div className="ai-entry-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleOpenAssistant}
+                    disabled={editingDraft}
+                  >
+                    AI 行程助手
+                  </button>
+                </div>
+              </div>
+            )}
+
             {mapOpen && trip && (
               <div className="ai-panel-slot" data-testid="map-refresh-slot">
                 <p className="ai-pause-note" role="note">
@@ -3437,6 +3597,29 @@ export default function App() {
                     </div>
                   </div>
                 ) : null}
+              </div>
+            )}
+
+            {assistantOpen && trip && (
+              <div className="ai-panel-slot" data-testid="assistant-dialog-slot">
+                <p className="ai-pause-note" role="note">
+                  AI 行程助手打开着：建议只在内存里计算与应用，不会自动保存；行程在别处被改动后，
+                  这里挂起的建议会立刻作废，需要重新生成。
+                </p>
+                <AssistantDialogPanel
+                  trip={trip}
+                  record={currentWorkspaceRecord}
+                  candidates={candidatesRecord?.items ?? []}
+                  currentDay={activeDay}
+                  travelMode={draftMode}
+                  revision={planningRevision}
+                  createLogicalId={newUuid}
+                  onApplyRecord={handleAssistantApplyRecord}
+                  requestDay={handleAiRequestDay}
+                  onReplanApply={handleAssistantReplanApply}
+                  planningConstraints={buildAssistantPlanningConstraints}
+                  onClose={handleCloseAssistant}
+                />
               </div>
             )}
 
