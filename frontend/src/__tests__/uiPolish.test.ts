@@ -11,10 +11,8 @@
  * 源文件用 node:fs 读取（vitest 运行时是 Node；css ?raw 在 vitest 里返回空串，
  * 不能用）。对比度用 OKLab 规范矩阵 + WCAG 相对亮度现算，不依赖浏览器。
  */
-// tsconfig.app 只声明了 vite/client 类型，未装 @types/node；装上后可删掉两处 expect-error
-// @ts-expect-error vitest 运行时提供 node:fs
+// tsconfig.app 只声明了 vite/client 类型；node:fs / node:path 由 @types/node 提供（S1 起已装）
 const fs = (await import('node:fs')) as { readFileSync(path: string, enc: 'utf8'): string }
-// @ts-expect-error vitest 运行时提供 node:path
 const path = (await import('node:path')) as { resolve(...parts: string[]): string }
 
 const here = (import.meta as unknown as { dirname: string }).dirname

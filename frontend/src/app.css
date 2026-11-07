@@ -3,7 +3,18 @@
  * paper: oklch(96.5% 0.012 85) · accent: oklch(52% 0.14 30) 朱砂
  * display: 楷体 · body: 苹方/雅黑 · mono: JetBrains Mono/Consolas
  */
+/* Tailwind v4（S1 基建）：只引入 theme + utilities 两层。
+ * 暂不引入 preflight —— 它会重置标题字号 / 列表缩进 / 段落间距，
+ * 在面板迁移完成前会改变现有渲染结果（S1 硬约束：零面板改动）。
+ * W4 波次（tokens.css 退役、全局 shell 迁移）时再把 preflight 加回来。
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
 @import "../tokens.css";
+/* shadcn/ui 语义变量 + Tailwind 桥接（不改 tokens.css） */
+@import "./theme.css";
 
 /* ---------- 基础 ---------- */
 * { box-sizing: border-box; }
