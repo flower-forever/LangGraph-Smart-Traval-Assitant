@@ -32,6 +32,13 @@ import {
   type CandidatePoolResult,
   type CandidateStopSource,
 } from '../lib/candidatePool'
+import {
+  CANDIDATE_PACE_LABELS,
+  assistantSuggestedNote,
+  derivePaceFromDraftDayStopCounts,
+  suggestCandidatePlaces,
+  type CandidateSuggestion,
+} from '../lib/candidateSuggestions'
 import './candidatePoolPanel.css'
 
 export type CandidatePoolStorageStatus =
@@ -240,6 +247,8 @@ export default function CandidatePoolPanel({
   const [proposalError, setProposalError] = useState<string | null>(null)
   /** 上下文真实变化后旧预览被作废时的显式状态；挂载首跑不提示。 */
   const [previewInvalid, setPreviewInvalid] = useState<string | null>(null)
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<string[]>([])
   const [dirty, setDirty] = useState(false)
   const previewContextRef = useRef<{
     recordKey: string
@@ -329,6 +338,22 @@ export default function CandidatePoolPanel({
   const pendingCandidate = useMemo(
     () => record?.items.find((item) => item.id === addCandidateId) ?? null,
     [record, addCandidateId],
+  )
+  const suggestionInput = useMemo(() => {
+    const dayStopCounts = draft?.days.map((day) => day.stops.length) ?? []
+    return {
+      destination: draft?.base.destination ?? '',
+      days: dayStopCounts.length > 0 ? dayStopCounts.length : 1,
+      pace: derivePaceFromDraftDayStopCounts(dayStopCounts),
+      existingCandidates: record?.items ?? [],
+    }
+  }, [draft, record])
+  const suggestions = useMemo(
+    () => (suggestionsOpen ? suggestCandidatePlaces(suggestionInput) : []),
+    [suggestionsOpen, suggestionInput],
+  )
+  const visibleSuggestions = suggestions.filter(
+    (suggestion) => !dismissedSuggestions.includes(suggestion.name),
   )
   const notice = storageNotice(status, storageMessage)
 
@@ -657,6 +682,46 @@ export default function CandidatePoolPanel({
     setInfo('已发出导入请求；父级负责读取、纯校验预览与显式确认，本面板不直接恢复。')
   }
 
+  function toggleSuggestions() {
+    if (suggestionsOpen) {
+      setSuggestionsOpen(false)
+      return
+    }
+    setDismissedSuggestions([])
+    setSuggestionsOpen(true)
+    setMessage(null)
+  }
+
+  /** 采纳 = 预填手工新增表单；绝不直接入池、绝不自造坐标。 */
+  function adoptSuggestion(suggestion: CandidateSuggestion) {
+    if (!writable || record === null) {
+      setError('当前候选库只读，未填入表单。')
+      return
+    }
+    setMode('manual')
+    setAddForm({
+      name: suggestion.name,
+      address: '',
+      notes: assistantSuggestedNote(suggestion.reason),
+      tags: suggestion.scene,
+      priority: '1',
+      lng: '',
+      lat: '',
+    })
+    setDuplicateHint(null)
+    setInfo(
+      `已把「${suggestion.name}」填入手工新增表单；坐标保持未知，点「添加到候选库」确认后才会入库。`,
+    )
+  }
+
+  /** 丢弃只隐藏本条建议，零写入。 */
+  function dismissSuggestion(suggestion: CandidateSuggestion) {
+    setDismissedSuggestions((previous) =>
+      previous.includes(suggestion.name) ? previous : [...previous, suggestion.name],
+    )
+    setInfo(`已丢弃「${suggestion.name}」；没有写入任何数据。`)
+  }
+
   return (
     <section className="cpl" aria-label="候选地点池" data-testid="candidate-pool-panel">
       <div className="cpl-head">
@@ -732,25 +797,98 @@ export default function CandidatePoolPanel({
       <div className="cpl-add">
         <div className="cpl-add-head">
           <h4 className="cpl-section-title">新增候选</h4>
-          <div className="cpl-tabs" role="group" aria-label="候选来源">
+          <div className="cpl-add-tools">
+            <div className="cpl-tabs" role="group" aria-label="候选来源">
+              <button
+                type="button"
+                className="cpl-tab"
+                aria-pressed={mode === 'manual'}
+                onClick={() => setMode('manual')}
+              >
+                手工新增
+              </button>
+              <button
+                type="button"
+                className="cpl-tab"
+                aria-pressed={mode === 'copy'}
+                onClick={() => setMode('copy')}
+              >
+                从行程站点复制
+              </button>
+            </div>
             <button
               type="button"
-              className="cpl-tab"
-              aria-pressed={mode === 'manual'}
-              onClick={() => setMode('manual')}
+              className="cpl-btn"
+              onClick={toggleSuggestions}
+              aria-expanded={suggestionsOpen}
             >
-              手工新增
-            </button>
-            <button
-              type="button"
-              className="cpl-tab"
-              aria-pressed={mode === 'copy'}
-              onClick={() => setMode('copy')}
-            >
-              从行程站点复制
+              {suggestionsOpen ? '收起建议' : '帮我出出主意'}
             </button>
           </div>
         </div>
+
+        {suggestionsOpen ? (
+          <section className="cpl-suggestions" aria-label="候选建议" data-testid="candidate-suggestions">
+            <div className="cpl-suggestion-head">
+              <h5 className="cpl-suggestion-title">候选点子（本地推断 · 未核实）</h5>
+              <p className="cpl-hint">
+                目的地：
+                {suggestionInput.destination.trim() === ''
+                  ? '未指定（只给通用点子）'
+                  : suggestionInput.destination}
+                {' · '}共 {suggestionInput.days} 天
+                {' · '}节奏：{CANDIDATE_PACE_LABELS[suggestionInput.pace]}
+              </p>
+            </div>
+            <p className="cpl-hint">
+              这里只是点子，没有搜索、地理编码或真实坐标；采纳只会预填下方手工新增表单，
+              不会自动进池，也不会写任何存储键。
+            </p>
+            {visibleSuggestions.length === 0 ? (
+              <p className="cpl-hint" role="status">
+                建议都处理完了；收起后再次打开可重新生成。
+              </p>
+            ) : (
+              <ul className="cpl-suggestion-list" aria-label="候选建议列表">
+                {visibleSuggestions.map((suggestion) => (
+                  <li className="cpl-suggestion" key={suggestion.name}>
+                    <div className="cpl-suggestion-main">
+                      <p className="cpl-suggestion-name">{suggestion.name}</p>
+                      <p className="cpl-suggestion-reason">{suggestion.reason}</p>
+                      <p className="cpl-suggestion-meta">
+                        场景：{suggestion.scene} · 坐标未核实
+                      </p>
+                      {suggestion.duplicateOf.length > 0 ? (
+                        <p className="cpl-suggestion-duplicate" role="note">
+                          可能重复：与
+                          {suggestion.duplicateOf.map((name) => `「${name}」`).join('、')}
+                          同名；不会自动合并。
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="cpl-suggestion-actions">
+                      <button
+                        type="button"
+                        className="cpl-btn cpl-btn-primary"
+                        onClick={() => adoptSuggestion(suggestion)}
+                        disabled={!writable}
+                      >
+                        采纳
+                      </button>
+                      <button
+                        type="button"
+                        className="cpl-btn"
+                        onClick={() => dismissSuggestion(suggestion)}
+                      >
+                        丢弃
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : null}
 
         {mode === 'copy' ? (
           <div className="cpl-field">

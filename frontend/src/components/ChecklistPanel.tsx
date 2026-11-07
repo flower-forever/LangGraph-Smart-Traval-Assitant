@@ -48,6 +48,12 @@ import {
   type ChecklistRelinkIssue,
   type ChecklistRelinkReason,
 } from '../lib/checklist'
+import {
+  CHECKLIST_SEASON_LABELS,
+  checklistSuggestionSeason,
+  suggestChecklistItems,
+  type ChecklistSuggestion,
+} from '../lib/checklistSuggestions'
 import { createLogicalId } from '../lib/workspace'
 import { canonicalJson } from '../lib/workspaceFingerprint'
 import './checklistPanel.css'
@@ -200,6 +206,8 @@ export default function ChecklistPanel({
   const [templateId, setTemplateId] = useState<string>(CHECKLIST_TEMPLATES[0]?.id ?? '')
   const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([])
   const [undo, setUndo] = useState<UndoProposal | null>(null)
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<string[]>([])
 
   const timestamp = () => now ?? Date.now()
   const stopOptions = useMemo(() => collectChecklistStops(trip), [trip])
@@ -214,6 +222,37 @@ export default function ChecklistPanel({
   const audit = useMemo(
     () => auditChecklistLinks(checklist, { trip, constraints, previousConstraints }),
     [checklist, trip, constraints, previousConstraints],
+  )
+  const suggestionCalendar = useMemo(() => {
+    const dated = trip?.days.find(
+      (day) => typeof day.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(day.date),
+    )
+    if (dated && typeof dated.date === 'string') {
+      const month = Number(dated.date.slice(5, 7))
+      if (Number.isInteger(month) && month >= 1 && month <= 12) {
+        return { month, source: 'trip' as const }
+      }
+    }
+    const at = new Date(now ?? Date.now())
+    return { month: at.getMonth() + 1, source: 'now' as const }
+  }, [trip, now])
+  const suggestionMonth = suggestionCalendar.month
+  const suggestedSeason = checklistSuggestionSeason(suggestionMonth)
+  const suggestionDestination = trip?.destination.trim() ?? ''
+  const checklistSuggestions = useMemo(
+    () =>
+      suggestionsOpen
+        ? suggestChecklistItems({
+            destination: trip?.destination ?? '',
+            days: trip?.days.length ?? 0,
+            month: suggestionMonth,
+            existingItems: checklist.items,
+          })
+        : [],
+    [suggestionsOpen, trip, checklist.items, suggestionMonth],
+  )
+  const visibleChecklistSuggestions = checklistSuggestions.filter(
+    (suggestion) => !dismissedSuggestions.includes(suggestion.id),
   )
   const currentCanonical = useMemo(() => {
     const result = canonicalJson(checklist)
@@ -570,6 +609,44 @@ export default function ChecklistPanel({
     }
   }
 
+  const toggleSuggestions = () => {
+    if (suggestionsOpen) {
+      setSuggestionsOpen(false)
+      return
+    }
+    setDismissedSuggestions([])
+    setSuggestionsOpen(true)
+    setError(null)
+  }
+
+  /** 采纳 = 显式新增一条 done:false 条目；绝不自动勾选。 */
+  const handleAdoptSuggestion = async (suggestion: ChecklistSuggestion) => {
+    if (!ready || pending) return
+    const id = createLogicalId()
+    const result = addChecklistItem(
+      checklist,
+      {
+        category: suggestion.category,
+        title: suggestion.title,
+        notes: `建议理由：${suggestion.reason}`,
+      },
+      { id, now: timestamp() },
+    )
+    if (await commitMutation(result, { action: 'add', itemId: id })) {
+      setDismissedSuggestions((previous) =>
+        previous.includes(suggestion.id) ? previous : [...previous, suggestion.id],
+      )
+      setNotice('已按建议添加为未准备条目；请自行核对后再勾选。')
+    }
+  }
+
+  const dismissSuggestion = (suggestion: ChecklistSuggestion) => {
+    setDismissedSuggestions((previous) =>
+      previous.includes(suggestion.id) ? previous : [...previous, suggestion.id],
+    )
+    setNotice(`已丢弃「${suggestion.title}」；没有写入清单。`)
+  }
+
   const template = findChecklistTemplate(templateId)
   const templateSuggestions = listChecklistTemplateSuggestions(templateId, checklist)
   const templateApplied = checklist.appliedTemplates.includes(templateId)
@@ -705,8 +782,80 @@ export default function ChecklistPanel({
         >
           {templateOpen ? '收起模板' : '用模板'}
         </button>
-        <span className="chk-hint">模板只给建议，勾选后再添加；不会自动变成已准备。</span>
+        <button
+          type="button"
+          className="chk-btn"
+          onClick={toggleSuggestions}
+          disabled={disabled}
+          aria-expanded={suggestionsOpen}
+        >
+          {suggestionsOpen ? '收起建议' : '建议携带物'}
+        </button>
+        <span className="chk-hint">模板与建议都只给参考；勾选或采纳后不会自动变成已准备。</span>
       </div>
+
+      {suggestionsOpen ? (
+        <section className="chk-suggestion-box" aria-label="清单建议" data-testid="checklist-suggestions">
+          <div className="chk-suggestion-head">
+            <h3 className="chk-subtitle">建议携带物（本地推断 · 未核实）</h3>
+            <p className="chk-hint">
+              目的地：{suggestionDestination === '' ? '未指定' : suggestionDestination}
+              {trip ? ` · 行程 ${trip.days.length} 天` : ' · 行程未加载'}
+              {' · '}
+              {suggestionMonth} 月
+              {suggestionCalendar.source === 'trip' ? '（按行程日期）' : '（按当前月份）'}
+              {suggestedSeason === null ? '' : ` · ${CHECKLIST_SEASON_LABELS[suggestedSeason]}`}
+            </p>
+          </div>
+          <p className="chk-hint">
+            只按目的地关键词、月份与天数做本地推断；不联网、不查询库存或预约。
+            采纳只会新增未准备条目，不会自动勾选。
+          </p>
+          {visibleChecklistSuggestions.length === 0 ? (
+            <p className="chk-hint" role="status">
+              建议都处理完了；收起后再次打开可重新生成。
+            </p>
+          ) : (
+            <ul className="chk-suggestion-list" aria-label="清单建议列表">
+              {visibleChecklistSuggestions.map((suggestion) => (
+                <li className="chk-suggestion-item" key={suggestion.id}>
+                  <div className="chk-suggestion-main">
+                    <p className="chk-suggestion-title">
+                      {suggestion.title}
+                      <span className="chk-cat">{CHECKLIST_CATEGORY_LABELS[suggestion.category]}</span>
+                    </p>
+                    <p className="chk-hint">{suggestion.reason}</p>
+                    {suggestion.duplicateOf.length > 0 ? (
+                      <p className="chk-tag">
+                        清单里已有「{suggestion.duplicateOf.join('、')}」；不会自动合并
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="chk-suggestion-actions">
+                    <button
+                      type="button"
+                      className="chk-btn chk-btn-small chk-btn-primary"
+                      onClick={() => void handleAdoptSuggestion(suggestion)}
+                      disabled={disabled || suggestion.duplicateOf.length > 0}
+                    >
+                      采纳
+                    </button>
+                    <button
+                      type="button"
+                      className="chk-btn chk-btn-small"
+                      onClick={() => dismissSuggestion(suggestion)}
+                      disabled={pending}
+                    >
+                      丢弃
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="chk-hint">采纳后条目仍是「未准备」；勾选只代表你自己核对过。</p>
+        </section>
+      ) : null}
 
       {templateOpen ? (
         <section className="chk-template" aria-label="模板建议">

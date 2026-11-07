@@ -338,3 +338,27 @@ npx tsc -p tsconfig.app.json --composite false --noEmit --pretty false
 - 没有真实地点搜索、geocode、账户、云同步、爬取；没有自动合并重复候选。
 - 不提供跨三库事务、跨 tab 事务、自动恢复；这些仍按 `docs/WORKSPACE_SIDECAR.md`
   的存储契约由 owner 实现。
+
+---
+
+## 9. 智能建议（二期 C-1，纯本地规则）
+
+> 入口：候选池「新增候选」区的「帮我出出主意」；模块
+> `frontend/src/lib/candidateSuggestions.ts`。
+
+- **输入**：当前草稿的目的地 `draft.base.destination`、天数 `draft.days.length`、
+  节奏（由每天站点数推导：日均 ≥5 站为紧凑、≤2 站为松散、其余均衡）、现有候选
+  （只读名称 / 地址，仅用于重复提示）。没有草稿时目的地为空、天数按 1，只给通用点子。
+- **生成**：固定「目的地关键词 → 场景」规则表 + 通用补充 + 节奏 / 天数补充；
+  同输入恒同输出，最多 10 条。零网络、零存储、零时钟。
+- **建议是点子不是真实地点**：`location` 恒为 `null`，绝不补 `(0,0)`、不地理编码；
+  界面固定标「未核实」。
+- **采纳**：只切到「手工新增」并把名称、场景标签、备注预填进既有表单；备注格式
+  `[assistant-suggested] <一句话理由>`。用户点「添加到候选库」后才走既有
+  `createManualCandidate` / `addCandidateToRecord`，`source` 仍是 `manual`，
+  不新增枚举值。**丢弃只隐藏建议，零写入。**
+- **去重只提示**：复用 `normalizeCandidateText` / `candidateDedupeKey` 的名称分量；
+  与现有候选同名（或完整 key 命中）时显示「可能重复」，不自动合并。真正入库时仍由
+  `addCandidateToRecord` 按完整 `dedupeKey`（名称 + 地址）提示。
+- 不自动写 `KEY_CANDIDATES` 或任何工作区 storage 键。
+- 测试：`frontend/src/__tests__/candidateSuggestions.test.ts`。

@@ -162,6 +162,69 @@
   flex-wrap: wrap;
 }
 
+.chk-suggestion-box {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  min-width: 0;
+}
+
+.chk-suggestion-head {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.chk-suggestion-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.chk-suggestion-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  border: var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  min-width: 0;
+}
+
+.chk-suggestion-main {
+  display: grid;
+  gap: var(--space-1);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.chk-suggestion-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.chk-suggestion-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
 .chk-subtitle {
   margin: 0;
   font-family: var(--font-display);

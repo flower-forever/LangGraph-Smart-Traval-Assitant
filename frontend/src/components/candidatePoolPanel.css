@@ -126,10 +126,12 @@
   flex-wrap: wrap;
 }
 
-.cpl-tabs {
+.cpl-tabs,
+.cpl-add-tools {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .cpl-section-title {
@@ -281,6 +283,96 @@
   background: var(--color-accent-soft);
   color: var(--color-accent-ink);
   font-weight: 600;
+}
+
+.cpl-suggestions {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  min-width: 0;
+}
+
+.cpl-suggestion-head {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.cpl-suggestion-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.cpl-suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cpl-suggestion {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  border: var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  min-width: 0;
+}
+
+.cpl-suggestion-main {
+  display: grid;
+  gap: var(--space-1);
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.cpl-suggestion-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cpl-suggestion-reason,
+.cpl-suggestion-meta,
+.cpl-suggestion-duplicate {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.cpl-suggestion-meta {
+  font-size: var(--text-xs);
+}
+
+.cpl-suggestion-duplicate {
+  padding: var(--space-1) var(--space-2);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-warn-bg);
+  color: var(--color-warn-ink);
+}
+
+.cpl-suggestion-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .cpl-items {
@@ -445,6 +537,7 @@
   }
 
   .cpl-item-actions .cpl-btn,
+  .cpl-suggestion-actions .cpl-btn,
   .cpl-footer-actions .cpl-btn {
     flex: 1 1 160px;
   }
