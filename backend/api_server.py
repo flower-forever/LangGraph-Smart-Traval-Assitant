@@ -75,6 +75,7 @@ from travel_itinerary import (
 from weather_api import weather_router_factory
 from poi_sources_api import poi_sources_router_factory
 from tavily_web_api import tavily_web_router_factory
+from image_sources_api import image_sources_router_factory
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent  # 仓库根目录：真实 .env 与 outputs/ 所在层
@@ -1039,6 +1040,10 @@ app.include_router(poi_sources_router_factory())
 # Tavily 网页资料搜索路由：lifespan 启动时读 TAVILY_API_KEY（可选），
 # 无 Key 仍启动（请求返回 no_key 信封）；POST 写请求由 app 级来源守卫覆盖。
 app.include_router(tavily_web_router_factory())
+
+# Wikimedia Commons 图片搜索路由：无 Key（Commons 不需要认证），
+# POST 写请求由 app 级来源守卫覆盖。
+app.include_router(image_sources_router_factory())
 
 # 只信任显式 origin；allow_credentials=True 时绝不能再配 allow_origins=["*"]。
 app.add_middleware(
