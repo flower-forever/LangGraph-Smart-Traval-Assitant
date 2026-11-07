@@ -464,6 +464,24 @@
   background: var(--color-paper-2);
 }
 
+/* 资料卡入口徽标（三期 S2）：可点击的「有资料卡」提示；样式沿用既有 badge 家族 */
+.cpl-badge-poi-card {
+  cursor: pointer;
+  border: var(--rule-strong);
+  font-family: var(--font-body);
+  text-decoration: none;
+}
+
+.cpl-badge-poi-card:hover {
+  background: var(--color-accent);
+  color: var(--color-paper-2);
+}
+
+.cpl-badge-poi-card:focus-visible {
+  outline: 2px solid var(--color-accent-ink);
+  outline-offset: 2px;
+}
+
 .cpl-message {
   margin: 0;
   padding: var(--space-3) var(--space-4);

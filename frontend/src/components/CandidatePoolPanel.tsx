@@ -13,6 +13,7 @@ import type { FormEvent } from 'react'
 
 import type { CandidateItemV1, CandidatesRecordV1 } from '../lib/workspace'
 import { createLogicalId } from '../lib/workspace'
+import { findPoiCardByName, type PoiCardsRecordV1 } from '../lib/poiCards'
 import type { TripDraft } from '../lib/tripDraft'
 import {
   addCandidateToRecord,
@@ -84,6 +85,13 @@ export interface CandidatePoolPanelProps {
   onAddToDraft: (proposal: CandidateDraftProposal) => void
   /** 预览生成后的观察回调；不得把它当作已持久化。 */
   onPreview?: (proposal: CandidateDraftProposal) => void
+  /**
+   * 资料卡库记录（父级读好传入）：候选条目按名称归一化匹配资料卡，
+   * 命中时显示「有资料卡」入口徽标。只读；本面板不写任何资料卡键。
+   */
+  poiCards?: PoiCardsRecordV1 | null
+  /** 资料卡入口点击回调；父级决定打开哪个面板（本面板不内嵌编辑器）。 */
+  onOpenPoiCard?: (candidateName: string) => void
   /** 显式时钟；测试可注入，默认 Date.now。 */
   now?: () => number
   /** 显式候选 id 工厂；测试可注入，默认 createLogicalId。 */
@@ -219,6 +227,8 @@ export default function CandidatePoolPanel({
   onImportRequest,
   onAddToDraft,
   onPreview,
+  poiCards = null,
+  onOpenPoiCard,
   now = defaultNow,
   createCandidateId = defaultCandidateId,
   createVisitStopId = defaultVisitStopId,
@@ -1081,6 +1091,21 @@ export default function CandidatePoolPanel({
                     <span className="cpl-badge">{sourceLabel(candidate)}</span>
                     <span className="cpl-badge cpl-badge-unverified">未核实</span>
                     <span className="cpl-badge cpl-badge-priority">优先级 {candidate.priority}</span>
+                    {(() => {
+                      const card = findPoiCardByName(poiCards, candidate.name)
+                      if (card === null) return null
+                      return (
+                        <button
+                          type="button"
+                          className="cpl-badge cpl-badge-poi-card"
+                          data-testid={`candidate-poi-card-${candidate.id}`}
+                          aria-label={`查看 ${candidate.name} 的资料卡`}
+                          onClick={() => onOpenPoiCard?.(candidate.name)}
+                        >
+                          有资料卡
+                        </button>
+                      )
+                    })()}
                   </h5>
                   <p className="cpl-item-line">{candidate.address ?? '地址未知'}</p>
                   {candidate.notes ? <p className="cpl-item-notes">{candidate.notes}</p> : null}

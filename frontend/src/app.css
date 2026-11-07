@@ -663,6 +663,32 @@ textarea.field-input {
   margin: 0;
 }
 
+/* ---------- 资料卡展示位（三期 S2）---------- */
+.stop-poi-card {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-paper-2);
+  border: var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.stop-poi-card p {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.stop-poi-card .stop-poi-card-title {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.stop-poi-card .stop-poi-card-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
 /* ---------- 路段 ---------- */
 .leg {
   display: grid;

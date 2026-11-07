@@ -19,6 +19,7 @@ import {
 } from '../lib/candidatePool'
 import type { CandidateItemV1, CandidatesRecordV1 } from '../lib/workspace'
 import { createCandidatesRecord } from '../lib/workspace'
+import { createEmptyPoiCardsRecord, createPoiCard, type PoiCardsRecordV1 } from '../lib/poiCards'
 import type { Trip } from '../lib/api'
 import type { TripDraft } from '../lib/tripDraft'
 import { createTripDraft } from '../lib/tripDraft'
@@ -91,6 +92,8 @@ interface HarnessProps {
   onRecordChange?: (record: CandidatesRecordV1) => void
   createCandidateId?: () => string
   createVisitStopId?: () => string
+  poiCards?: PoiCardsRecordV1 | null
+  onOpenPoiCard?: (candidateName: string) => void
 }
 
 function Harness({
@@ -110,6 +113,8 @@ function Harness({
   onRecordChange,
   createCandidateId = () => `panel-candidate-${++sequence}`,
   createVisitStopId = () => `panel-visit-${++sequence}`,
+  poiCards,
+  onOpenPoiCard,
 }: HarnessProps) {
   const [record, setRecord] = useState<CandidatesRecordV1>(initialRecord)
   return (
@@ -131,6 +136,8 @@ function Harness({
       onImportRequest={onImportRequest}
       onAddToDraft={onAddToDraft}
       onPreview={onPreview}
+      poiCards={poiCards}
+      onOpenPoiCard={onOpenPoiCard}
       now={() => NOW}
       createCandidateId={createCandidateId}
       createVisitStopId={createVisitStopId}
@@ -675,5 +682,36 @@ describe('加入草稿预览 · 无关渲染不失效 / 失效时显式状态', 
     // 旧成功消息不再残留
     expect(screen.queryByText(/已生成加入草稿的预览/)).toBeNull()
     expect(screen.getByText(/预览已失效，请重新生成预览/)).toBeInTheDocument()
+  })
+})
+
+describe('候选池 · 资料卡入口（三期 S2）', () => {
+  function makePoiCardsFor(name: string | null): PoiCardsRecordV1 {
+    const empty = ok(createEmptyPoiCardsRecord(NOW))
+    if (name === null) return empty
+    const card = ok(createPoiCard({ id: 'poi-card-1', name, intro: '备注卡。' }, NOW))
+    return { ...empty, cards: [card] }
+  }
+
+  it('按名称归一化命中时显示「有资料卡」入口，点击回调带候选名', async () => {
+    const user = userEvent.setup()
+    const candidate = makeCandidate({ name: '灵隐寺' })
+    const onOpenPoiCard = vi.fn()
+    renderHarness({
+      initialRecord: makeRecord([candidate]),
+      poiCards: makePoiCardsFor('  灵隐寺　'),
+      onOpenPoiCard,
+    })
+    const entry = screen.getByTestId(`candidate-poi-card-${candidate.id}`)
+    expect(entry).toHaveTextContent('有资料卡')
+    await user.click(entry)
+    expect(onOpenPoiCard).toHaveBeenCalledWith('灵隐寺')
+  })
+
+  it('没有命中 / 未传资料卡时不显示入口，也不影响既有渲染', () => {
+    const candidate = makeCandidate({ name: '没有卡的候选' })
+    renderHarness({ initialRecord: makeRecord([candidate]) })
+    expect(screen.queryByTestId(`candidate-poi-card-${candidate.id}`)).toBeNull()
+    expect(screen.getByTestId(`candidate-item-${candidate.id}`)).toBeInTheDocument()
   })
 })

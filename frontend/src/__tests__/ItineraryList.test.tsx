@@ -1,7 +1,8 @@
 /** 复制兜底路径：jsdom 下没有真实剪贴板，必须能可控地验证成功/失败与临时节点清理 */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ItineraryList, { copyText } from '../components/ItineraryList'
+import { createEmptyPoiCardsRecord, createPoiCard } from '../lib/poiCards'
 import { MOCK_TRIP } from './fixtures/trip'
 
 const day = MOCK_TRIP.days[0]
@@ -98,5 +99,64 @@ describe('ItineraryList 复制', () => {
     await clickCopy()
     await waitFor(() => expect(screen.getByText('已复制')).toBeInTheDocument())
     expect(logSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('ItineraryList · 资料卡展示位（三期 S2）', () => {
+  const stopId = day.stops[0].id
+
+  function makePoiCards(name: string) {
+    const card = createPoiCard(
+      {
+        id: 'card-it-1',
+        name,
+        intro: '湖上景观。',
+        openingHours: '全天',
+        ticket: '免费',
+        provenance: { intro: { source: 'manual', detail: '手工粘贴', recordedAt: 1 }, openingHours: null, ticket: null },
+      },
+      1_000,
+    )
+    if (!card.ok) throw new Error(card.message)
+    const empty = createEmptyPoiCardsRecord(1_000)
+    if (!empty.ok) throw new Error(empty.message)
+    return { ...empty.value, cards: [card.value] }
+  }
+
+  it('停点展开时按名称归一化显示资料卡，带「按名称匹配，请自行核对」', () => {
+    render(
+      <ItineraryList day={day} activeStopId={stopId} onSelectStop={vi.fn()} poiCards={makePoiCards(day.stops[0].name)} />,
+    )
+    const note = screen.getByRole('note', { name: new RegExp(`景点资料卡：${day.stops[0].name}`) })
+    expect(within(note).getByText(/按名称匹配，请自行核对/)).toBeInTheDocument()
+    expect(within(note).getByText('介绍：湖上景观。')).toBeInTheDocument()
+    expect(within(note).getByText('开放时间：全天')).toBeInTheDocument()
+    expect(within(note).getByText('门票：免费')).toBeInTheDocument()
+    expect(within(note).getByText('景点资料卡 · 未核实')).toBeInTheDocument()
+  })
+
+  it('未知字段显示「未知」；无卡 / 多命中时不显示展示位', () => {
+    // 无卡
+    const { unmount } = render(
+      <ItineraryList day={day} activeStopId={stopId} onSelectStop={vi.fn()} poiCards={null} />,
+    )
+    expect(screen.queryByTestId(`stop-poi-card-${stopId}`)).toBeNull()
+    unmount()
+
+    // 多命中（重名两条）→ findPoiCardByName 返回 null → 不显示
+    const a = createPoiCard({ id: 'm1', name: day.stops[0].name, address: '地址A' }, 1_000)
+    const b = createPoiCard({ id: 'm2', name: day.stops[0].name, address: '地址B' }, 1_000)
+    if (!a.ok || !b.ok) throw new Error('fixture 失败')
+    const empty = createEmptyPoiCardsRecord(1_000)
+    if (!empty.ok) throw new Error('fixture 失败')
+    render(
+      <ItineraryList
+        day={day}
+        activeStopId={stopId}
+        onSelectStop={vi.fn()}
+        poiCards={{ ...empty.value, cards: [a.value, b.value] }}
+      />,
+    )
+    expect(screen.queryByTestId(`stop-poi-card-${stopId}`)).toBeNull()
   })
 })

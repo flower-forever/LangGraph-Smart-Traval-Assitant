@@ -29,6 +29,12 @@ import CandidatePoolPanel, {
   type CandidatePoolSaveStatus,
   type CandidatePoolStorageStatus,
 } from './components/CandidatePoolPanel'
+import PoiCardPanel from './components/PoiCardPanel'
+import {
+  loadPoiCardsRecord,
+  savePoiCardsRecord,
+  type PoiCardsRecordV1,
+} from './lib/poiCards'
 import OfflineTripPanel from './components/OfflineTripPanel'
 import { emptyBudgetSession, tripOwnerSnapshot, type BudgetSessionState } from './lib/tripBudget'
 import { useWorkspaceController } from './lib/useWorkspaceController'
@@ -453,6 +459,51 @@ export default function App() {
   const candidatesActionSeqRef = useRef(0)
   const candidatesFileInputRef = useRef<HTMLInputElement | null>(null)
 
+  /* ───────── P · 景点资料卡（poiCards:v1 独立键；显式保存才写） ───────── */
+
+  /** 资料卡库记录：只在显式打开资料卡面板 / 显式保存时读写，绝不自动写。 */
+  const [poiCardsRecord, setPoiCardsRecord] = useState<PoiCardsRecordV1 | null>(null)
+  /** 资料卡面板打开态；null = 关闭。值 = 正在查看 / 新建的卡 id（null id = 新建）。 */
+  const [poiCardOpenId, setPoiCardOpenId] = useState<string | null | undefined>(undefined)
+  const [poiCardsSaveStatus, setPoiCardsSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [poiCardsSaveMessage, setPoiCardsSaveMessage] = useState<string | null>(null)
+  const poiCardsRawRef = useRef<string | null>(null)
+  const poiCardsReadRef = useRef(false)
+
+  /**
+   * 读取资料卡库（只读）：资料卡是展示位的辅助信息，跟随一次页面加载读取；
+   * 读取失败 / corrupt 时保持 null，界面只少一个展示位，不阻断行程。
+   * 本函数从不写任何键。
+   */
+  const ensurePoiCardsLoaded = useCallback(() => {
+    if (poiCardsReadRef.current) return
+    poiCardsReadRef.current = true
+    const read = loadPoiCardsRecord(storageRef.current ?? undefined)
+    poiCardsRawRef.current = read.raw
+    setPoiCardsRecord(read.record)
+  }, [])
+
+  /** 显式保存：把面板给的整条记录写入 poiCards:v1；失败时原字节不动。 */
+  const handleSavePoiCards = useCallback((record: PoiCardsRecordV1) => {
+    const storage = storageRef.current
+    setPoiCardsSaveStatus('saving')
+    setPoiCardsSaveMessage(null)
+    void savePoiCardsRecord(record, {
+      storage: storage ?? undefined,
+      expectedRaw: poiCardsRawRef.current,
+    }).then((result) => {
+      if (!result.ok) {
+        setPoiCardsSaveStatus('error')
+        setPoiCardsSaveMessage(result.message)
+        return
+      }
+      poiCardsRawRef.current = result.raw
+      setPoiCardsRecord(result.record)
+      setPoiCardsSaveStatus('saved')
+      setPoiCardsSaveMessage(`已保存资料卡（${result.record.cards.length} 张，${result.bytes} 字节）。`)
+    })
+  }, [])
+
   /** AI 候选的 U 级独立确认：存在时面板旁显示显式确认入口；H 级永不进入这里。 */
   const [aiPlanningAck, setAiPlanningAck] = useState<{
     readonly applied: Extract<DayReplanApplyResult, { ok: true }> | Extract<DayReplanTailApplyResult, { ok: true }>
@@ -652,6 +703,8 @@ export default function App() {
     const conclusionAtStart = backendConclusionSeqRef.current
     exampleAbortRef.current = exampleController
     runProbe()
+    // 资料卡库只读加载一次：展示位要用；失败只是没有展示位，不阻断行程。
+    ensurePoiCardsLoaded()
     fetchExampleTrip({ signal: exampleController.signal })
       .then((t) => {
         if (cancelled || sequence !== loadSeqRef.current) return
@@ -683,7 +736,7 @@ export default function App() {
       exampleController.abort()
       if (exampleAbortRef.current === exampleController) exampleAbortRef.current = null
     }
-  }, [runProbe, applyRequestFailure])
+  }, [runProbe, applyRequestFailure, ensurePoiCardsLoaded])
 
   // 地图 marker、弹窗与列表共用同一个入口：幂等设置选中站点，空串表示收起
   const handleSelectStop = useCallback((stopId: string) => {
@@ -3348,6 +3401,18 @@ export default function App() {
                           onExport={handleExportCandidates}
                           onImportRequest={handleCandidatesImportRequest}
                           onAddToDraft={handleCandidateAddToDraft}
+                          poiCards={poiCardsRecord}
+                          onOpenPoiCard={(candidateName) => {
+                            ensurePoiCardsLoaded()
+                            // 候选条目 → 资料卡：按名称归一化定位已有卡；没有则新建态。
+                            const read = poiCardsReadRef.current ? poiCardsRecord : null
+                            const card =
+                              read?.cards.find(
+                                (item) =>
+                                  item.name.trim().toLowerCase() === candidateName.trim().toLowerCase(),
+                              ) ?? null
+                            setPoiCardOpenId(card === null ? null : card.id)
+                          }}
                           onClose={() => setCandidatePoolOpen(false)}
                         />
                         {candidatesImportPreview !== null ? (
@@ -3619,6 +3684,7 @@ export default function App() {
                   onReplanApply={handleAssistantReplanApply}
                   planningConstraints={buildAssistantPlanningConstraints}
                   onClose={handleCloseAssistant}
+                  poiCards={poiCardsRecord}
                 />
               </div>
             )}
@@ -3831,6 +3897,7 @@ export default function App() {
                     day={currentDay}
                     activeStopId={activeStopId}
                     onSelectStop={handleSelectStop}
+                    poiCards={poiCardsRecord}
                   />
                 )}
               </div>
@@ -3850,6 +3917,29 @@ export default function App() {
                 上面的行程和地图显示的是内存草稿的预览，还没有应用，也没有保存；
                 当前行程的原始数据没有被修改，已保存的记录保持原样。
               </p>
+            )}
+
+            {/*
+              P · 景点资料卡面板：poiCardOpenId !== undefined 时挂载。
+              undefined = 关闭；null = 新建态；字符串 = 查看对应卡。
+              编辑只在内存，「保存资料卡」显式提交才写 poiCards:v1；取消 / 关闭零写入。
+            */}
+            {poiCardOpenId !== undefined && (
+              <div className="wsh-tool-panel" data-testid="poi-card-slot">
+                <PoiCardPanel
+                  record={poiCardsRecord}
+                  cardId={poiCardOpenId}
+                  onSave={handleSavePoiCards}
+                  saveStatus={poiCardsSaveStatus}
+                  saveMessage={poiCardsSaveMessage}
+                  createCardId={newUuid}
+                  onClose={() => {
+                    setPoiCardOpenId(undefined)
+                    setPoiCardsSaveStatus('idle')
+                    setPoiCardsSaveMessage(null)
+                  }}
+                />
+              </div>
             )}
           </section>
         )}

@@ -25,6 +25,7 @@ import type { DayReplanAdapter } from '../components/DayReplanPanel'
 import type { DayReplanRequest, DayReplanResponse } from '../lib/dayReplan'
 import type { DayReplanConstraintsOptions } from '../lib/planningConstraintsApi'
 import { createWorkspaceRecord, emptySidecar } from '../lib/workspace'
+import { createEmptyPoiCardsRecord, createPoiCard, type PoiCardsRecordV1 } from '../lib/poiCards'
 import type {
   CandidateItemV1,
   ConstraintItemV1,
@@ -186,6 +187,7 @@ interface HarnessProps {
   requestDay?: DayReplanAdapter
   onReplanApply?: (request: DayReplanRequest, response: DayReplanResponse) => { ok: boolean; message?: string }
   planningConstraints?: (request: DayReplanRequest) => DayReplanConstraintsOptions | undefined
+  poiCards?: PoiCardsRecordV1 | null
 }
 
 function Harness({
@@ -197,6 +199,7 @@ function Harness({
   requestDay,
   onReplanApply,
   planningConstraints,
+  poiCards,
 }: HarnessProps) {
   const [trip, setTrip] = useState<Trip>(initialTrip)
   const [record, setRecord] = useState<WorkspaceRecordV1 | null>(initialRecord)
@@ -276,6 +279,7 @@ function Harness({
         onReplanApply={onReplanApply}
         planningConstraints={planningConstraints}
         onClose={() => {}}
+        poiCards={poiCards}
         now={() => NOW}
       />
     </div>
@@ -731,5 +735,35 @@ describe('AI 行程助手 · 重排候选失效判定', () => {
   it('取不到当前快照 → 一律按已变化处理（fail closed）', () => {
     expect(replanCandidateIsStale(base, { revision: null, fingerprint: same.fingerprint })).toBe(true)
     expect(replanCandidateIsStale(base, { revision: 7, fingerprint: null })).toBe(true)
+  })
+})
+
+describe('AI 行程助手 · 资料卡只读徽标（三期 S2）', () => {
+  function makePoiCardsFor(name: string): PoiCardsRecordV1 {
+    const emptyResult = createEmptyPoiCardsRecord(NOW)
+    if (!emptyResult.ok) throw new Error(emptyResult.message)
+    const card = createPoiCard({ id: 'card-adp-1', name, intro: '助手卡。' }, NOW)
+    if (!card.ok) throw new Error(card.message)
+    return { ...emptyResult.value, cards: [card.value] }
+  }
+
+  it('提案目标名命中资料卡时显示「有资料卡」只读徽标，不改提案内容', async () => {
+    const user = userEvent.setup()
+    render(<Harness poiCards={makePoiCardsFor('丝绸店')} />)
+    await generate(user, '去掉第 1 天的丝绸店')
+    const card = within(panel()).getByLabelText('建议卡片')
+    const badge = within(card).getByTestId('assistant-poi-card-badge')
+    expect(badge).toHaveTextContent('有资料卡')
+    expect(badge).toHaveTextContent(/按名称匹配/)
+    // 徽标不把资料卡内容带进提案
+    expect(within(card).queryByText('助手卡。')).toBeNull()
+  })
+
+  it('未命中时不显示徽标，提案卡渲染不受影响', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await generate(user, '去掉第 1 天的丝绸店')
+    expect(screen.queryByTestId('assistant-poi-card-badge')).toBeNull()
+    expect(within(panel()).getByLabelText('建议卡片')).toBeInTheDocument()
   })
 })

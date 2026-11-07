@@ -29,6 +29,7 @@ import {
   type AssistantProposalCard,
   type AssistantUndoHandle,
 } from '../lib/assistantDialog'
+import { findPoiCardByName, type PoiCardsRecordV1 } from '../lib/poiCards'
 import type { TravelMode, Trip } from '../lib/api'
 import type { DayReplanAdapter } from './DayReplanPanel'
 import type { DayReplanRequest, DayReplanResponse } from '../lib/dayReplan'
@@ -82,6 +83,12 @@ export interface AssistantDialogPanelProps {
   planningConstraints?: (request: DayReplanRequest) => DayReplanConstraintsOptions | undefined
   /** 关闭面板：放弃在途提案，不改行程、不写存储。 */
   onClose: () => void
+  /**
+   * 资料卡库记录（父级读好传入）：提案涉及的目标站点按名称归一化匹配资料卡，
+   * 命中时提案卡显示「有资料卡」只读徽标。**不自动读取内容进提案**，
+   * 也不写任何资料卡键。
+   */
+  poiCards?: PoiCardsRecordV1 | null
   /** 当前时刻（epoch ms）；缺省 Date.now。 */
   now?: () => number
 }
@@ -164,6 +171,7 @@ export default function AssistantDialogPanel({
   onReplanApply,
   planningConstraints,
   onClose,
+  poiCards = null,
   now = () => Date.now(),
 }: AssistantDialogPanelProps) {
   const instructionId = useId()
@@ -559,6 +567,22 @@ export default function AssistantDialogPanel({
         <div className="adp-card" aria-label="建议卡片">
           <p className="adp-card-kind">{INTENT_LABEL[proposal.intent]}</p>
           <p className="adp-card-reason">{proposal.reason}</p>
+
+          {(() => {
+            // 只读徽标：目标站点有资料卡时提示存在，不读取内容进提案、不写任何键。
+            const targetName = proposal.parsed.targetName
+            if (targetName === null || targetName.trim().length === 0) return null
+            const card = findPoiCardByName(poiCards, targetName)
+            if (card === null) return null
+            return (
+              <p className="adp-poi-card-badge" data-testid="assistant-poi-card-badge">
+                <span className="adp-badge">有资料卡</span>
+                <span className="adp-hint">
+                                  「{card.name}」已有资料卡（按名称匹配）；本提案不自动读取其内容，需要时在资料卡面板查看。
+                                </span>
+              </p>
+            )
+          })()}
 
           <div className="adp-columns">
             <div className="adp-col">

@@ -244,6 +244,19 @@
   overflow-wrap: anywhere;
 }
 
+/* 「有资料卡」只读徽标（三期 S2）：只提示存在，不读内容进提案 */
+.adp-poi-card-badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.adp-poi-card-badge .adp-hint {
+  margin: 0;
+}
+
 .adp-columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

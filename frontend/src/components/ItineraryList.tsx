@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TripDay } from '../lib/api'
 import { displayTime, formatDate, formatDistance, formatDuration, MODE_LABELS, osmSearchUrl, ROUTE_LABELS } from '../lib/format'
+import { findPoiCardByName, type PoiCardsRecordV1 } from '../lib/poiCards'
 
 interface ItineraryListProps {
   day: TripDay
   activeStopId: string | null
   onSelectStop: (stopId: string) => void
+  /**
+   * 资料卡库记录（父级读好传入；null = 未加载）。停点展开时按名称归一化
+   * 匹配资料卡并展示；匹配提示「按名称匹配，请自行核对」。只读展示，
+   * 本组件不写任何键。
+   */
+  poiCards?: PoiCardsRecordV1 | null
 }
 
 /** 组装某一天的纯文本行程，供「复制」使用 */
@@ -70,7 +77,7 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export default function ItineraryList({ day, activeStopId, onSelectStop }: ItineraryListProps) {
+export default function ItineraryList({ day, activeStopId, onSelectStop, poiCards = null }: ItineraryListProps) {
   const [copied, setCopied] = useState<'idle' | 'done' | 'fail'>('idle')
   const timerRef = useRef<number | null>(null)
 
@@ -168,6 +175,27 @@ export default function ItineraryList({ day, activeStopId, onSelectStop }: Itine
                       <a href={osmSearchUrl(stop)} target="_blank" rel="noopener noreferrer">在 OpenStreetMap 中查看</a>
                     </p>
                   )}
+                  {(() => {
+                    const card = findPoiCardByName(poiCards, stop.name)
+                    if (card === null) return null
+                    return (
+                      <div
+                        className="stop-poi-card"
+                        data-testid={`stop-poi-card-${stop.id}`}
+                        role="note"
+                        aria-label={`景点资料卡：${card.name}`}
+                      >
+                        <p className="stop-poi-card-title">景点资料卡 · 未核实</p>
+                        <p>介绍：{card.intro.trim() || '未知'}</p>
+                        <p>开放时间：{card.openingHours.trim() || '未知'}</p>
+                        <p>门票：{card.ticket.trim() || '未知'}</p>
+                        <p className="stop-poi-card-note">
+                          按名称匹配，请自行核对
+                          {card.provenance.intro?.source ? ` · 来源：${card.provenance.intro.source}` : ''}
+                        </p>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
 
