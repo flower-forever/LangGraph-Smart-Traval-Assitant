@@ -16,12 +16,21 @@
  *   用户补填的空字段标 manual。
  * - **图片 URL 收进**：「手动添加图片 URL」入口保存 source 按收进上下文标注
  *   （收进态用 prefill.imageSourceHint，默认 manual）；仅存 URL，不抓取图片。
+ * - **S5 Wikimedia 图片搜索**：编辑内存态内的「搜索图片」子区。只有显式点
+ *   「搜索图片」才发一次请求（挂载 / 改输入 / 换卡都不发）；每次点击最多一次
+ *   上游请求，无隐式重试（失败后不自动重发，由用户再点）。结果网格逐张展示
+ *   缩略图 + license + 作者署名；**缺署名（artist null）的结果不提供收进**
+ *   （CC 协议要求保留署名）。逐张「收进」把图片加入编辑内存态 form.images
+ *   （source='wikimedia'，保留 attribution/license），仍走本面板已有的
+ *   「保存资料卡」显式保存才落盘——**不自动写任何键**。失败信封 7 态各配
+ *   固定文案诚实展示（不回显上游 reason），失败保旧：旧结果与编辑内存态、
+ *   存储字节都不受影响。
  * - 文案红线：无「已预订/已确认/已出票」；未知显示「未知」；所有内容默认
  *   「未核实」标注 + 来源；OSM 收进显示「来自协作地图，未核实」。
  * - 图片仅存 URL；渲染懒加载（loading="lazy"）；加载失败 → 占位 + 「图片加载失败」，
  *   不阻断不编造。无坐标字段、无 (0,0)。
  */
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -53,6 +62,14 @@ import {
   type PoiCardsRecordV1,
 } from '../lib/poiCards'
 import type { PoiCardPrefill } from '../lib/poiCardPrefill'
+import {
+  IMAGE_SOURCES_MAX_QUERY_CODEPOINTS,
+  normalizeImageQuery,
+  type ImageSearchItem,
+  type ImageSearchReport,
+} from '../lib/imageSources'
+import { searchImageSources, type ImageSourcesAdapter } from '../lib/imageSourcesApi'
+import type { ApiError } from '../lib/api'
 
 /** 来源标签：与数据层 PoiCardImageSource 一一对应；展示用。 */
 const SOURCE_LABEL: Record<CardImageV1['source'], string> = {
@@ -167,6 +184,11 @@ export interface PoiCardPanelProps {
   createCardId?: () => string
   /** 当前时刻（epoch ms）；测试可注入，默认 Date.now。 */
   now?: () => number
+  /**
+   * S5 Wikimedia 图片搜索请求 adapter，默认走 imageSourcesApi.searchImageSources；
+   * 测试注入 mock。每次调用只发一次请求，无重试。
+   */
+  requestImageSources?: ImageSourcesAdapter
 }
 
 /**
@@ -184,6 +206,7 @@ export default function PoiCardPanel({
   createCardId = () =>
     `poi-card-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`,
   now = () => Date.now(),
+  requestImageSources,
 }: PoiCardPanelProps) {
   const baseId = useId()
   const current = record?.cards.find((card) => card.id === cardId) ?? null
@@ -342,6 +365,33 @@ export default function PoiCardPanel({
 
   const provenance = current?.provenance ?? null
 
+  /** S5 Wikimedia 搜索结果「收进」：只改编辑内存态，不落盘、不写任何键。 */
+  const handleCollectWikimediaImage = (item: ImageSearchItem) => {
+    if (record === null) return
+    const url = item.thumbUrl
+    if (
+      url.length > MAX_POI_CARD_URL_LENGTH ||
+      form.images.some((image) => image.url === url) ||
+      form.images.length >= MAX_POI_CARD_IMAGES
+    ) {
+      return
+    }
+    setForm((state) => ({
+      ...state,
+      images: [
+        ...state.images,
+        {
+          url,
+          caption: null,
+          source: 'wikimedia',
+          attribution: item.artist,
+          license: item.license,
+          addedAt: now(),
+        },
+      ],
+    }))
+  }
+
   return (
     <Card role="region" aria-label="景点资料卡">
       <CardHeader>
@@ -475,7 +525,7 @@ export default function PoiCardPanel({
                         <span className="min-w-0 truncate" title={image.url}>
                           {image.url}
                           {image.source !== 'manual'
-                            ? ` · 来源：${SOURCE_LABEL[image.source]}${image.attribution ? ` · ${image.attribution}` : ''}`
+                            ? ` · 来源：${SOURCE_LABEL[image.source]}${image.attribution ? ` · ${image.attribution}` : ''}${image.license ? ` · ${image.license}` : ''}`
                             : ''}
                         </span>
                         <Button
@@ -522,6 +572,16 @@ export default function PoiCardPanel({
                   手动粘贴的图片标「手动粘贴」来源；不抓取、不转存，加载失败会显示占位提示。
                 </FieldDescription>
                 {imageError ? <FieldError role="alert">{imageError}</FieldError> : null}
+
+                {editable ? (
+                  <WikimediaImageSearch
+                    baseId={`${baseId}-img-search`}
+                    initialQuery={form.name}
+                    requestImageSources={requestImageSources}
+                    onCollect={handleCollectWikimediaImage}
+                    collectedUrls={form.images.map((image) => image.url)}
+                  />
+                ) : null}
               </div>
 
               {formError ? <FieldError role="alert">{formError}</FieldError> : null}
@@ -556,3 +616,270 @@ export default function PoiCardPanel({
 }
 
 export { SOURCE_LABEL, displayValue }
+
+/* ───────── S5 · Wikimedia 图片搜索（编辑内存态内子区） ───────── */
+
+/** 传输层失败文案全部用前端固定句，不复述 provider / 后端 reason / 异常文本。 */
+const IMAGE_SEARCH_ERROR_TEXT = {
+  bad_payload: '返回的图片搜索结果没有通过完整性检查，本次结果没有展示。已编辑内容不受影响。',
+  timeout: '等待图片搜索服务响应超时。这次没有拿到新结果，可以重新点「搜索图片」再试一次。',
+  network: '连不上后端服务，本次没有拿到图片搜索结果。请确认后端已启动后再试。',
+  server: '图片搜索请求失败，这次没有拿到结果，可以稍后再试。',
+  abort: '已停止等待这次图片搜索，本次结果不展示。',
+} as const
+
+/**
+ * 七种业务状态的固定文案（信封 reason 一律不回显；诚实展示，无兜底编造）。
+ * no_candidates 如实说明「上游没有返回可用条目」，不代表地点不存在。
+ */
+const IMAGE_SEARCH_STATUS_TEXT: Record<ImageSearchReport['status'], string> = {
+  available: '找到可用图片。',
+  no_candidates:
+    '本次查询没有拿到可展示的图片条目。这只说明本次查询条件下没有可用结果，不代表该地点不存在。',
+  invalid_request: '这次查询内容没有被服务接受，请修改查询后重试。',
+  timeout: '图片搜索服务这次等待超时，没有拿到结果。可以稍后再试。',
+  rate_limited: '图片搜索请求过于频繁，这次没有拿到结果。可以稍后再试。',
+  unavailable: '图片搜索服务暂时不可用，这次没有拿到结果。可以稍后再试。',
+  failed: '图片搜索响应异常，这次没有拿到结果。可以稍后再试。',
+}
+
+const IMAGE_SEARCH_UNVERIFIED_TEXT =
+  '以下结果来自 Wikimedia Commons，未核实：图片内容、署名与许可是检索时刻的上游展示，' +
+  '不代表已核验图片权利状态。署名与许可按上游原样保留，缺署名的条目不提供收进' +
+  '（CC 协议要求保留署名）。'
+
+function isApiError(err: unknown): err is ApiError {
+  return err instanceof Error && (err as { kind?: unknown }).kind !== undefined
+}
+
+function errorTextForApi(err: ApiError): string {
+  switch (err.kind) {
+    case 'timeout':
+      return IMAGE_SEARCH_ERROR_TEXT.timeout
+    case 'abort':
+      return IMAGE_SEARCH_ERROR_TEXT.abort
+    case 'server':
+      return IMAGE_SEARCH_ERROR_TEXT.server
+    case 'network':
+      return IMAGE_SEARCH_ERROR_TEXT.network
+    case 'bad_payload':
+      return IMAGE_SEARCH_ERROR_TEXT.bad_payload
+  }
+}
+
+/** 搜索结果的一条：缩略图 + license + 署名；缺署名不提供收进。 */
+function ImageSearchResultItem({
+  item,
+  collected,
+  canCollect,
+  onCollect,
+}: {
+  item: ImageSearchItem
+  /** 该条 thumbUrl 已在编辑内存态里（去重展示用）。 */
+  collected: boolean
+  /** 表单还能收进（未满 8 张）；false 时本条不提供收进按钮。 */
+  canCollect: boolean
+  onCollect: (item: ImageSearchItem) => void
+}) {
+  const [failed, setFailed] = useState(false)
+  const hasArtist = typeof item.artist === 'string' && item.artist.trim().length > 0
+  return (
+    <li className="flex min-w-0 flex-col gap-1 rounded-[6px] border border-border p-2" data-testid="poi-card-image-result">
+      {failed ? (
+        <div
+          role="img"
+          aria-label="缩略图加载失败"
+          className="flex h-24 w-full items-center justify-center rounded-[6px] border border-border bg-muted-surface text-xs text-muted-foreground"
+        >
+          缩略图加载失败
+        </div>
+      ) : (
+        <img
+          src={item.thumbUrl}
+          alt={item.title ?? 'Commons 图片'}
+          loading="lazy"
+          className="h-24 w-full rounded-[6px] border border-border object-cover"
+          onError={() => setFailed(true)}
+        />
+      )}
+      <p className="min-w-0 truncate text-xs" title={item.title ?? '（来源未提供标题）'}>
+        {item.title ?? '（来源未提供标题）'}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        许可：{item.license ?? '未知'}
+        {' · '}
+        作者：{item.artist ?? '未知'}
+      </p>
+      {hasArtist ? (
+        collected || !canCollect ? (
+          <Badge variant="secondary">
+            {collected ? '已收进表单' : '图片已满，先移除后才能收进'}
+          </Badge>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onCollect(item)}
+            aria-label={`收进图片 ${item.title ?? item.thumbUrl}`}
+          >
+            收进
+          </Button>
+        )
+      ) : (
+        <p className="text-xs text-muted-foreground" data-testid="poi-card-image-no-artist">
+          缺作者署名，不提供收进（CC 协议要求保留署名）。
+        </p>
+      )}
+    </li>
+  )
+}
+
+/**
+ * Wikimedia 图片搜索子区（S5）：
+ * - 只有显式点「搜索图片」才发起一次请求；挂载、改输入、换卡、收进都不发。
+ * - 每次点击最多一次上游请求；失败不自动重发（无隐式重试）。
+ * - 查询输入带卡名预填（可改）；发送前按与后端同口径规范化，1..100 码点。
+ * - 结果与错误只存本子区内存；失败保旧：旧结果清空展示新错误，但编辑内存态
+ *   （form.images）与存储字节不受影响。
+ * - 收进只改父级编辑内存态（onCollect），落盘仍走「保存资料卡」显式保存。
+ */
+function WikimediaImageSearch({
+  baseId,
+  initialQuery,
+  requestImageSources,
+  onCollect,
+  collectedUrls,
+}: {
+  baseId: string
+  /** 卡名预填（可改）；只在子区首次挂载时取一次，之后不跟随表单改名。 */
+  initialQuery: string
+  requestImageSources?: ImageSourcesAdapter
+  onCollect: (item: ImageSearchItem) => void
+  /** 父级编辑内存态已有的图片 URL（收进去重 + 已收进标记）。 */
+  collectedUrls: string[]
+}) {
+  const [rawQuery, setRawQuery] = useState(initialQuery)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [report, setReport] = useState<ImageSearchReport | null>(null)
+  /** 每次点击的序号：迟到响应 / 失败后不再触发任何自动请求（无隐式重试）。 */
+  const seqRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      // 卸载只做资源清理：取消在途请求，不写任何东西。
+      seqRef.current += 1
+      abortRef.current?.abort()
+      abortRef.current = null
+    }
+  }, [])
+
+  const queryReady = normalizeImageQuery(rawQuery) !== null
+
+  async function handleSearch() {
+    if (pending || !queryReady) return
+    const raw = rawQuery
+    const seq = seqRef.current + 1
+    seqRef.current = seq
+    const controller = new AbortController()
+    abortRef.current = controller
+    setPending(true)
+    setError(null)
+    setReport(null)
+
+    const search = requestImageSources ?? searchImageSources
+    try {
+      const response = await search(raw, { signal: controller.signal })
+      if (seqRef.current !== seq || controller.signal.aborted) return
+      setReport(response)
+    } catch (err) {
+      if (seqRef.current !== seq || controller.signal.aborted) return
+      setError(isApiError(err) ? errorTextForApi(err) : IMAGE_SEARCH_ERROR_TEXT.network)
+    } finally {
+      if (seqRef.current === seq) {
+        setPending(false)
+        if (abortRef.current === controller) abortRef.current = null
+      }
+    }
+  }
+
+  const collectedSet = new Set(collectedUrls)
+  const canCollect = collectedUrls.length < MAX_POI_CARD_IMAGES
+  const items = report?.items ?? []
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[10px] border border-border bg-muted-surface p-3" data-testid="poi-card-image-search">
+      <FieldLabel htmlFor={`${baseId}-query`}>搜索 Wikimedia 图片（显式触发）</FieldLabel>
+      <div className="flex items-start gap-2">
+        <Input
+          id={`${baseId}-query`}
+          value={rawQuery}
+          onChange={(event) => setRawQuery(event.target.value)}
+          placeholder="用景点名或关键词搜索 Commons 图片"
+          aria-label="Wikimedia 图片搜索内容"
+          maxLength={IMAGE_SOURCES_MAX_QUERY_CODEPOINTS * 2}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            void handleSearch()
+          }}
+          disabled={pending || !queryReady}
+          aria-label="搜索图片"
+        >
+          {pending ? '搜索中…' : '搜索图片'}
+        </Button>
+      </div>
+      <FieldDescription>
+        只有点「搜索图片」才请求一次；不会自动搜索，也不会自动重试。查询内容默认预填卡名，可改。
+      </FieldDescription>
+
+      {pending ? (
+        <p role="status" className="text-xs text-muted-foreground" data-testid="poi-card-image-search-pending">
+          正在等待图片搜索服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
+        </p>
+      ) : null}
+
+      {error ? (
+        <p role="alert" className="text-xs text-destructive" data-testid="poi-card-image-search-error">
+          {error}
+        </p>
+      ) : null}
+
+      {report !== null && !pending ? (
+        <div data-testid="poi-card-image-search-result" data-status={report.status}>
+          <p role="note" className="text-xs text-muted-foreground">
+            {IMAGE_SEARCH_UNVERIFIED_TEXT}
+          </p>
+          {report.status === 'available' ? (
+            <>
+              <ul className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-2">
+                {items.map((item, index) => (
+                  <ImageSearchResultItem
+                    key={`${item.thumbUrl}-${index}`}
+                    item={item}
+                    collected={collectedSet.has(item.thumbUrl)}
+                    canCollect={canCollect}
+                    onCollect={onCollect}
+                  />
+                ))}
+              </ul>
+              {report.notes.length > 0 ? (
+                <p className="text-xs text-muted-foreground" data-testid="poi-card-image-search-notes">
+                  来源处理说明：{report.notes.join('；')}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p role="status" className="text-xs text-muted-foreground" data-testid="poi-card-image-search-status">
+              {IMAGE_SEARCH_STATUS_TEXT[report.status]}
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}

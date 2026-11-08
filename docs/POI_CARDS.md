@@ -129,7 +129,8 @@
 - 查看（已保存内容 + 来源 + 图片）与编辑（名称/介绍/开放时间/门票）同一面板；
   「保存资料卡」显式提交；「取消」/ 关闭零写入。
 - 面板不读 localStorage；记录由父级（`App.tsx`）读取后经 props 传入。
-- 图片编辑入口（URL 收进 / Wikimedia 搜索）属 S3 / S5，本切片不含。
+- 图片编辑入口：S3「图片 URL 手动添加」+ S5「Wikimedia 搜索图片」子区均已
+  落地；搜索只在显式点击时发一次请求，收进只进编辑内存态，显式保存才落盘。
 
 ## App 接线（最小侵入）
 
@@ -152,7 +153,10 @@
 ## S3 / S5 预留
 
 - S5 Wikimedia：编辑器内「搜索图片」（显式触发）→ 逐张「收进」确认流
-  （source=wikimedia，保留 attribution/license）。
+  （source=wikimedia，保留 attribution/license）。**已由三期 S5 落地**，
+  契约与红线详见 `docs/IMAGE_SOURCES.md`「前端接线（三期 S5）」一节；
+  测试见 `__tests__/PoiCardImageSearch.test.tsx`（显式触发 / 署名许可展示 /
+  缺署名不收进 / 收进内存态→显式保存才落盘 / 失败逐状态文案 / 失败保旧）。
 
 ## 收进管道（三期 S3 已落地）
 

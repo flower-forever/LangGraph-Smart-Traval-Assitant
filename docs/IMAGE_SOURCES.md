@@ -1,8 +1,10 @@
 # Wikimedia Commons 图片搜索（Image Sources）
 
-状态：**后端端点已接入（三期 S4）**。client + router + 契约测试已注册进
-`api_server.py`；前端「资料卡编辑器内搜索图片」由 S5 切片接线。本文档描述
-当前后端契约与安全边界；"未核实""不自动"的边界同样是契约的一部分。
+状态：**后端端点已接入（三期 S4）＋ 前端已接线（三期 S5）**。client + router +
+契约测试已注册进 `api_server.py`；前端「资料卡编辑器内搜索图片」已由 S5 切片
+落地（`frontend/src/lib/imageSources.ts` + `imageSourcesApi.ts` +
+`PoiCardPanel.tsx` 内嵌搜索子区）。本文档描述当前后端契约、前端接线与安全
+边界；"未核实""不自动"的边界同样是契约的一部分。
 
 ## 定位与边界
 
@@ -138,8 +140,66 @@ httpx.MockTransport + recorded fixture（Commons formatversion=2 响应形状
   状态头、422 与 0 请求（含 ASCII JSON 孤立代理、合法代理对 emoji、坏
   JSON 与非 UTF-8 body）、503、来源守卫 403/白名单通过、生产 api_server
   注册与相邻旧接口不回退。
+- 前端（S5）：`frontend/src/__tests__/imageSources.test.ts`（query 规范化
+  与后端同口径、7 态矩阵、URL 白名单、adapter 单请求无重试）+
+  `PoiCardImageSearch.test.tsx`（显式触发零请求 / 逐张署名与许可 / 缺署名
+  不收进 / 收进内存态→显式保存才落盘 / 失败逐状态文案 / 失败保旧）+
+  `imageScenarios.test.ts`（dev-stub fixture 形状钉住）。实数见 S5 交付回报。
 - 回归：既有 `test_poi_sources_*`、`test_tavily_web_*`、`test_api*` 全绿
   （实数见 S4 交付回报）；全量后端测试见收尾审计。
+
+## 前端接线（三期 S5 已落地）
+
+前端消费侧三件套，全部离线测试、业务外网 0：
+
+| 文件 | 职责 |
+|---|---|
+| `frontend/src/lib/imageSources.ts` | 纯契约：类型、`normalizeImageQuery`（与后端 `normalize_image_query` 同口径：Python strip + 1..100 码点 + 拒孤立代理）、`validateImageSearchReport`（7 态矩阵 + requested_query 归属核对 + 条目 URL 白名单复核，任一条目不安全整份作废）。无网络、无 UI、零存储。 |
+| `frontend/src/lib/imageSourcesApi.ts` | 请求 adapter：复用 `api.ts` 的 `postJson`（取消 / 超时时钟 / 错误分类），每次调用只发一次 POST（`timeoutMs=12000`，后端总 deadline 8s 前端留余量）；不重试、不自动查询；结构不符抛 `ApiError('bad_payload')`；HTTP 422/503 折成固定安全文案（不透传 detail）。 |
+| `frontend/src/components/PoiCardPanel.tsx`（内嵌 `WikimediaImageSearch` 子区） | 编辑器内「搜索图片」：显式触发、结果网格、逐张收进（详见下）。 |
+
+### 界面行为与红线（S5）
+
+- **入口**：资料卡编辑表单内的「搜索 Wikimedia 图片」子区；查询输入带卡名
+  预填（可改）。**只有点「搜索图片」才发一次请求**：挂载、改输入、改名、
+  收进、换卡都不发；每次点击最多一次上游请求，**失败不自动重发**（错误文案
+  提示用户可再点一次）。
+- **结果网格**：逐张展示缩略图（`thumbUrl`，懒加载，失败占位「缩略图加载
+  失败」不阻断）+ `license`（缺失显示「未知」）+ 作者署名 `artist`（缺失显示
+  「未知」）。结果默认「未核实」标注：署名与许可是检索时刻的上游展示，不
+  宣称图片权利状态已核验。
+- **缺署名不收进**：`artist` 为 null 的条目**不提供收进按钮**，固定文案
+  「缺作者署名，不提供收进（CC 协议要求保留署名）」——CC 协议要求保留署名，
+  前端按署名存在与否决定是否可收进，绝不替用户编造署名。
+- **收进（确认流内的一步）**：点某张的「收进」→ 图片加入**编辑内存态**
+  `form.images`（`source='wikimedia'`，`attribution=artist`，`license` 原样
+  保留，`caption=null`）。收进去重（同 `thumbUrl` 已在表单 → 显示「已收进
+  表单」徽标）、张数上限沿用 S3（满 8 张显示「图片已满，先移除后才能收进」）。
+  **收进本身不写任何键**：仍走本面板已有的「保存资料卡」显式保存才落盘
+  （`handleSavePoiCards`，expectedRaw 冻结比对）；不保存直接取消 / 关闭，
+  收进内容随内存态丢弃，零写入。
+- **失败信封逐状态明示**：7 态各配固定中文文案（诚实展示、无兜底编造、
+  reason 原文一律不回显）；传输层失败（超时 / 网络 / 422 / 503 / 坏结构）
+  也各配固定安全文案。**失败保旧**：搜索失败只影响本次结果展示，已编辑
+  内存态（含已收进图片）与存储字节完全不变。
+- **图片仅存 URL**：收进只存 `thumbUrl` 引用（≤1000 字符，超限拒绝）；
+  不下载、不转存、不内嵌图片数据。
+- 文案红线沿用：无「已预订/已确认/已出票」；未知显示「未知」；不自动收图、
+  不自动写任何键。
+
+### dev-stub fixture（S5）
+
+`frontend/dev-stub/server.mjs` 扩展 `POST /api/image-sources/search` 分支 +
+`frontend/dev-stub/imageScenarios.mjs` 固定场景表：
+
+- 请求体仅 `{"query"}`；**`场景:xxx` 前缀选择场景**，普通 query 返回
+  `available_many`（3 张，含 1 张无署名条目，用于验证「缺署名不提供收进」）。
+- 场景齐备：`available_many` / `available_single` / `no_candidates` /
+  `invalid_request` / `timeout` / `rate_limited`（429） / `unavailable`（503）
+  / `failed`（404）。所有 URL 使用白名单主机（upload.wikimedia.org /
+  commons.wikimedia.org），形状经 `imageScenarios.test.ts` 钉住。
+- 空 query / 坏 JSON / 超 100 码点 → HTTP 422 + `report` 信封（与后端
+  同一 422 语义，0 场景请求）。
 
 ## 本批次未覆盖
 

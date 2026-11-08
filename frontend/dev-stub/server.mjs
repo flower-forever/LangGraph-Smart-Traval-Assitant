@@ -3,6 +3,9 @@
  * - GET /health、GET /api/health：探活
  * - GET  /api/trips/example：固定的杭州示例行程，标题、摘要、warnings 都标注「固定示例」
  * - POST /api/trips/plan：503，明确说明本桩不提供真实规划
+ * - POST /api/image-sources/search：Wikimedia 图片搜索 fixture（三期 S5）；
+ *   请求体仅 {"query"}，`场景:xxx` 前缀选场景，普通查询回多张（含一张无署名）。
+ *   每次调用返回新对象；失败信封也是固定数据，不回显请求内容。
  *
  * 示例中的路段只有「示意直线 straight_line」或「路线不可用 unavailable」：
  * distance_m / duration_minutes 一律为 null，geometry 为空，
@@ -12,6 +15,7 @@
  */
 import http from 'node:http'
 import { pathToFileURL } from 'node:url'
+import { resolveImageSearchScenario } from './imageScenarios.mjs'
 
 export const STUB_PLAN_DETAIL = '开发示例服务不提供真实规划，请启动配置密钥的后端（api_server.py）后再试。'
 
@@ -116,6 +120,42 @@ export function createStubServer() {
       // 不伪造智能体结果，也不回显请求里的目的地
       req.resume()
       sendJson(res, 503, { detail: STUB_PLAN_DETAIL, stub: true })
+      return
+    }
+    if (url.pathname === '/api/image-sources/search' && req.method === 'POST') {
+      // 固定 fixture：`场景:xxx` 前缀选场景；普通 query 回多张（含一张无署名）。
+      // 422 只在本地校验形状不合法时返回（0 场景请求语义与后端一致）。
+      let rawBody = ''
+      req.setEncoding('utf8')
+      req.on('data', (chunk) => {
+        rawBody += chunk
+        if (rawBody.length > 65536) req.destroy()
+      })
+      req.on('end', () => {
+        let query = null
+        try {
+          const parsed = JSON.parse(rawBody)
+          if (
+            parsed &&
+            typeof parsed === 'object' &&
+            !Array.isArray(parsed) &&
+            typeof parsed.query === 'string'
+          ) {
+            query = parsed.query.trim()
+          }
+        } catch {
+          /* 坏 JSON 按 invalid_request 折算 */
+        }
+        if (query === null || query.length < 1 || query.length > 100) {
+          const invalid = resolveImageSearchScenario('场景:invalid_request')
+          sendJson(res, 422, {
+            detail: 'query 必须为去除首尾空白后 1 到 100 个字符的文本',
+            report: { ...invalid, requested_query: null },
+          })
+          return
+        }
+        sendJson(res, 200, resolveImageSearchScenario(query))
+      })
       return
     }
     sendJson(res, 404, { detail: `未实现的路径 ${url.pathname}` })
