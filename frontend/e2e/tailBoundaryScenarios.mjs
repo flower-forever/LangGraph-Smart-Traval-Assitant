@@ -64,7 +64,8 @@ export const tailText = {
   stopBoundaryFeedbackFragment: '已停止等待衔接路线',
 }
 
-const tripTitleSel = '.trip-title'
+/** W4 改版：标题是行程安排 section 里唯一的 h2（App.tsx TRIP_TITLE） */
+const tripTitleSel = 'section[aria-label="行程安排"] h2'
 const applyNoticeSel = '[data-testid="apply-notice"]'
 const undoApplyButtonSel = 'button:has-text("撤销应用")'
 const LEG_REFRESH_PATH = '/api/trips/days/leg-refresh'
@@ -226,14 +227,18 @@ export async function runTailBoundaryReadyScenario({ page, rec, control, screens
   })
 
   await rec.step('应用后目标日：前缀站点原样 + 跨界 navigation leg + 后段候选；其他天不变（UI 导出核对）', async () => {
-    const stopNames = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stopNames = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     // 第 1 天组合：s-e2e-1、s-e2e-2（冻结前缀）+ 杭州花圃、茅家埠（候选）
     expectTrue(stopNames.includes('苏堤春晓') && stopNames.includes('曲院风荷'), `冻结前缀丢失：${JSON.stringify(stopNames)}`)
     expectTrue(stopNames.includes('杭州花圃') && stopNames.includes('茅家埠'), `后段候选未落主视图：${JSON.stringify(stopNames)}`)
     // 其他天不变：龙井村/九溪烟树（第 3 天仍在，切天核对）
     const dayTabs = '[role="tablist"][aria-label="按日切换"] button[role="tab"]'
     await page.locator(dayTabs).nth(2).click()
-    const day3Names = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const day3Names = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(day3Names.includes('龙井村') && day3Names.includes('九溪烟树'), `其他天被改动：${JSON.stringify(day3Names)}`)
     await page.locator(dayTabs).first().click()
     return { stopNames, day3Names }
@@ -242,7 +247,9 @@ export async function runTailBoundaryReadyScenario({ page, rec, control, screens
   await rec.step('一次撤销：整体恢复原 Trip（后段与衔接路线一并回滚）', async () => {
     await page.click(undoApplyButtonSel)
     await page.waitForSelector('text=已撤销应用', { timeout: 5000 })
-    const stopNames = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stopNames = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(!stopNames.includes('杭州花圃'), '撤销后候选站点仍在')
     expectTrue(stopNames.includes('曲院风荷') && stopNames.includes('浙江省博物馆'), `撤销后原行程未恢复：${JSON.stringify(stopNames)}`)
     expectEqual(countLegRefreshRequests(control) - baseCount, 1, '撤销不应发新请求')
@@ -301,14 +308,17 @@ export async function runTailBoundaryNoKeyScenario({ page, rec, control, screens
       notice.includes(tailText.unknownNoticeFragment),
       `未知应用 notice 应保留「未重算」原文：${notice.slice(0, 160)}`,
     )
-    const stopNames = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stopNames = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(stopNames.includes('杭州花圃'), '仅应用后段后候选站点应在主视图')
     // 未知衔接：边界 leg route_type=unavailable，距离/耗时保持 null（展示上不补 0）
+    // W4 改版：.leg/.leg-mode-line 退役；leg 块是 col-start-2 边框容器，mode 行是内部第一个 flex 行
     const boundaryLeg = await page.evaluate(() => {
-      const legs = Array.from(document.querySelectorAll('.leg'))
+      const legs = Array.from(document.querySelectorAll('div[class*="col-start-2"]'))
       const target = legs.find((el) => el.querySelector('[data-route="unavailable"]'))
       if (!target) return null
-      const modeLine = target.querySelector('.leg-mode-line')
+      const modeLine = target.querySelector('div.flex')
       const modeText = (modeLine?.textContent ?? '').replace(/\s+/g, ' ').trim()
       return {
         text: (target.textContent ?? '').replace(/\s+/g, ' ').trim(),
@@ -327,7 +337,9 @@ export async function runTailBoundaryNoKeyScenario({ page, rec, control, screens
     expectEqual(title, loadedTitle, `应用后行程标题被改写：${title}`)
     await page.click(undoApplyButtonSel)
     await page.waitForSelector('text=已撤销应用', { timeout: 5000 })
-    const restored = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const restored = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(!restored.includes('杭州花圃'), '撤销后候选站点仍在')
     return { notice: notice.slice(0, 160), restoredCount: restored.length }
   })
@@ -392,7 +404,9 @@ export async function runTailBoundaryStopWaitingScenario({ page, rec, control, s
   await rec.step('停止后仅应用后段（衔接未知）成功；undo 恢复', async () => {
     await page.click(tailSel.applyTailUnknown)
     await page.waitForSelector(tailSel.aiPanel, { state: 'detached', timeout: 5000 })
-    const stopNames = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stopNames = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(stopNames.includes('杭州花圃'), '仅应用后段未生效')
     await page.click(undoApplyButtonSel)
     await page.waitForSelector('text=已撤销应用', { timeout: 5000 })
@@ -512,11 +526,15 @@ export async function runTailBoundaryNarrowScenario({ page, rec, control, screen
   await rec.step('窄屏显式应用成功、一次 undo 恢复', async () => {
     await page.click(tailSel.applyTailWithRoute)
     await page.waitForSelector(tailSel.aiPanel, { state: 'detached', timeout: 5000 })
-    const stopNames = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stopNames = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(stopNames.includes('杭州花圃'), '窄屏应用后候选站点应在主视图')
     await page.click(undoApplyButtonSel)
     await page.waitForSelector('text=已撤销应用', { timeout: 5000 })
-    const restored = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const restored = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(!restored.includes('杭州花圃'), '窄屏撤销后候选站点仍在')
     const overflow = await assertNoHorizontalOverflow(page)
     expectTrue(!overflow, '390 窄屏撤销后出现横向溢出')

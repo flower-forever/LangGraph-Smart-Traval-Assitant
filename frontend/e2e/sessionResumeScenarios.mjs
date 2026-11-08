@@ -43,10 +43,12 @@ export const resumeSel = {
   enableButton: 'button:has-text("在此浏览器保留工作进度")',
   disableButton: 'button:has-text("关闭保留（已留存的副本会保留）")',
   deleteEntry: 'button:has-text("删除本机恢复副本")',
-  pendingSummary: '.session-resume-pending',
+  /** W4 改版：.session-resume-pending 退役；pending 概况是卡片内的绿边概况块（含「有上次的工作进度待恢复」文案） */
+  pendingSummary: '[data-testid="session-resume-card"] p:has-text("有上次的工作进度待恢复")',
   restoreButton: 'button:has-text("恢复上次的工作进度")',
   discardEntry: 'button:has-text("放弃恢复并开始留存当前进度")',
-  problemAlert: '.session-resume .field-error[role="alert"]',
+  /** W4 改版：.session-resume/.field-error 退役；problem 态文案是卡片内 destructive Alert（role=alert） */
+  problemAlert: '[data-testid="session-resume-card"] div[role="alert"]',
 }
 
 /** 本批场景用到的业务选择器（复用 runner 的 sel 之外补充的） */
@@ -64,10 +66,13 @@ export const bizSel = {
   budgetIssues: '[data-testid="budget-issues"]',
   budgetRow: '[data-testid="budget-row"]',
   budgetOwnerNote: '[data-testid="budget-owner-note"]',
-  savedToggle: 'button.saved-toggle',
-  savedUnavailable: '.saved-state[data-tone="error"][role="alert"]',
+  /** W4 改版：.saved-toggle 退役，按可见文本定位（SavedTripsPanel 开关按钮） */
+  savedToggle: 'button:has-text("已保存行程")',
+  /** W4 改版：.saved-state 退役；unavailable 态是 destructive Alert（role="status"），data-variant 由 Alert 组件渲染 */
+  savedUnavailable: '[aria-label="已保存的行程列表"] [data-variant="destructive"]',
   dayTabs: '[role="tablist"][aria-label="按日切换"] button[role="tab"]',
-  daySwitchNote: '.day-switch-note',
+  /** W4 改版：.day-switch-note 退役；提示文案用 p:has-text 收窄（DAY_SWITCH_NOTE 现为工具类） */
+  daySwitchNote: 'p',
 }
 
 export async function readStorageRaw(page, key) {
@@ -96,6 +101,7 @@ export async function assertResumeUiDefaults(page, rec) {
     expectEqual(await page.locator(resumeSel.enableButton).count(), 1, '启用入口应恰有一个')
     expectEqual(await page.locator(resumeSel.disableButton).count(), 0, 'off 形态不应有关闭保留按钮')
     expectEqual(await page.locator(resumeSel.pendingSummary).count(), 0, 'off 形态不应有待恢复概况卡')
+
     expectEqual(await page.locator(resumeSel.restoreButton).count(), 0, 'off 形态不应有恢复按钮')
     expectEqual(await page.locator(resumeSel.deleteEntry).count(), 0, 'off 且无副本时不应有删除入口')
     return { off: true }
@@ -159,7 +165,8 @@ export async function runResumeCrossTabScenario({ page, pageB, rec, screenshot }
   await screenshot(page, '14-resume-enabled.png')
 
   await rec.step('留存面板帮助文案：列明不保留范围（未提交输入/撤销历史/AI 检查结论）', async () => {
-    const help = (await page.textContent(`${resumeSel.card} .field-help`)) ?? ''
+    // W4 改版：.field-help 退役，帮助文案是卡片内的说明段（含「未提交的表单输入…不会留存」那一段）
+    const help = (await page.$$eval(`${resumeSel.card} p`, (nodes) => nodes.map((n) => n.textContent ?? '').join('\n'))) ?? ''
     expectTrue(help.includes('未提交的表单输入'), `帮助缺未提交输入声明：${help.slice(0, 120)}`)
     expectTrue(help.includes('撤销历史'), `帮助缺撤销历史声明：${help.slice(0, 120)}`)
     expectTrue(help.includes('AI 检查结论'), `帮助缺 AI 检查结论声明：${help.slice(0, 120)}`)
@@ -251,7 +258,7 @@ export async function runResumeCrossTabScenario({ page, pageB, rec, screenshot }
     await page.locator(`${bizSel.draftEditor} [aria-label^="编辑第 1 站"]`).first().click()
     const nameInput = page.locator(`${bizSel.draftEditor} input[placeholder="例如 断桥残雪"]`).first()
     await nameInput.fill('未提交的临时输入')
-    await page.waitForSelector(`${bizSel.daySwitchNote}:has-text("日期切换已暂停")`, { timeout: 5000 })
+    await page.waitForSelector('p:has-text("日期切换已暂停")', { timeout: 5000 })
     const savedBefore = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     // 有界等待真实 effect（200ms×10）确认没有写入发生；不写死「等 2 秒当成功」
     let unchanged = true
@@ -276,7 +283,7 @@ export async function runResumeCrossTabScenario({ page, pageB, rec, screenshot }
       parsed.session.budget.rows.length === 4,
       '取消输入后的自动写应保留草稿块与费用 4 行',
     )
-    expectTrue((await page.locator(`${bizSel.daySwitchNote}:has-text("日期切换已暂停")`).count()) === 0, '取消输入后 dirty 提示应消失')
+    expectTrue((await page.locator('p:has-text("日期切换已暂停")').count()) === 0, '取消输入后 dirty 提示应消失')
     return { dirtyPaused: true, resumedAfterCancel: true }
   })
 
@@ -350,7 +357,8 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
     await page.click('button:has-text("生成行程")')
     await page.waitForSelector('button:has-text("停止等待")', { timeout: 15000 })
     await page.click('button:has-text("停止等待")')
-    await page.waitForSelector('.plan-cancel-status', { timeout: 5000 })
+    // W4 改版：.plan-cancel-status 退役；PLAN_CANCEL_STATUS 现为工具类，文案锚点 role="status"
+    await page.waitForSelector('p[role="status"]:has-text("已停止等待")', { timeout: 5000 })
     control.planDelay.release()
     control.planDelay = null
     const keys = await listStorageKeys(page)
@@ -379,8 +387,8 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
       budgetRowCount: 3,
     })
     // 示例加载完成后主视图标题仍是示例（pending 不自动替换页面），raw 原样
-    await page.waitForSelector('.trip-title', { timeout: 15000 })
-    const exampleTitle = (await page.textContent('.trip-title')) ?? ''
+    await page.waitForSelector('section[aria-label="行程安排"] h2', { timeout: 15000 })
+    const exampleTitle = (await page.textContent('section[aria-label="行程安排"] h2')) ?? ''
     expectTrue(exampleTitle.includes('契约桩示例'), `首屏不是示例行程：${exampleTitle}`)
     const rawNow = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     const parsed = JSON.parse(rawNow)
@@ -396,7 +404,8 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
     await page.click('button:has-text("生成行程")')
     await page.waitForSelector('button:has-text("停止等待")', { timeout: 15000 })
     await page.click('button:has-text("停止等待")')
-    await page.waitForSelector('.plan-cancel-status', { timeout: 5000 })
+    // W4 改版：.plan-cancel-status 退役；PLAN_CANCEL_STATUS 现为工具类，文案锚点 role="status"
+    await page.waitForSelector('p[role="status"]:has-text("已停止等待")', { timeout: 5000 })
     // 停止等待后桩仍收到这次 plan 请求（真实到达证据），再显式放行让它「迟到」
     const deadline = Date.now() + 5000
     while (!control.requests.some((r) => r.path === '/api/trips/plan') && Date.now() < deadline) {
@@ -408,7 +417,7 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
     const rawNow = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     expectTrue(rawNow === JSON.stringify(seededResumePayload()), 'pending 期间（含迟到响应后）副本 raw 被改写')
     expectEqual(await page.locator(resumeSel.pendingSummary).count(), 1, 'pending 卡不应消失')
-    const titleAfterLate = (await page.textContent('.trip-title')) ?? ''
+    const titleAfterLate = (await page.textContent('section[aria-label="行程安排"] h2')) ?? ''
     expectTrue(titleAfterLate.includes('契约桩示例'), `迟到响应覆盖了页面：${titleAfterLate}`)
     return { rawPreserved: true, titleAfterLate }
   })
@@ -418,9 +427,11 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
     // 恢复的副本带未应用草稿 → 页面进入草稿编辑态；appliedNotice 在编辑期间不渲染，
     // 所以先核对编辑态证据，恢复通告（含来源说明）在下一步放弃草稿后核对。
     await page.waitForSelector('[data-testid="draft-preview-note"]', { timeout: 10000 })
-    const title = (await page.textContent('.trip-title')) ?? ''
+    const title = (await page.textContent('section[aria-label="行程安排"] h2')) ?? ''
     expectTrue(title.includes('留存恢复验证·苏州两日'), `恢复后主视图标题异常：${title}`)
-    const stops = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stops = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(stops.includes('D1 改名站（来自草稿）'), `恢复后主视图缺草稿预览站：${JSON.stringify(stops)}`)
     expectTrue(stops.includes('拙政园') && stops.includes('定园'), `恢复后缺 base 站：${JSON.stringify(stops)}`)
     expectEqual(await page.locator('button:has-text("应用草稿")').count(), 1, '恢复后应有「应用草稿」入口（草稿未自动应用）')
@@ -433,12 +444,14 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
   await rec.step('放弃恢复来的草稿（两步确认）→ 恢复通告可见：来源未知自述 + 不是已保存行程', async () => {
     await page.click('button:has-text("放弃草稿")')
     await page.click('button:has-text("确认放弃草稿")')
-    await page.waitForSelector('.apply-result-note', { timeout: 10000 })
-    const notice = (await page.textContent('.apply-result-note')) ?? ''
+    await page.waitForSelector('[data-testid="apply-notice"]', { timeout: 10000 })
+    const notice = (await page.textContent('[data-testid="apply-notice"]')) ?? ''
     expectTrue(notice.includes('已从本机留存的工作进度恢复'), `恢复通告异常：${notice.slice(0, 240)}`)
     expectTrue(notice.includes('这份进度没有记录来源标记，行程内容按未核实处理'), `恢复通告缺未知来源声明：${notice.slice(0, 240)}`)
     expectTrue(notice.includes('这不是「保存的行程」'), `恢复通告缺非保存声明：${notice.slice(0, 240)}`)
-    const stopsAfterDiscard = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stopsAfterDiscard = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(!stopsAfterDiscard.includes('D1 改名站（来自草稿）'), '放弃草稿后主视图仍显示草稿站')
     expectTrue(stopsAfterDiscard.includes('平江路'), `放弃草稿后 base 站异常：${JSON.stringify(stopsAfterDiscard)}`)
     return { notice: notice.slice(0, 240), stopsAfterDiscard }
@@ -496,17 +509,18 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
     const rawAfter = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     expectTrue(rawAfter === rawBefore, '关闭保留改动了数据键（应原样）')
     await page.waitForSelector('button:has-text("在此浏览器保留工作进度")', { timeout: 5000 })
-    expectEqual(await page.locator('[data-testid="session-resume-card"] .field-error[role="alert"]').count(), 0, '关闭保留不应显示错误文案')
+    // W4 改版：.field-error 退役；problem 态文案是卡片内 destructive Alert（本步断言无错误 → 计数 0）
+    expectEqual(await page.locator('[data-testid="session-resume-card"] div[role="alert"]').count(), 0, '关闭保留不应显示错误文案')
     expectEqual(await page.locator('button:has-text("删除本机恢复副本")').count(), 1, 'off 但有副本时应显示删除入口')
     return { flagAfter, dataBytes: rawAfter.length }
   })
 
   await rec.step('重新开启按合同：重读副本 → 再次 pending（不自动恢复、不自动覆盖）', async () => {
     await page.click('button:has-text("在此浏览器保留工作进度")')
-    // 二选一等待：pending 卡出现即通过；若出现 problem 横幅则作为缺陷证据记录并失败
+    // 二选一等待：pending 概况出现即通过；若出现 problem 横幅则作为缺陷证据记录并失败
     const outcome = await Promise.race([
       page
-        .waitForSelector('.session-resume-pending', { timeout: 10000 })
+        .waitForSelector('p:has-text("有上次的工作进度待恢复")', { timeout: 10000 })
         .then(() => 'pending'),
       page
         .waitForSelector(resumeSel.problemAlert, { timeout: 10000 })
@@ -528,20 +542,20 @@ export async function runResumeRestoreScenario({ page, rec, control, screenshot 
       { timeout: 10000 },
     )
     await page.click('button:has-text("在此浏览器保留工作进度")')
-    await page.waitForSelector('.session-resume-pending', { timeout: 10000 })
+    await page.waitForSelector(resumeSel.pendingSummary, { timeout: 10000 })
     await page.reload({ waitUntil: 'domcontentloaded' })
     // reload 后 App 重新读存储：pending 概况 = App 写回的那份（标题一致）
-    await page.waitForSelector('.session-resume-pending', { timeout: 10000 })
-    const pendingText = (await page.textContent('.session-resume-pending')) ?? ''
+    await page.waitForSelector(resumeSel.pendingSummary, { timeout: 10000 })
+    const pendingText = (await page.textContent(resumeSel.pendingSummary)) ?? ''
     expectTrue(pendingText.includes('留存恢复验证·苏州两日'), `reload 后 pending 标题异常：${pendingText.slice(0, 200)}`)
     expectTrue(pendingText.includes('3 条手工费用'), `reload 后 pending 费用条数异常：${pendingText.slice(0, 200)}`)
     // 显式恢复：无草稿（已放弃过）→ 不进编辑态；恢复通告直接可见
     await page.click(resumeSel.restoreButton)
-    await page.waitForSelector('.apply-result-note', { timeout: 10000 })
-    const notice = (await page.textContent('.apply-result-note')) ?? ''
+    await page.waitForSelector('[data-testid="apply-notice"]', { timeout: 10000 })
+    const notice = (await page.textContent('[data-testid="apply-notice"]')) ?? ''
     expectTrue(notice.includes('已从本机留存的工作进度恢复'), `闭环恢复通告异常：${notice.slice(0, 240)}`)
     expectTrue(notice.includes('这份进度没有记录来源标记，行程内容按未核实处理'), `闭环恢复缺未知来源声明：${notice.slice(0, 240)}`)
-    const title = (await page.textContent('.trip-title')) ?? ''
+    const title = (await page.textContent('section[aria-label="行程安排"] h2')) ?? ''
     expectTrue(title.includes('留存恢复验证·苏州两日'), `闭环恢复后标题异常：${title}`)
     expectEqual(await page.locator('button:has-text("应用草稿")').count(), 0, '闭环恢复不应有草稿（此前已显式放弃）')
     expectEqual(await page.locator('.trip-restored-note').count(), 0, '闭环恢复不应显示已保存时间戳')
@@ -595,8 +609,8 @@ export async function runResumeCorruptScenario({ page, rec, screenshot }) {
     const raw = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     expectTrue(raw === '{not-valid-json!!', '坏 JSON raw 被改写')
     // 示例行程正常加载（留存损坏不拖垮页面主流程）
-    await page.waitForSelector('.trip-title', { timeout: 15000 })
-    expectTrue(((await page.textContent('.trip-title')) ?? '').includes('契约桩示例'), '损坏副本影响示例加载')
+    await page.waitForSelector('section[aria-label="行程安排"] h2', { timeout: 15000 })
+    expectTrue(((await page.textContent('section[aria-label="行程安排"] h2')) ?? '').includes('契约桩示例'), '损坏副本影响示例加载')
     return { alert: alert.slice(0, 200), rawPreserved: true }
   })
   await screenshot(page, '18-resume-corrupt.png')
@@ -708,7 +722,7 @@ export async function runResumeInjectionScenario({ context, page, rec, screensho
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForSelector(resumeSel.pendingSummary, { timeout: 10000 })
     await page.click(resumeSel.restoreButton)
-    await page.waitForSelector('.apply-result-note', { timeout: 10000 })
+    await page.waitForSelector('[data-testid="apply-notice"]', { timeout: 10000 })
     // 等恢复后的自动写完成（示例行程标题快照重新落盘），再取「注入前基准」
     await page.waitForFunction(
       (key) => {
@@ -782,22 +796,22 @@ export async function runResumeFileSourceScenario({ context, page, rec, control,
   const fileSourceState = { exportedFilename: null }
   await rec.step('打开首页加载示例行程（fresh context：无留存键）', async () => {
     await page.goto(appOriginFromRunner, { waitUntil: 'domcontentloaded', timeout: 20000 })
-    await page.waitForSelector('.trip-title', { timeout: 15000 })
-    expectTrue(((await page.textContent('.trip-title')) ?? '').includes('契约桩示例'), '首屏不是契约桩示例行程')
+    await page.waitForSelector('section[aria-label="行程安排"] h2', { timeout: 15000 })
+    expectTrue(((await page.textContent('section[aria-label="行程安排"] h2')) ?? '').includes('契约桩示例'), '首屏不是契约桩示例行程')
     const keys = await listStorageKeys(page)
     expectTrue(!keys.includes(SESSION_RESUME_FLAG_KEY) && !keys.includes(SESSION_RESUME_DATA_KEY), `fresh context 不应有留存键：${JSON.stringify(keys)}`)
-    return { title: await page.textContent('.trip-title') }
+    return { title: await page.textContent('section[aria-label="行程安排"] h2') }
   })
 
   await rec.step('真实规划一次（契约桩 AI 行程）作为导出来源（与示例区分）', async () => {
     await page.fill('input[placeholder="例如：杭州"]', '成都')
     await page.click('button:has-text("生成行程")')
     await page.waitForFunction(
-      () => document.querySelector('.trip-title')?.textContent?.includes('AI 契约桩') ?? false,
+      () => document.querySelector('section[aria-label="行程安排"] h2')?.textContent?.includes('AI 契约桩') ?? false,
       undefined,
       { timeout: 20000 },
     )
-    const title = (await page.textContent('.trip-title')) ?? ''
+    const title = (await page.textContent('section[aria-label="行程安排"] h2')) ?? ''
     expectTrue(title.includes('AI 契约桩'), `规划标题异常：${title}`)
     return { title }
   })
@@ -821,9 +835,11 @@ export async function runResumeFileSourceScenario({ context, page, rec, control,
 
   await rec.step('标准 file input 选择刚下载的备份（setInputFiles）→ 页面预览（不绕过 UI）', async () => {
     const savedPath = resolve(downloadDir, fileSourceState.exportedFilename)
-    await page.setInputFiles('input.trip-transfer-input[type="file"]', savedPath)
-    await page.waitForSelector('.trip-transfer-preview', { timeout: 10000 })
-    const previewTitle = (await page.textContent('.trip-transfer-preview-title')) ?? ''
+    // W4 改版：.trip-transfer-input 退役；file input 紧跟「选择备份文件（.json）」label
+    await page.setInputFiles('input[type="file"][accept=".json,application/json"]', savedPath)
+    // W4 改版：.trip-transfer-preview(-title) 退役；预览块标题是 h5「预览：{title}」
+    await page.waitForSelector('h5:has-text("预览：")', { timeout: 10000 })
+    const previewTitle = (await page.textContent('h5:has-text("预览：")')) ?? ''
     expectTrue(previewTitle.includes('AI 契约桩'), `预览标题异常：${previewTitle}`)
     return { previewTitle }
   })
@@ -835,7 +851,7 @@ export async function runResumeFileSourceScenario({ context, page, rec, control,
     expectTrue(importNote.includes('这份行程来自你选择的备份文件'), `来源说明异常：${importNote.slice(0, 200)}`)
     expectTrue(importNote.includes('页面没有向服务器核对过内容'), `来源说明缺未核对声明：${importNote.slice(0, 200)}`)
     expectTrue(importNote.includes('打开文件这个动作不会自动保存'), `来源说明缺非自动保存声明：${importNote.slice(0, 200)}`)
-    const title = (await page.textContent('.trip-title')) ?? ''
+    const title = (await page.textContent('section[aria-label="行程安排"] h2')) ?? ''
     expectTrue(title.includes('AI 契约桩'), `打开文件后主视图标题异常：${title}`)
     return { title, importNote: importNote.slice(0, 200) }
   })
@@ -899,15 +915,15 @@ export async function runResumeFileSourceScenario({ context, page, rec, control,
   await rec.step('reload → pending 概况（文件来源自述 + raw 保旧）→ pending 期间副本不被示例覆盖', async () => {
     const rawBefore = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('.session-resume-pending', { timeout: 15000 })
-    const pendingText = (await page.textContent('.session-resume-pending')) ?? ''
+    await page.waitForSelector(resumeSel.pendingSummary, { timeout: 15000 })
+    const pendingText = (await page.textContent(resumeSel.pendingSummary)) ?? ''
     expectTrue(pendingText.includes('AI 契约桩'), `pending 标题异常：${pendingText.slice(0, 200)}`)
     expectTrue(pendingText.includes('这份进度当时的行程来自你选择的备份文件'), `pending 缺文件来源自述：${pendingText.slice(0, 240)}`)
     expectTrue(pendingText.includes('页面没有向服务器核对过'), `pending 缺未核对声明：${pendingText.slice(0, 240)}`)
     expectTrue(pendingText.includes('1 条手工费用'), `pending 费用条数异常：${pendingText.slice(0, 200)}`)
     // 示例照常加载但不覆盖副本
-    await page.waitForSelector('.trip-title', { timeout: 15000 })
-    expectTrue(((await page.textContent('.trip-title')) ?? '').includes('契约桩示例'), 'pending 期间示例未加载')
+    await page.waitForSelector('section[aria-label="行程安排"] h2', { timeout: 15000 })
+    expectTrue(((await page.textContent('section[aria-label="行程安排"] h2')) ?? '').includes('契约桩示例'), 'pending 期间示例未加载')
     const rawNow = await readStorageRaw(page, SESSION_RESUME_DATA_KEY)
     expectTrue(rawNow === rawBefore, 'pending 期间副本 raw 被改写')
     return { pendingText: pendingText.slice(0, 240), rawPreserved: true }
@@ -916,14 +932,16 @@ export async function runResumeFileSourceScenario({ context, page, rec, control,
   await rec.step('显式恢复：草稿进编辑态（未自动应用）；放弃草稿后恢复通告=文件自述+未向服务器核对', async () => {
     await page.click(resumeSel.restoreButton)
     await page.waitForSelector('[data-testid="draft-preview-note"]', { timeout: 10000 })
-    const stops = await page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+    const stops = await page.$$eval('[data-testid="stop-row"]', (nodes) =>
+      nodes.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim() ?? ''),
+    )
     expectTrue(stops.includes('文件来源站（未应用）'), `恢复后主视图缺草稿预览站：${JSON.stringify(stops)}`)
     expectEqual(await page.locator('button:has-text("应用草稿")').count(), 1, '恢复后应有「应用草稿」入口（草稿未自动应用）')
     // 草稿编辑期间 appliedNotice 不渲染；放弃草稿（两步确认）后核对恢复通告
     await page.click('button:has-text("放弃草稿")')
     await page.click('button:has-text("确认放弃草稿")')
-    await page.waitForSelector('.apply-result-note', { timeout: 10000 })
-    const notice = (await page.textContent('.apply-result-note')) ?? ''
+    await page.waitForSelector('[data-testid="apply-notice"]', { timeout: 10000 })
+    const notice = (await page.textContent('[data-testid="apply-notice"]')) ?? ''
     expectTrue(notice.includes('已从本机留存的工作进度恢复'), `恢复通告异常：${notice.slice(0, 260)}`)
     expectTrue(notice.includes('这份进度当时的行程来自你选择的备份文件'), `恢复通告缺文件来源自述：${notice.slice(0, 260)}`)
     expectTrue(notice.includes('页面仍未向服务器核对内容'), `恢复通告缺未核对声明：${notice.slice(0, 260)}`)

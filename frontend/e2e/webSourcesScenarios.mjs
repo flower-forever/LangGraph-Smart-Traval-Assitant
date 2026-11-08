@@ -41,11 +41,13 @@ export const webSourcesSel = {
   notes: '[data-testid="web-sources-notes"]',
   empty: '[data-testid="web-sources-empty"]',
   error: '[data-testid="web-sources-error"]',
-  resultItems: '.wsp-result-item',
-  resultLinks: '.wsp-result-item-link a',
+  // W4 改版：.wsp-result-item 退役；结果条是 ol > li（ResultItem），链接在 li 内第一个 a
+  resultItems: 'ol > li',
+  resultLinks: 'ol > li a',
 }
 
-const tripTitleSel = '.trip-title'
+/** W4 改版：标题是行程安排 section 里唯一的 h2（App.tsx TRIP_TITLE） */
+const tripTitleSel = 'section[aria-label="行程安排"] h2'
 
 /** 网页搜索请求计数与末条（control.requests 里 path 过滤；body 已是解析后的 JSON） */
 export function countWebSearchRequests(control) {

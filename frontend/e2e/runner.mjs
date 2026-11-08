@@ -142,9 +142,11 @@ function recordFailure(scenario, message) {
 const sel = {
   destinationInput: 'input[placeholder="例如：杭州"]',
   submitPlan: 'button:has-text("生成行程")',
-  tripTitle: '.trip-title',
+  /** W4 改版：标题是行程安排 section 里唯一的 h2（App.tsx TRIP_TITLE） */
+  tripTitle: 'section[aria-label="行程安排"] h2',
   tripSection: 'section[aria-label="行程安排"]',
-  errorBanner: '.error-banner[role="alert"]',
+  /** W4 改版：.error-banner 退役，role="alert" 保留；App 仅此处是 div[role=alert]（另一处是草稿里的 p[role=alert]，非 plan 错误横幅） */
+  errorBanner: 'div[role="alert"]',
   outcomeNote: '[data-testid="request-status-note"]',
   startEditing: 'button:has-text("编辑这趟行程")',
   draftEditor: '[aria-label="本地行程草稿编辑器"]',
@@ -181,7 +183,8 @@ const sel = {
   budgetExportPreview: 'button:has-text("预览费用备份")',
   budgetDownload: 'button:has-text("下载费用备份 (.budget.json)")',
   saveCurrentTrip: 'button:has-text("保存当前行程")',
-  savedToggle: 'button.saved-toggle',
+  /** W4 改版：.saved-toggle 退役；按可见文本 + aria-expanded 定位开关按钮（SavedTripsPanel） */
+  savedToggle: 'button:has-text("已保存行程")',
   restoreFirst: '[aria-label^="恢复保存的行程《"]',
   transferToggle: 'button:has-text("行程备份与导入")',
   exportJson: 'button:has-text("下载行程备份 (.json)")',
@@ -289,9 +292,14 @@ async function assertNoHorizontalOverflow(page, scenario) {
   if (overflow) recordFailure(scenario, '页面出现横向溢出')
 }
 
-/** 站点顺序（从真实 UI 读）：主视图 .stop-name 列表 */
+/** 站点顺序（从真实 UI 读）：主视图站名列表（W4：站名为 stop-row 内的站名 span，无 .stop-name 类） */
 async function readUiStopOrder(page) {
-  return page.$$eval('.stop-name', (nodes) => nodes.map((n) => n.textContent?.trim() ?? ''))
+  return page.$$eval('[data-testid="stop-row"]', (nodes) =>
+    nodes.map((node) => {
+      const nameSpan = node.querySelector('span.min-w-0 > span')
+      return nameSpan?.textContent?.trim() ?? ''
+    }),
+  )
 }
 
 /** 地图 marker 明细（真实 DOM 可观察数据）：aria-label + Leaflet transform 定位 */
@@ -369,7 +377,7 @@ async function scenarioHappyPath() {
       await page.fill(sel.destinationInput, '杭州')
       await page.click(sel.submitPlan)
       await page.waitForFunction(
-        () => document.querySelector('.trip-title')?.textContent?.includes('AI 契约桩') ?? false,
+        () => document.querySelector('section[aria-label="行程安排"] h2')?.textContent?.includes('AI 契约桩') ?? false,
         undefined,
         { timeout: 20000 },
       )
@@ -386,7 +394,8 @@ async function scenarioHappyPath() {
       await page.locator(`${sel.draftEditor} [aria-label^="下移第 1 站"]`).first().click()
       await page.waitForFunction(
         (prev) => {
-          const names = [...document.querySelectorAll('.stop-name')].map((n) => n.textContent?.trim())
+          const rows = [...document.querySelectorAll('[data-testid="stop-row"]')]
+          const names = rows.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim())
           return JSON.stringify(names) !== JSON.stringify(prev)
         },
         before,
@@ -472,8 +481,8 @@ async function scenarioHappyPath() {
         transformsAfter,
       }
     })
-    // 地图主体可见的截图：滚到地图区再截
-    await page.locator('.map-pane').first().scrollIntoViewIfNeeded()
+    // 地图主体可见的截图：滚到地图区再截（W4：地图容器 aria-label="交互式地图"）
+    await page.locator('[aria-label="交互式地图"]').first().scrollIntoViewIfNeeded()
     await screenshot(page, '05-map-refresh-applied-desktop.png')
 
     await rec.step('地图 marker 坐标与 UI 导出候选坐标一致（latlng 闭环）', async () => {
@@ -492,9 +501,9 @@ async function scenarioHappyPath() {
       }
       // 页面真实 Leaflet latlng：从 marker 的投影反推不可行（无 window 句柄），
       // 用 popup 打开后的坐标文本核对（ItineraryList 展示 WGS84 lat,lng）
-      await page.locator('.stop-row').first().click()
-      await page.waitForSelector('.stop-detail', { timeout: 5000 })
-      const coordText = await page.textContent('.stop-detail .text-note')
+      await page.locator('[data-testid="stop-row"]').first().click()
+      await page.waitForSelector('[data-testid="stop-detail"]', { timeout: 5000 })
+      const coordText = await page.textContent('[data-testid="stop-detail"]')
       const firstCoord = uiCoords[0]
       expectTrue(
         coordText.includes(firstCoord.lat.toFixed(4)) && coordText.includes(firstCoord.lng.toFixed(4)),
@@ -747,7 +756,7 @@ async function scenarioPlanFailure() {
       await page.fill(sel.destinationInput, '杭州')
       await page.click(sel.submitPlan)
       await page.waitForFunction(
-        () => document.querySelector('.trip-title')?.textContent?.includes('AI 契约桩') ?? false,
+        () => document.querySelector('section[aria-label="行程安排"] h2')?.textContent?.includes('AI 契约桩') ?? false,
         undefined,
         { timeout: 20000 },
       )
@@ -845,7 +854,7 @@ async function scenarioNarrowViewport() {
       await page.fill(sel.destinationInput, '杭州')
       await page.click(sel.submitPlan)
       await page.waitForFunction(
-        () => document.querySelector('.trip-title')?.textContent?.includes('AI 契约桩') ?? false,
+        () => document.querySelector('section[aria-label="行程安排"] h2')?.textContent?.includes('AI 契约桩') ?? false,
         undefined,
         { timeout: 20000 },
       )
@@ -859,7 +868,8 @@ async function scenarioNarrowViewport() {
       await page.locator(`${sel.draftEditor} [aria-label^="下移第 1 站"]`).first().click()
       await page.waitForFunction(
         (prev) => {
-          const names = [...document.querySelectorAll('.stop-name')].map((n) => n.textContent?.trim())
+          const rows = [...document.querySelectorAll('[data-testid="stop-row"]')]
+          const names = rows.map((node) => node.querySelector('span.min-w-0 > span')?.textContent?.trim())
           return JSON.stringify(names) !== JSON.stringify(prev)
         },
         before,
@@ -1113,6 +1123,13 @@ try {
     // 依赖预构建缓存写到 Temp 区，不写共享 node_modules/.vite
     cacheDir: resolve(tmpdir(), 'opencode', 'night-20261105', 'vite-cache'),
     plugins: [react()],
+    // 与 vite.config.ts 的 alias 保持一致：S2 起组件用 @/components/ui/* 导入，
+    // 内联配置（configFile:false）若缺 resolve.alias，Vite 解析会 500、App 不挂载
+    resolve: {
+      alias: {
+        '@': resolve(frontendRoot, 'src'),
+      },
+    },
     appType: 'spa',
     server: {
       host: '127.0.0.1',
