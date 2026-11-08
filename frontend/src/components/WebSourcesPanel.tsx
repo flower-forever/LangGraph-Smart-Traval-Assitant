@@ -33,6 +33,7 @@ import {
 } from '../lib/webSources'
 import { searchWebSources } from '../lib/webSourcesApi'
 import { serializeOwnerSnapshot } from '../lib/webSourcesOwner'
+import type { PoiCardPrefill } from '../lib/poiCardPrefill'
 import './webSourcesPanel.css'
 
 export interface WebSourcesPanelProps {
@@ -55,6 +56,11 @@ export interface WebSourcesPanelProps {
     rawQuery: string,
     options?: { signal?: AbortSignal },
   ) => Promise<WebSearchReport>
+  /**
+   * 收进资料卡：把一条搜索结果作为预填载荷交给父级（App 打开预填表单）。
+   * 本面板只构造载荷、不落盘；不点「收进」不构造、零写入。
+   */
+  onCollectPoiCard?: (prefill: PoiCardPrefill) => void
   /** 收起面板：停止等待并清结果，不改行程。 */
   onClose?: () => void
 }
@@ -198,6 +204,42 @@ function collectStopOptions(day: TripDay | null): StopOption[] {
 }
 
 /**
+ * 一条 Tavily 结果 → 收进预填载荷（只构造，不落盘；确认保存才写 poiCards:v1）。
+ * intro 预填标题 + 摘录（缺则只摘录，都缺留空）；名称留空 = 来源没有可当名称的
+ * 字段，用户必须填写。字段 provenance 标 tavily + 页面 URL detail；一切内容
+ * 默认「未核实」。Tavily 摘要信封没有图片字段（契约 WebSearchResult 只有页面
+ * URL，页面 URL 不是图片、不冒充图片预填）；用户在预填表单里自行贴入的图片
+ * URL 按 source=tavily + attribution 标页面来源（imageSourceHint 通道）。
+ */
+export function collectPrefillFromWebResult(
+  result: WebSearchReport['results'][number],
+  collectedAt: number,
+): PoiCardPrefill {
+  const title = result.title?.trim() ?? ''
+  const snippet = result.snippet?.trim() ?? ''
+  const introParts: string[] = []
+  if (title.length > 0) introParts.push(title)
+  if (snippet.length > 0) introParts.push(snippet)
+  const intro = introParts.join('\n').slice(0, 2000)
+  const hasIntro = intro.length > 0
+  return {
+    name: '',
+    intro,
+    openingHours: '',
+    ticket: '',
+    provenance: hasIntro
+      ? {
+          intro: { source: 'tavily', detail: result.url, recordedAt: collectedAt },
+        }
+      : null,
+    collectNotice:
+      '预填自 Tavily 网页搜索摘要，未核实；不代表官方信息、营业时间或票价。请核对后保存，不采纳则零写入。',
+    imageSourceHint: 'tavily',
+    imageAttributionHint: title.length > 0 ? title : result.url,
+  }
+}
+
+/**
  * 本地输入准入：唯一判据是 lib/webSources.ts 的 normalizeWebSearchQuery
  * （与后端 Python str.strip() 同口径）。不复制空白表、不用 JS trim、
  * 不按原文码点先限：FEFF 是合法正文、U+001C–1F/U+0085 属 Python 空白。
@@ -230,6 +272,7 @@ export default function WebSourcesPanel({
   openedFromFile = null,
   activeStopId = null,
   requestWebSources,
+  onCollectPoiCard,
   onClose,
 }: WebSourcesPanelProps) {
   const queryInputId = useId()
@@ -538,7 +581,9 @@ export default function WebSourcesPanel({
         </p>
       ) : null}
 
-      {report ? <ReportBlock report={report} /> : null}
+      {report ? (
+        <ReportBlock report={report} onCollectPoiCard={onCollectPoiCard} />
+      ) : null}
 
       <p className="wsp-memory-note">{MEMORY_NOTE}</p>
 
@@ -557,7 +602,13 @@ export default function WebSourcesPanel({
   )
 }
 
-function ReportBlock({ report }: { report: WebSearchReport }) {
+function ReportBlock({
+  report,
+  onCollectPoiCard,
+}: {
+  report: WebSearchReport
+  onCollectPoiCard?: (prefill: PoiCardPrefill) => void
+}) {
   const checkedAt = formatUtcTimestamp(report.checked_at, '时间未知')
   const fetchedAt = formatUtcTimestamp(report.fetched_at, '未知（未成功获取）')
   return (
@@ -577,7 +628,11 @@ function ReportBlock({ report }: { report: WebSearchReport }) {
         <>
           <ol className="wsp-results">
             {report.results.map((result, index) => (
-              <ResultItem key={`${result.url}-${index}`} result={result} />
+              <ResultItem
+                key={`${result.url}-${index}`}
+                result={result}
+                onCollectPoiCard={onCollectPoiCard}
+              />
             ))}
           </ol>
           {report.notes.length > 0 ? (
@@ -615,7 +670,13 @@ function ReportBlock({ report }: { report: WebSearchReport }) {
   )
 }
 
-function ResultItem({ result }: { result: WebSearchReport['results'][number] }) {
+function ResultItem({
+  result,
+  onCollectPoiCard,
+}: {
+  result: WebSearchReport['results'][number]
+  onCollectPoiCard?: (prefill: PoiCardPrefill) => void
+}) {
   return (
     <li className="wsp-result-item">
       <p className="wsp-result-item-title">
@@ -638,6 +699,22 @@ function ResultItem({ result }: { result: WebSearchReport['results'][number] }) 
       <p className="wsp-result-item-date">
         网页发布日期：{result.publication_date ?? '未知（来源未提供）'}
       </p>
+      {onCollectPoiCard ? (
+        <div className="wsp-result-item-actions">
+          <button
+            type="button"
+            className="wsp-btn"
+            data-testid="web-sources-collect"
+            aria-label={`收进资料卡：${result.title ?? result.url}`}
+            onClick={() => {
+              onCollectPoiCard(collectPrefillFromWebResult(result, Date.now()))
+            }}
+          >
+            收进资料卡
+          </button>
+          <span className="wsp-hint">打开预填表单，确认保存才写入；不采纳零写入。</span>
+        </div>
+      ) : null}
     </li>
   )
 }

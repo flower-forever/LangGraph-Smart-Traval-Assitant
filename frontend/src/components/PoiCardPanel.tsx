@@ -1,5 +1,5 @@
 /**
- * P · 景点资料卡 · 手动编辑面板（shadcn 组件构建；三期 S2）。
+ * P · 景点资料卡 · 手动编辑 + 收进预填面板（shadcn 组件构建；三期 S2/S3）。
  *
  * 边界（与三期计划 §2.2 / docs/POI_CARDS.md 对齐）：
  * - **显式保存才落盘**：编辑只在内存 state 里；点「保存资料卡」才把整条记录交给
@@ -10,8 +10,14 @@
  *   （读取由父级完成并经 props 传入）。
  * - 卡片构造 / 更新走 lib/poiCards 的纯函数（createPoiCard / updatePoiCard），
  *   面板不复制 identityKey / 校验口径。
+ * - **S3 收进通道**：prefill 不为 null = 收进态（表单用预填初始化，用户可改）；
+ *   不点来源面板的「收进」就不会构造 prefill、不会出现预填表单——没有任何
+ *   自动收进路径。预填字段 provenance 由来源面板提供（tavily / osm）；
+ *   用户补填的空字段标 manual。
+ * - **图片 URL 收进**：「手动添加图片 URL」入口保存 source 按收进上下文标注
+ *   （收进态用 prefill.imageSourceHint，默认 manual）；仅存 URL，不抓取图片。
  * - 文案红线：无「已预订/已确认/已出票」；未知显示「未知」；所有内容默认
- *   「未核实」标注 + 来源。
+ *   「未核实」标注 + 来源；OSM 收进显示「来自协作地图，未核实」。
  * - 图片仅存 URL；渲染懒加载（loading="lazy"）；加载失败 → 占位 + 「图片加载失败」，
  *   不阻断不编造。无坐标字段、无 (0,0)。
  */
@@ -37,6 +43,8 @@ import {
 import {
   MAX_POI_CARD_INTRO_LENGTH,
   MAX_POI_CARD_FIELD_LENGTH,
+  MAX_POI_CARD_URL_LENGTH,
+  MAX_POI_CARD_IMAGES,
   createPoiCard,
   updatePoiCard,
   poiCardsRecordBytes,
@@ -44,6 +52,7 @@ import {
   type PoiCardFieldProvenanceV1,
   type PoiCardsRecordV1,
 } from '../lib/poiCards'
+import type { PoiCardPrefill } from '../lib/poiCardPrefill'
 
 /** 来源标签：与数据层 PoiCardImageSource 一一对应；展示用。 */
 const SOURCE_LABEL: Record<CardImageV1['source'], string> = {
@@ -59,19 +68,31 @@ interface CardFormState {
   intro: string
   openingHours: string
   ticket: string
+  /** 表单内已确认要收进 / 保留的图片引用（仅 URL）。 */
+  images: CardImageV1[]
 }
 
 function emptyForm(): CardFormState {
-  return { name: '', intro: '', openingHours: '', ticket: '' }
+  return { name: '', intro: '', openingHours: '', ticket: '', images: [] }
 }
 
-function formFromCard(card: PoiCardV1 | null): CardFormState {
-  if (card === null) return emptyForm()
+function formFromCard(card: PoiCardV1 | null, prefill: PoiCardPrefill | null): CardFormState {
+  if (card === null) {
+    if (prefill === null) return emptyForm()
+    return {
+      name: prefill.name,
+      intro: prefill.intro ?? '',
+      openingHours: prefill.openingHours ?? '',
+      ticket: prefill.ticket ?? '',
+      images: prefill.images ? [...prefill.images] : [],
+    }
+  }
   return {
     name: card.name,
     intro: card.intro,
     openingHours: card.openingHours,
     ticket: card.ticket,
+    images: [...card.images],
   }
 }
 
@@ -129,6 +150,11 @@ export interface PoiCardPanelProps {
   record: PoiCardsRecordV1 | null
   /** 要查看 / 编辑的卡 id；null = 新建态。 */
   cardId: string | null
+  /**
+   * S3 收进预填（新建态专用）：不为 null 时表单用它初始化（用户可改），
+   * 字段 provenance 用预填来源；cardId 非 null（编辑已有卡）时忽略。
+   */
+  prefill?: PoiCardPrefill | null
   /** 显式保存：把整条记录交给父级；父级写 poiCards:v1 并回报。 */
   onSave: (record: PoiCardsRecordV1) => void
   /** 保存状态（父级回传）；saving = 写入中。 */
@@ -150,6 +176,7 @@ export interface PoiCardPanelProps {
 export default function PoiCardPanel({
   record,
   cardId,
+  prefill = null,
   onSave,
   saveStatus = 'idle',
   saveMessage,
@@ -160,17 +187,23 @@ export default function PoiCardPanel({
 }: PoiCardPanelProps) {
   const baseId = useId()
   const current = record?.cards.find((card) => card.id === cardId) ?? null
-  const [form, setForm] = useState<CardFormState>(() => formFromCard(current))
+  // 收进预填只在新建态生效；编辑已有卡时忽略（不覆盖已保存内容）。
+  const effectivePrefill = current === null ? prefill : null
+  const [form, setForm] = useState<CardFormState>(() => formFromCard(current, effectivePrefill))
   const [formError, setFormError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [imageUrl, setImageUrl] = useState('')
+  const [imageError, setImageError] = useState<string | null>(null)
 
   // 换卡 / 外部记录变化时重置编辑态（丢弃未保存草稿；不写任何键）。
   useEffect(() => {
-    setForm(formFromCard(current))
+    setForm(formFromCard(current, effectivePrefill))
     setFormError(null)
+    setImageError(null)
+    setImageUrl('')
     setReloadKey((key) => key + 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardId, record])
+  }, [cardId, record, effectivePrefill])
 
   const editable = record !== null
   const isEditingExisting = current !== null
@@ -193,6 +226,7 @@ export default function PoiCardPanel({
           intro: form.intro,
           openingHours: form.openingHours,
           ticket: form.ticket,
+          images: form.images,
         },
         timestamp,
       )
@@ -209,6 +243,14 @@ export default function PoiCardPanel({
       })
       return
     }
+    // 新建（手动或收进预填）：预填字段用来源 provenance（tavily / osm），
+    // 用户补填的空字段标 manual；一切内容保存后仍默认「未核实」。
+    const prefillProvenance = effectivePrefill?.provenance ?? null
+    const manualProvenance = (): PoiCardFieldProvenanceV1 => ({
+      source: 'manual',
+      detail: '手工粘贴',
+      recordedAt: timestamp,
+    })
     const created = createPoiCard(
       {
         id: createCardId(),
@@ -216,13 +258,20 @@ export default function PoiCardPanel({
         intro: form.intro,
         openingHours: form.openingHours,
         ticket: form.ticket,
+        images: form.images,
         provenance: {
-          intro: form.intro.trim().length > 0 ? { source: 'manual', detail: '手工粘贴', recordedAt: timestamp } : null,
+          intro:
+            form.intro.trim().length > 0
+              ? prefillProvenance?.intro ?? manualProvenance()
+              : null,
           openingHours:
             form.openingHours.trim().length > 0
-              ? { source: 'manual', detail: '手工粘贴', recordedAt: timestamp }
+              ? prefillProvenance?.openingHours ?? manualProvenance()
               : null,
-          ticket: form.ticket.trim().length > 0 ? { source: 'manual', detail: '手工粘贴', recordedAt: timestamp } : null,
+          ticket:
+            form.ticket.trim().length > 0
+              ? prefillProvenance?.ticket ?? manualProvenance()
+              : null,
         },
       },
       timestamp,
@@ -246,19 +295,74 @@ export default function PoiCardPanel({
     onSave(next)
   }
 
+  /** 表单内添加图片 URL：仅存 URL 引用；来源按收进上下文标注（tavily 收进时
+   *  attribution 标页面来源），手动新建 / 编辑标 manual。零网络调用。 */
+  const handleAddImageUrl = () => {
+    const trimmed = imageUrl.trim()
+    setImageError(null)
+    if (trimmed.length === 0) {
+      setImageError('请先粘贴图片 URL；不自动抓取任何图片。')
+      return
+    }
+    if (trimmed.length > MAX_POI_CARD_URL_LENGTH) {
+      setImageError(`图片 URL 最多 ${MAX_POI_CARD_URL_LENGTH} 个字符。`)
+      return
+    }
+    if (!/^(https?:\/\/|\/)/i.test(trimmed)) {
+      setImageError('图片 URL 必须以 http(s):// 或 / 开头。')
+      return
+    }
+    if (form.images.some((image) => image.url === trimmed)) {
+      setImageError('同一张图片 URL 已在表单里；没有重复添加。')
+      return
+    }
+    if (form.images.length >= MAX_POI_CARD_IMAGES) {
+      setImageError(`一张资料卡最多 ${MAX_POI_CARD_IMAGES} 张图片。`)
+      return
+    }
+    const timestamp = now()
+    const source = effectivePrefill?.imageSourceHint ?? 'manual'
+    const attribution = source === 'manual' ? null : (effectivePrefill?.imageAttributionHint ?? null)
+    setForm((state) => ({
+      ...state,
+      images: [
+        ...state.images,
+        {
+          url: trimmed,
+          caption: null,
+          source,
+          attribution,
+          license: null,
+          addedAt: timestamp,
+        },
+      ],
+    }))
+    setImageUrl('')
+  }
+
   const provenance = current?.provenance ?? null
 
   return (
     <Card role="region" aria-label="景点资料卡">
       <CardHeader>
         <CardDescription>景点资料卡 · 手动整理，默认「未核实」，永不自动写入行程或费用</CardDescription>
-        <CardTitle>{isEditingExisting ? current.name : '新建资料卡'}</CardTitle>
+        <CardTitle>
+          {isEditingExisting
+            ? current.name
+            : effectivePrefill !== null
+              ? form.name.trim().length > 0
+                ? `收进：${form.name}`
+                : '收进新资料卡'
+              : '新建资料卡'}
+        </CardTitle>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">未核实</Badge>
           {isEditingExisting ? (
             <Badge variant="secondary">
               已保存内容 · 更新于 {new Date(current.updatedAt).toLocaleString('zh-CN', { hour12: false })}
             </Badge>
+          ) : effectivePrefill !== null ? (
+            <Badge variant="secondary">收进预填 · 确认保存才写入本地</Badge>
           ) : (
             <Badge variant="secondary">尚未保存 · 显式保存才写入本地</Badge>
           )}
@@ -302,6 +406,11 @@ export default function PoiCardPanel({
             ) : null}
 
             <div className="flex flex-col gap-4" data-testid="poi-card-edit">
+              {effectivePrefill?.collectNotice ? (
+                <p role="note" className="text-sm text-muted-foreground" data-testid="poi-card-collect-notice">
+                  {effectivePrefill.collectNotice}
+                </p>
+              ) : null}
               <Field>
                 <FieldLabel htmlFor={`${baseId}-name`}>名称</FieldLabel>
                 <Input
@@ -356,6 +465,65 @@ export default function PoiCardPanel({
                 />
                 <FieldDescription>留空显示「未知」；金额不自动换算。</FieldDescription>
               </Field>
+
+              <div className="flex flex-col gap-2" data-testid="poi-card-image-edit">
+                <FieldLabel htmlFor={`${baseId}-image-url`}>图片（仅存 URL，最多 {MAX_POI_CARD_IMAGES} 张）</FieldLabel>
+                {form.images.length > 0 ? (
+                  <ul className="flex flex-col gap-1" data-testid="poi-card-image-list">
+                    {form.images.map((image) => (
+                      <li key={image.url} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="min-w-0 truncate" title={image.url}>
+                          {image.url}
+                          {image.source !== 'manual'
+                            ? ` · 来源：${SOURCE_LABEL[image.source]}${image.attribution ? ` · ${image.attribution}` : ''}`
+                            : ''}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setForm((state) => ({
+                              ...state,
+                              images: state.images.filter((item) => item.url !== image.url),
+                            }))
+                          }
+                          aria-label={`移除图片 ${image.url}`}
+                        >
+                          移除
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">暂无图片。</p>
+                )}
+                <div className="flex items-start gap-2">
+                  <Input
+                    id={`${baseId}-image-url`}
+                    key={`image-url-${reloadKey}`}
+                    value={imageUrl}
+                    onChange={(event) => setImageUrl(event.target.value)}
+                    disabled={!editable}
+                    placeholder="https://…（仅存 URL 引用）"
+                    aria-label="图片 URL"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleAddImageUrl}
+                    disabled={!editable || saveStatus === 'saving'}
+                    aria-label="添加图片 URL"
+                  >
+                    添加图片
+                  </Button>
+                </div>
+                <FieldDescription>
+                  手动粘贴的图片标「手动粘贴」来源；不抓取、不转存，加载失败会显示占位提示。
+                </FieldDescription>
+                {imageError ? <FieldError role="alert">{imageError}</FieldError> : null}
+              </div>
+
               {formError ? <FieldError role="alert">{formError}</FieldError> : null}
             </div>
           </CardContent>
@@ -368,8 +536,12 @@ export default function PoiCardPanel({
             >
               {saveStatus === 'saving' ? '保存中…' : '保存资料卡'}
             </Button>
-            <Button variant="outline" onClick={onClose} aria-label="取消编辑资料卡">
-              取消
+            <Button
+              variant="outline"
+              onClick={onClose}
+              aria-label={effectivePrefill !== null ? '不采纳，关闭资料卡' : '取消编辑资料卡'}
+            >
+              {effectivePrefill !== null ? '不采纳，关闭' : '取消'}
             </Button>
             {saveMessage ? (
               <p role="status" className="text-xs text-muted-foreground">

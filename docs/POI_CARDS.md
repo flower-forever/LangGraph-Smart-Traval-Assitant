@@ -151,7 +151,45 @@
 
 ## S3 / S5 预留
 
-- S3 收进管道：WebSourcesPanel / DayPoiSourcesPanel「收进资料卡」→ 预填表单
-  （source=tavily/osm + 未核实），确认才存；不采纳零写入。
 - S5 Wikimedia：编辑器内「搜索图片」（显式触发）→ 逐张「收进」确认流
   （source=wikimedia，保留 attribution/license）。
+
+## 收进管道（三期 S3 已落地）
+
+收进 = 来源面板点「收进资料卡」→ 打开**预填表单**（用户可改）→ 确认保存才落盘；
+**不采纳（取消 / 关闭）零写入**；**不自动收进任何内容**：不点按钮不构造载荷、
+不弹表单、不落任何数据。
+
+### 两路来源
+
+| 路 | 入口 | 预填 | provenance | 文案 |
+|---|---|---|---|---|
+| tavily | `WebSourcesPanel` 每条搜索摘要的「收进资料卡」 | intro = 标题+摘录（`collectPrefillFromWebResult`）；名称留空（来源无名称字段，用户必填）；开放时间/门票留空 | intro 标 `tavily` + detail=页面 URL；其余字段留空不标 | 「预填自 Tavily 网页搜索摘要，未核实；…不采纳则零写入」 |
+| osm | `DayPoiSourcesPanel` 每条候选的「收进资料卡」 | opening_hours / fee / charge 标签原文 → 开放时间/门票（`collectPrefillFromPoiCandidate`；charge 优先于 fee；unknown 不预填）；名称用候选名 | openingHours/ticket 标 `osm` + detail=OSM 对象链接 | 「预填自 OpenStreetMap 公开标签，来自协作地图，未核实；…不采纳则零写入」 |
+
+- 预填载荷契约：`frontend/src/lib/poiCardPrefill.ts`（`PoiCardPrefill`，纯类型零写路径）。
+- 按名称归一化定位已有卡（App 层，`findPoiCardByName`）：唯一命中 → 打开该卡编辑态
+  （已有字段不覆盖，用户自行核对合并）；0 / 多命中 → 新建预填态（**不猜**）。
+- 预填表单复用 `PoiCardPanel` 编辑通道（`prefill` prop，仅新建态生效）：全部字段可改；
+  用户补填的空字段保存时标 `manual`（「手工粘贴」）；用户改动过的预填字段保存时
+  仍标原收进来源（tavily / osm）——收进语义不冒充官方核实。
+- 取消按钮在收进态显示「不采纳，关闭」；两种关闭（取消 / 关闭 X）都丢弃预填零写入。
+
+### 图片 URL 收进（manual / tavily）
+
+- S2 图片区只读展示；S3 在编辑表单加「图片 URL」输入 + 「添加图片 URL」入口：
+  仅存 URL 引用，不抓取、不转存；URL 去重、张数上限 8、非法格式拒绝。
+- 收进态贴图来源按 `prefill.imageSourceHint` 标注：tavily 收进 → `source='tavily'` +
+  attribution 标页面来源（标题或 URL）；手动新建 / 编辑 → `source='manual'`。
+- Tavily 摘要信封没有图片字段（`WebSearchResult` 只有页面 URL，页面 URL 不是图片，
+  不冒充图片预填）；OSM 公开资料同样无图片。Wikimedia 图片收进属 S5。
+- 编辑已有卡补图走同一入口；`updatePoiCard` 不触碰逐字段 provenance（不编造来源）。
+
+### 红线语义（收进管道专属补充，基线红线全部继续有效）
+
+- 收进预填只是**内存表单初始化**：不写 `poiCards:v1`，更不写 Trip / 费用 / 候选库 /
+  工作区键（测试断言 raw 逐字节不变）。
+- 一切收进内容默认「未核实」+ 来源标注；OSM 路径显示「来自协作地图，未核实」；
+  来源面板结果本身未变的文案（身份未确认 / 未核实）不受收进影响。
+- 保存走 S2 同一通道（`handleSavePoiCards`，expectedRaw 冻结比对）；收进保存与
+  手动保存无任何特权差异；冲突拒绝失败保旧。

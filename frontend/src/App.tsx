@@ -30,7 +30,10 @@ import CandidatePoolPanel, {
   type CandidatePoolStorageStatus,
 } from './components/CandidatePoolPanel'
 import PoiCardPanel from './components/PoiCardPanel'
+import type { PoiCardPrefill } from './lib/poiCardPrefill'
 import {
+  createEmptyPoiCardsRecord,
+  findPoiCardByName,
   loadPoiCardsRecord,
   savePoiCardsRecord,
   type PoiCardsRecordV1,
@@ -465,21 +468,36 @@ export default function App() {
   const [poiCardsRecord, setPoiCardsRecord] = useState<PoiCardsRecordV1 | null>(null)
   /** 资料卡面板打开态；null = 关闭。值 = 正在查看 / 新建的卡 id（null id = 新建）。 */
   const [poiCardOpenId, setPoiCardOpenId] = useState<string | null | undefined>(undefined)
+  /**
+   * S3 收进管道：来源面板「收进」构造的预填载荷；null = 没有收进进行中。
+   * 只有用户点「收进资料卡」才会设置；不采纳 / 关闭清空，零写入。
+   * 收进复用 PoiCardPanel 编辑通道（新建态 + prefill）；保存走同一 handleSavePoiCards。
+   */
+  const [poiCardCollectPrefill, setPoiCardCollectPrefill] = useState<PoiCardPrefill | null>(null)
   const [poiCardsSaveStatus, setPoiCardsSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [poiCardsSaveMessage, setPoiCardsSaveMessage] = useState<string | null>(null)
   const poiCardsRawRef = useRef<string | null>(null)
   const poiCardsReadRef = useRef(false)
+  /** poiCardsRecord 的同步引用：收进打开预填表单时从事件路径读最新记录 */
+  const poiCardsRecordRef = useRef<PoiCardsRecordV1 | null>(null)
+  poiCardsRecordRef.current = poiCardsRecord
 
   /**
    * 读取资料卡库（只读）：资料卡是展示位的辅助信息，跟随一次页面加载读取；
    * 读取失败 / corrupt 时保持 null，界面只少一个展示位，不阻断行程。
-   * 本函数从不写任何键。
+   * 空存储按「空库」处理（新建空记录）：收进 / 手动新建都从合法空库开始，
+   * 不是假装有数据——存储里确实什么都没有。本函数从不写任何键。
    */
   const ensurePoiCardsLoaded = useCallback(() => {
     if (poiCardsReadRef.current) return
     poiCardsReadRef.current = true
     const read = loadPoiCardsRecord(storageRef.current ?? undefined)
     poiCardsRawRef.current = read.raw
+    if (read.status === 'empty') {
+      const empty = createEmptyPoiCardsRecord(Date.now())
+      setPoiCardsRecord(empty.ok ? empty.value : null)
+      return
+    }
     setPoiCardsRecord(read.record)
   }, [])
 
@@ -503,6 +521,29 @@ export default function App() {
       setPoiCardsSaveMessage(`已保存资料卡（${result.record.cards.length} 张，${result.bytes} 字节）。`)
     })
   }, [])
+
+  /**
+   * S3 收进：来源面板「收进资料卡」→ 打开预填表单（PoiCardPanel 新建态 + prefill）。
+   * 按名称归一化定位已有卡：唯一命中 → 打开编辑态补空字段（已有字段不覆盖，
+   * 由用户在表单里核对合并）；0 / 多命中 → 新建预填表单（不猜）。
+   * 本函数只设置内存态，零写入；用户在预填表单里显式保存才落盘。
+   */
+  const handleCollectPoiCard = useCallback(
+    (prefill: PoiCardPrefill) => {
+      ensurePoiCardsLoaded()
+      setPoiCardCollectPrefill(prefill)
+      setPoiCardsSaveStatus('idle')
+      setPoiCardsSaveMessage(null)
+      // 唯一命中已有卡 → 编辑态补空字段；否则新建预填态（两种都进同一确认流）。
+      const read = poiCardsReadRef.current ? poiCardsRecordRef.current : null
+      const match =
+        read === null || prefill.name.trim().length === 0 ? null : findPoiCardByName(read, prefill.name)
+      setPoiCardOpenId(match === null ? null : match.id)
+    },
+    [ensurePoiCardsLoaded],
+  )
+
+  /** 不采纳收进：丢弃预填与未保存编辑，关闭面板，零写入（面板 onClose 内联完成）。 */
 
   /** AI 候选的 U 级独立确认：存在时面板旁显示显式确认入口；H 级永不进入这里。 */
   const [aiPlanningAck, setAiPlanningAck] = useState<{
@@ -3797,6 +3838,7 @@ export default function App() {
                     revision={tripRevision}
                     openedFromFile={openedFromFile === true}
                     activeStopId={activeStopId}
+                    onCollectPoiCard={handleCollectPoiCard}
                     onClose={handlePoiSourcesClose}
                   />
                 ) : (
@@ -3834,6 +3876,7 @@ export default function App() {
                     revision={tripRevision}
                     openedFromFile={openedFromFile}
                     activeStopId={activeStopId}
+                    onCollectPoiCard={handleCollectPoiCard}
                     onClose={handleWebSourcesClose}
                   />
                 ) : (
@@ -3923,18 +3966,22 @@ export default function App() {
               P · 景点资料卡面板：poiCardOpenId !== undefined 时挂载。
               undefined = 关闭；null = 新建态；字符串 = 查看对应卡。
               编辑只在内存，「保存资料卡」显式提交才写 poiCards:v1；取消 / 关闭零写入。
+              S3 收进：poiCardCollectPrefill 不为 null 时按收进态初始化新建表单
+              （用户可改）；「不采纳，关闭」丢弃预填零写入。
             */}
             {poiCardOpenId !== undefined && (
               <div className="wsh-tool-panel" data-testid="poi-card-slot">
                 <PoiCardPanel
                   record={poiCardsRecord}
                   cardId={poiCardOpenId}
+                  prefill={poiCardCollectPrefill}
                   onSave={handleSavePoiCards}
                   saveStatus={poiCardsSaveStatus}
                   saveMessage={poiCardsSaveMessage}
                   createCardId={newUuid}
                   onClose={() => {
                     setPoiCardOpenId(undefined)
+                    setPoiCardCollectPrefill(null)
                     setPoiCardsSaveStatus('idle')
                     setPoiCardsSaveMessage(null)
                   }}

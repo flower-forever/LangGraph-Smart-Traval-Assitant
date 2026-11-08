@@ -29,11 +29,13 @@ import {
   poiStatusText,
   tagFieldText,
   validatePoiSourceReport,
+  readTagField,
   type PoiSourceCandidate,
   type PoiSourceQuery,
   type PoiSourceReport,
 } from '../lib/poiSources'
 import { fetchPoiSourcesNearby, type PoiSourcesAdapter } from '../lib/poiSourcesApi'
+import type { PoiCardPrefill } from '../lib/poiCardPrefill'
 import './dayPoiSourcesPanel.css'
 
 export interface DayPoiSourcesPanelProps {
@@ -52,6 +54,11 @@ export interface DayPoiSourcesPanelProps {
   activeStopId?: string | null
   /** 异步请求 adapter，默认走 poiSourcesApi.fetchPoiSourcesNearby；测试注入 mock。 */
   requestPoiSources?: PoiSourcesAdapter
+  /**
+   * 收进资料卡：把一条 OSM 公开资料候选作为预填载荷交给父级（App 打开预填表单）。
+   * 本面板只构造载荷、不落盘；不点「收进」不构造、零写入。
+   */
+  onCollectPoiCard?: (prefill: PoiCardPrefill) => void
   /** 收起面板：只停止等待与清结果，不改行程。 */
   onClose?: () => void
 }
@@ -148,6 +155,49 @@ function sameQuery(a: PoiSourceQuery, b: PoiSourceQuery): boolean {
   return Math.abs(a.lat - b.lat) <= 1e-5 && Math.abs(a.lon - b.lon) <= 1e-5
 }
 
+/** OSM 候选的来源 detail：对象链接 + 获取时间，让卡上能追溯是哪个对象。 */
+function osmProvenanceDetail(candidate: PoiSourceCandidate): string {
+  return `${osmObjectUrl(candidate.element_type, candidate.element_id)}`
+}
+
+/**
+ * 一条 OSM 公开资料候选 → 收进预填载荷（只构造，不落盘；确认保存才写 poiCards:v1）。
+ * opening_hours / fee / charge 标签原文预填进开放时间 / 门票（unknown 不预填、
+ * 显示「未知」，不编造）；名称用候选名（无名称留空由用户填）；地址不落卡，
+ * 只参与 identityKey。字段 provenance 标 osm + 对象链接；一切内容默认
+ * 「来自协作地图，未核实」。
+ */
+export function collectPrefillFromPoiCandidate(
+  candidate: PoiSourceCandidate,
+  collectedAt: number,
+): PoiCardPrefill {
+  const opening = readTagField(candidate.opening_hours)
+  const fee = readTagField(candidate.fee)
+  const charge = readTagField(candidate.charge)
+  const ticketText = charge.known && charge.value !== null ? charge.value : fee.known && fee.value !== null ? fee.value : ''
+  const name = candidate.name?.trim() ?? ''
+  const detail = osmProvenanceDetail(candidate)
+  const provenance = {
+    openingHours:
+      opening.known && opening.value !== null
+        ? { source: 'osm' as const, detail, recordedAt: collectedAt }
+        : null,
+    ticket:
+      ticketText.length > 0
+        ? { source: 'osm' as const, detail, recordedAt: collectedAt }
+        : null,
+  }
+  return {
+    name,
+    intro: '',
+    openingHours: opening.known && opening.value !== null ? opening.value : '',
+    ticket: ticketText,
+    provenance,
+    collectNotice:
+      '预填自 OpenStreetMap 公开标签，来自协作地图，未核实；标签原文不等于实时营业状态或票价。请核对后保存，不采纳则零写入。',
+  }
+}
+
 export default function DayPoiSourcesPanel({
   trip,
   day,
@@ -155,6 +205,7 @@ export default function DayPoiSourcesPanel({
   openedFromFile,
   activeStopId = null,
   requestPoiSources,
+  onCollectPoiCard,
   onClose,
 }: DayPoiSourcesPanelProps) {
   const stationSelectId = useId()
@@ -472,7 +523,12 @@ export default function DayPoiSourcesPanel({
       ) : null}
 
       {report ? (
-        <ReportBlock report={report} stationName={currentEntry?.stopName ?? station?.name ?? ''} stale={showStale} />
+        <ReportBlock
+          report={report}
+          stationName={currentEntry?.stopName ?? station?.name ?? ''}
+          stale={showStale}
+          onCollectPoiCard={onCollectPoiCard}
+        />
       ) : null}
 
       <p className="dps-memory-note">{MEMORY_NOTE}</p>
@@ -486,10 +542,12 @@ function ReportBlock({
   report,
   stationName,
   stale,
+  onCollectPoiCard,
 }: {
   report: PoiSourceReport
   stationName: string
   stale: boolean
+  onCollectPoiCard?: (prefill: PoiCardPrefill) => void
 }) {
   return (
     <div className="dps-result" data-status={report.status} data-testid="poi-sources-result">
@@ -518,7 +576,11 @@ function ReportBlock({
           ) : null}
           <ol className="dps-candidates">
             {report.candidates.map((candidate) => (
-              <CandidateItem key={`${candidate.element_type}-${candidate.element_id}`} candidate={candidate} />
+              <CandidateItem
+                key={`${candidate.element_type}-${candidate.element_id}`}
+                candidate={candidate}
+                onCollectPoiCard={onCollectPoiCard}
+              />
             ))}
           </ol>
           {report.notes.length > 0 ? (
@@ -580,7 +642,13 @@ const STATUS_EXPLAIN: Record<string, string> = {
   failed: '服务响应异常。',
 }
 
-function CandidateItem({ candidate }: { candidate: PoiSourceCandidate }) {
+function CandidateItem({
+  candidate,
+  onCollectPoiCard,
+}: {
+  candidate: PoiSourceCandidate
+  onCollectPoiCard?: (prefill: PoiCardPrefill) => void
+}) {
   return (
     <li className="dps-candidate">
       <p className="dps-candidate-name">
@@ -627,6 +695,22 @@ function CandidateItem({ candidate }: { candidate: PoiSourceCandidate }) {
         标签值是 OSM 贡献者写的原文，只说明地图上记录了什么，不等于实时营业状态、
         不证明免费或包含票价；原文超过来源长度上限时显示为未知。
       </p>
+      {onCollectPoiCard ? (
+        <div className="dps-candidate-actions">
+          <button
+            type="button"
+            className="dps-btn"
+            data-testid="poi-sources-collect"
+            aria-label={`收进资料卡：${candidate.name ?? osmObjectUrl(candidate.element_type, candidate.element_id)}`}
+            onClick={() => {
+              onCollectPoiCard(collectPrefillFromPoiCandidate(candidate, Date.now()))
+            }}
+          >
+            收进资料卡
+          </button>
+          <span className="dps-hint">打开预填表单（标「来自协作地图，未核实」），确认保存才写入；不采纳零写入。</span>
+        </div>
+      ) : null}
     </li>
   )
 }
