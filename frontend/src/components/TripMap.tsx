@@ -320,31 +320,49 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
       : null
 
   return (
-    <section className="map-card" aria-label={`${day.title} 地图`}>
-      <div className="map-title-bar">
-        <h3 className="map-title">当日路线地图</h3>
-        <span className="text-note">WGS84 · 底图 © OpenStreetMap 贡献者</span>
+    <section
+      className="overflow-hidden rounded-[14px] border border-[color:var(--color-line-strong)] bg-card"
+      aria-label={`${day.title} 地图`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--color-border)] px-4 py-3">
+        <h3 className="m-0 font-display text-md font-bold">当日路线地图</h3>
+        <span className="text-xs text-[color:var(--color-faint)]">WGS84 · 底图 © OpenStreetMap 贡献者</span>
       </div>
-      <div className="map-frame">
-        <div ref={containerRef} className="map-container" role="application" aria-label="交互式地图" />
+      <div className="relative h-[min(72vh,640px)] max-[900px]:h-[52vh] max-[900px]:min-h-80 max-[640px]:h-[48vh] bg-[color:var(--color-map-water)]">
+        <div ref={containerRef} className="map-container absolute inset-0 h-full w-full" role="application" aria-label="交互式地图" />
         {status && (
-          <div className="map-status" role="status">
-            <span className="big">{status.big}</span>
+          <div
+            className="map-status pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground"
+            role="status"
+          >
+            <span className="font-display text-lg text-[color:var(--color-secondary-foreground)]">{status.big}</span>
             <span>{status.desc}</span>
           </div>
         )}
         {!status && tileNote && (
-          <p className="map-status-note" role="status">{tileNote}</p>
+          <p
+            className="map-status-note absolute inset-x-3 bottom-3 z-[500] m-0 rounded-[10px] border border-[color:var(--color-border)] bg-card px-3 py-2 text-xs leading-[1.5] text-[color:var(--color-secondary-foreground)] shadow-[var(--shadow-1)] [overflow-wrap:anywhere]"
+            role="status"
+          >
+            {tileNote}
+          </p>
         )}
         {!status && coordNote && (
-          <p className="map-status-note map-note-coord">{coordNote}</p>
+          <p
+            className="map-status-note map-note-coord absolute inset-x-3 bottom-auto top-3 z-[500] m-0 rounded-[10px] border border-[color:var(--color-border)] bg-card px-3 py-2 text-xs leading-[1.5] text-[color:var(--color-secondary-foreground)] shadow-[var(--shadow-1)] [overflow-wrap:anywhere]"
+          >
+            {coordNote}
+          </p>
         )}
       </div>
-      <div className="map-legend" aria-label="地图图例">
-        <span className="legend-item"><i className="legend-swatch" data-kind="nav" /> 地图服务路线</span>
-        <span className="legend-item"><i className="legend-swatch" data-kind="straight" /> 示意直线（非导航）</span>
-        <span className="legend-item"><i className="legend-swatch" data-kind="stop" /> 站点</span>
-        <span className="legend-item"><i className="legend-swatch" data-kind="stop-active" /> 当前选中</span>
+      <div
+        className="flex flex-wrap gap-x-4 gap-y-2 border-t border-[color:var(--color-border)] px-4 py-3 text-xs text-[color:var(--color-secondary-foreground)]"
+        aria-label="地图图例"
+      >
+        <span className="legend-item inline-flex items-center gap-2"><i className="legend-swatch inline-block h-0 w-[22px] border-t-[3px] border-t-[color:var(--color-ok)]" data-kind="nav" /> 地图服务路线</span>
+        <span className="legend-item inline-flex items-center gap-2"><i className="legend-swatch inline-block h-0 w-[22px] border-t-[3px] border-t-dashed border-t-[color:var(--color-warn-ink)]" data-kind="straight" /> 示意直线（非导航）</span>
+        <span className="legend-item inline-flex items-center gap-2"><i className="legend-swatch inline-block size-3 rounded-full border-2 border-[color:var(--color-foreground)] bg-card" data-kind="stop" /> 站点</span>
+        <span className="legend-item inline-flex items-center gap-2"><i className="legend-swatch inline-block size-3 rounded-full border-2 border-[color:var(--color-primary)] bg-accent-surface" data-kind="stop-active" /> 当前选中</span>
       </div>
     </section>
   )

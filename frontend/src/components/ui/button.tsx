@@ -3,9 +3,9 @@ import { cn } from '@/lib/utils'
 
 /**
  * shadcn/ui Button（new-york 变体，手工落盘：components.json 已配好，不走 CLI）。
- * 语义变量来自 src/theme.css（宣纸/朱砂桥接）。
- * 注意：迁移期不用 bg-accent / bg-muted 工具类（tokens.css 同名冲突），
- * 需要 accent 底色时用 bg-accent-surface / bg-muted-surface（见 UI_DESIGN.md §2.4）。
+ * 语义变量来自 src/theme.css（宣纸/朱砂桥接，W4 起唯一 token 权威）。
+ * 注意：bg-accent 现即朱砂淡底（theme.css --accent = accent-soft 值），但迁移期
+ * 各面板已统一用 bg-accent-surface / bg-muted-surface 别名，保持同一口径（UI_DESIGN §2.4）。
  */
 const buttonVariants = {
   default:

@@ -129,8 +129,8 @@ const SUBHEADING =
   'm-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]'
 const SECTION_BOX = 'grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4'
 const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
-  ok: 'bg-[color:var(--color-accent-soft)]/40 text-[color:var(--color-accent-ink)]',
-  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-ink-2)]',
+  ok: 'bg-[color:var(--color-primary)]/40 text-[color:var(--color-accent-foreground)]',
+  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-secondary-foreground)]',
   error: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-warn-ink)]',
 }
 const NOTICE =
@@ -418,12 +418,12 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
 
         {trip ? (
           <>
-            <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
               当前行程：<strong>{trip.title}</strong>
               {trip.destination ? ` · ${trip.destination}` : ''}
               {` · 共 ${trip.days.length} 天 / ${stopCount} 个站点`}
             </p>
-            <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+            <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
               文件名：<code className={CODE}>{exportFilename}</code>
             </p>
             <div className="flex flex-wrap items-center gap-3">
@@ -477,7 +477,7 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
 
         {reading && (
           <p
-            className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground"
+            className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-relaxed text-muted-foreground"
             role="status"
           >
             正在读取文件…
@@ -495,7 +495,7 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
         {preview && (
           <div className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-card p-4">
             <h5
-              className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+              className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]"
               id={previewHeadingId}
             >
               预览：{preview.trip.title}
@@ -506,19 +506,19 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
             >
               <div>
                 <dt className="text-xs text-muted-foreground">目的地</dt>
-                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                   {preview.trip.destination || '未填写'}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">规模</dt>
-                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                   {`${preview.trip.days.length} 天 · ${previewStopCount} 个站点`}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">行程来源（文件自述）</dt>
-                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                   {preview.trip.source === 'example' ? '示例行程' : '生成行程'}
                 </dd>
               </div>
@@ -530,13 +530,13 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">导出时间（文件自述）</dt>
-                <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)]">
+                <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)]">
                   {formatTripExportedAt(preview.exportedAt)}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">数据体积</dt>
-                <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)]">
+                <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)]">
                   {formatBytes(preview.bytes)}
                 </dd>
               </div>
@@ -614,7 +614,7 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
       {trip && <TripMarkdownExport trip={trip} />}
 
       <div className="grid gap-1.5 border-t border-t-border pt-3">
-        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">分享前请留意</p>
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">分享前请留意</p>
         <ul className="m-0 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           <li>{TRIP_JSON_SHARE_NOTICE}</li>
           <li>

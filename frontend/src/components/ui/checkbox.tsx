@@ -5,6 +5,10 @@ import { cn } from '@/lib/utils'
  * Checkbox（手工落盘，原生 input 兜底）：Radix checkbox 需要额外依赖且 jsdom
  * 适配，本仓 checked 受控用法与原生一致。整行 label 包裹（A11 命中区 ≥24px），
  * 保留 role=checkbox / aria 属性语义，样式按宣纸主题勾选态。
+ *
+ * 技术限制（W2 验收登记）：SVG data-URI 里的勾选 stroke 色无法用 CSS 变量，
+ * 下面 %23faf6ea 是 theme.css --card（oklch(98.4% 0.008 85)）的 sRGB 近似值
+ * （勾选态 = 朱砂底 + 纸色勾）；改主题时需同步（theme.css 是唯一权威）。
  */
 function Checkbox({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
   return (

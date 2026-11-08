@@ -915,7 +915,7 @@ export default function DayReplanPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">只调整这一天，其余天保持原样</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">只调整这一天，其余天保持原样</p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
             第 {day.day} 天{day.date ? `（${day.date}）` : ''}：{day.title || '当日安排'}
           </h3>
@@ -938,9 +938,9 @@ export default function DayReplanPanel({
       ) : null}
 
       <fieldset className="m-0 grid min-w-0 gap-3 rounded-[10px] border border-border p-4 disabled:opacity-75" disabled={pending || plannerUnavailable}>
-        <legend className="px-2 text-sm font-semibold text-[color:var(--color-ink-2)]">想怎么调整这一天</legend>
+        <legend className="px-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">想怎么调整这一天</legend>
         <div className="grid min-w-0 gap-1" role="radiogroup" aria-labelledby={rangeGroupId}>
-          <span id={rangeGroupId} className="text-sm text-[color:var(--color-ink-2)]">调整范围</span>
+          <span id={rangeGroupId} className="text-sm text-[color:var(--color-secondary-foreground)]">调整范围</span>
           <label className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
             <input
               type="radio"
@@ -949,7 +949,7 @@ export default function DayReplanPanel({
               checked={rangeMode === 'whole'}
               onChange={() => setRangeMode('whole')}
               disabled={pending || plannerUnavailable}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />
             整天（默认：整日按候选替换）
           </label>
@@ -961,14 +961,14 @@ export default function DayReplanPanel({
               checked={rangeMode === 'tail'}
               onChange={() => setRangeMode('tail')}
               disabled={pending || plannerUnavailable || day.stops.length < 2}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />
             某站之后（保留该站及之前，替换之后的部分）
           </label>
         </div>
         {rangeMode === 'tail' ? (
           <div className="grid min-w-0 gap-1">
-            <label htmlFor={anchorSelectId} className="text-sm text-[color:var(--color-ink-2)]">保留到哪一站（锚点）</label>
+            <label htmlFor={anchorSelectId} className="text-sm text-[color:var(--color-secondary-foreground)]">保留到哪一站（锚点）</label>
             <Select
               id={anchorSelectId}
               value={anchorId}
@@ -993,7 +993,7 @@ export default function DayReplanPanel({
           </div>
         ) : null}
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={instructionId} className="text-sm text-[color:var(--color-ink-2)]">调整指令（1–500 字）</label>
+          <label htmlFor={instructionId} className="text-sm text-[color:var(--color-secondary-foreground)]">调整指令（1–500 字）</label>
           <Textarea
             id={instructionId}
             value={instruction}
@@ -1007,12 +1007,12 @@ export default function DayReplanPanel({
           <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]" aria-live="polite">
             {instruction.length}/500
             {instructionTooLong ? (
-              <span id={instructionErrorId} className="text-[color:var(--color-accent-ink)]"> 已超过 500 字，请删减后再生成。</span>
+              <span id={instructionErrorId} className="text-[color:var(--color-accent-foreground)]"> 已超过 500 字，请删减后再生成。</span>
             ) : null}
           </p>
         </div>
         <div className="grid min-w-0 gap-1" role="radiogroup" aria-labelledby={modeGroupId}>
-          <span id={modeGroupId} className="text-sm text-[color:var(--color-ink-2)]">出行方式</span>
+          <span id={modeGroupId} className="text-sm text-[color:var(--color-secondary-foreground)]">出行方式</span>
           {(['walking', 'driving'] as const).map((value) => (
             <label key={value} className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
               <input
@@ -1022,7 +1022,7 @@ export default function DayReplanPanel({
                 checked={mode === value}
                 onChange={() => setMode(value)}
                 disabled={pending || plannerUnavailable}
-                className="size-4 accent-[color:var(--color-accent)]"
+                className="size-4 accent-[color:var(--color-primary)]"
               />
               {modeLabel(value)}
             </label>
@@ -1036,7 +1036,7 @@ export default function DayReplanPanel({
           ) : null}
         </div>
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={travelersId} className="text-sm text-[color:var(--color-ink-2)]">同行人数（选填）</label>
+          <label htmlFor={travelersId} className="text-sm text-[color:var(--color-secondary-foreground)]">同行人数（选填）</label>
           <Input
             id={travelersId}
             type="text"
@@ -1054,7 +1054,7 @@ export default function DayReplanPanel({
             1–{MAX_REPLAN_TRAVELERS} 的整数；留空不会发送人数，也不会沿用规划表单里的旧人数。修改后需要重新生成候选。
           </p>
           {travelersInvalid ? (
-            <p id={travelersErrorId} className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]" role="alert">
+            <p id={travelersErrorId} className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]" role="alert">
               同行人数需要是 1–{MAX_REPLAN_TRAVELERS} 的整数，或留空不填。
             </p>
           ) : null}
@@ -1132,25 +1132,25 @@ export default function DayReplanPanel({
           <h4 className="m-0 font-display text-md">候选预览（尚未应用到行程）</h4>
           <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
             <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">当前方案</h5>
+              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">当前方案</h5>
               <StopTable day={day} />
             </div>
             <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">AI 候选</h5>
+              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">AI 候选</h5>
               <StopTable day={currentCandidate.day} candidate />
             </div>
           </div>
-          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
             <strong>地图数据：</strong>
             {MAP_STATUS_TEXT[currentCandidate.map_status]}
           </p>
           <RouteSummary day={currentCandidate.day} />
           {warnings.length > 0 ? (
             <div className="grid gap-2">
-              <h5 className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">
+              <h5 className="m-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">
                 本次返回提醒（{warnings.length} 条）
               </h5>
-              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                 {visibleWarnings.map((warning, index) => (
                   <li key={index}>{warning}</li>
                 ))}
@@ -1214,7 +1214,7 @@ function StopTable({ day, candidate = false }: { day: TripDay; candidate?: boole
               </p>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              <span className="font-mono tabular-nums text-[color:var(--color-ink-2)]">{formatTime(stop.time)}</span> · {formatDuration(stop.duration_minutes)}
+              <span className="font-mono tabular-nums text-[color:var(--color-secondary-foreground)]">{formatTime(stop.time)}</span> · {formatDuration(stop.duration_minutes)}
             </p>
             <p className="text-base [overflow-wrap:anywhere]">{stop.name}</p>
             {candidate && stop.location === null ? (
@@ -1331,11 +1331,11 @@ function TailPreview({
       </p>
       <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
         <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
+          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
           <StopTable day={keptDay} />
         </div>
         <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">组合方案（冻结段 + AI 新后段）</h5>
+          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">组合方案（冻结段 + AI 新后段）</h5>
           <StopTable day={composed.day} candidate />
         </div>
       </div>
@@ -1351,19 +1351,19 @@ function TailPreview({
           </AlertDescription>
         </Alert>
       ) : null}
-      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
         <strong>组合后地图数据：</strong>
         {MAP_STATUS_TEXT[composed.mapStatus]}
       </p>
-      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
         <strong>原始后段地图数据（AI 返回时）：</strong>
         {MAP_STATUS_TEXT[response.map_status]}
       </p>
       <RouteSummary day={composed.day} />
       {warnings.length > 0 ? (
         <div className="grid gap-2">
-          <h5 className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">{`本次返回提醒（${warnings.length} 条）`}</h5>
-          <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+          <h5 className="m-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">{`本次返回提醒（${warnings.length} 条）`}</h5>
+          <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
             {visibleWarnings.map((warning, index) => (
               <li key={index}>{warning}</li>
             ))}

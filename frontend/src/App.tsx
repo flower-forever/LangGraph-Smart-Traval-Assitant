@@ -2996,7 +2996,7 @@ export default function App() {
         : (
           <>
             <span>后端服务正常</span>
-            <span className="backend-note">
+            <span className="tracking-[0.04em] text-[color:var(--color-secondary-foreground)]">
               {' · '}
               {backend.planner === 'ready' ? '可以生成行程' : '规划能力未知'}
               {backend.amap === 'not_configured' && ' · 地图 Key 未配置'}
@@ -3090,19 +3090,111 @@ export default function App() {
     return sources
   })()
 
-  return (
-    <div className="app-shell">
-      <a className="visually-hidden sr-only-focusable" href="#trip-section">跳到行程内容</a>
+  /* ── W4 全局 shell：app.css 旧规则迁为工具类（UI_DESIGN §4 映射表） ──
+   * 旧 .app-shell/.app-header/.brand/.app-main/.app-footer/ 入口卡类/
+   * 出行方式切换/.day-tab/.error-banner/.skeleton/.visually-hidden/.wsh-* 等退役；
+   * 提示条（edit-pause / day-switch / ai-pause / edit-pause-note）共用一组警示条样式。 */
+  const SHELL = 'flex min-h-screen flex-col'
+  const HEADER =
+    'flex flex-wrap items-center gap-4 border-b border-[color:var(--color-line-strong)] bg-card px-6 py-4 max-[640px]:px-4 max-[640px]:py-3'
+  const BRAND = 'flex items-baseline gap-3'
+  const BRAND_MARK = 'font-display text-xl font-bold tracking-[0.06em] text-[color:var(--color-accent-foreground)]'
+  const BRAND_SUB = 'text-xs tracking-[0.08em] text-muted-foreground'
+  const MAIN = 'mx-auto w-full max-w-[1440px] flex-1 p-6 max-[640px]:p-4'
+  const FOOTER =
+    'flex flex-wrap gap-x-4 gap-y-2 border-t border-[color:var(--color-border)] px-6 py-4 text-xs text-[color:var(--color-faint)]'
+  const TOPBAR_PROGRESS =
+    'relative h-[2px] overflow-hidden bg-[color:var(--color-border)] after:absolute after:inset-y-0 after:left-0 after:hidden after:w-2/5 after:bg-[color:var(--color-primary)] data-[active=true]:after:block data-[active=true]:after:animate-[progress-slide_1.1s_var(--ease-in-out)_infinite]'
+  const ENTRY_CARD =
+    'mb-6 grid max-w-[72ch] gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-card p-4'
+  const AI_ENTRY =
+    'mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-card p-4'
+  const AI_ENTRY_COPY = 'grid min-w-0 flex-[1_1_320px] gap-1'
+  const AI_ENTRY_COPY_P = 'm-0'
+  const AI_ENTRY_ACTIONS = 'flex flex-col items-start gap-2 max-[640px]:w-full max-[640px]:items-stretch'
+  const AI_PANEL_SLOT = 'mb-5 grid min-w-0 gap-3'
+  const ENTRY_LABEL = 'm-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]'
+  const ENTRY_HELP = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+  const ENTRY_ACTIONS =
+    'flex flex-wrap items-center gap-4 max-[640px]:flex-col max-[640px]:items-stretch max-[640px]:[&>button]:w-full'
+  const ENTRY_ERROR = 'm-0 text-xs text-[color:var(--color-accent-foreground)]'
+  const MODE_TOGGLE = 'flex gap-2'
+  const MODE_OPTION =
+    'inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-background px-4 py-2 transition-colors duration-150 ease-out hover:bg-secondary has-[input:checked]:border-[color:var(--color-primary)] has-[input:checked]:bg-accent-surface'
+  const MODE_RADIO =
+    'size-4 shrink-0 accent-[color:var(--color-primary)] outline-2 outline-offset-2 outline-[color:var(--color-accent-foreground)] focus-visible:outline'
+  const WARN_NOTE =
+    'border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] px-3 py-2 text-sm leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]'
+  const EDIT_PAUSE_LEGEND = `${WARN_NOTE} m-0 mb-3 rounded-r-[6px]`
+  const EDIT_PAUSE_NOTE = `m-0 rounded-r-[6px] ${WARN_NOTE}`
+  const DAY_SWITCH_NOTE = `-mt-2 mb-4 rounded-r-[6px] ${WARN_NOTE}`
+  const AI_PAUSE_NOTE = `m-0 max-w-[72ch] rounded-r-[6px] ${WARN_NOTE}`
+  const PLAN_CANCEL_STATUS =
+    'm-0 max-w-[72ch] rounded-r-[6px] text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]'
+  const ERROR_BANNER =
+    'mb-5 flex flex-wrap items-start gap-3 rounded-r-[6px] border border-[color:var(--color-line-strong)] border-l-[3px] border-l-[color:var(--color-primary)] bg-accent-surface px-4 py-3'
+  const ERROR_BANNER_P =
+    'm-0 flex min-w-[200px] flex-1 text-sm leading-relaxed text-[color:var(--color-foreground)] [overflow-wrap:anywhere]'
+  const SAVED_OFFLINE = 'mb-6'
+  const SAVED_OFFLINE_NOTE =
+    'm-0 mb-3 max-w-[72ch] text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
+  const RESTORED_NOTE =
+    'mt-3 rounded-r-[6px] border-l-[3px] border-l-[color:var(--color-ok)] bg-secondary px-3 py-2 text-xs leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
+  const TRIP_HEADER = 'mb-6 max-w-[72ch]'
+  const TRIP_HEAD_ROW = 'flex flex-wrap items-baseline gap-3'
+  const TRIP_SOURCE_TAG =
+    'mb-3 inline-block rounded-full border border-[color:var(--color-line-strong)] px-[10px] py-[3px] text-xs font-semibold tracking-[0.1em] data-[source=example]:border-[color:var(--color-primary)] data-[source=example]:bg-accent-surface data-[source=example]:text-[color:var(--color-accent-foreground)] data-[source=agent]:bg-secondary data-[source=agent]:text-[color:var(--color-secondary-foreground)]'
+  const TRIP_OUTCOME_NOTE =
+    'm-0 min-w-0 flex-[1_1_260px] rounded-r-[6px] border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] px-3 py-1 text-xs leading-[1.6] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
+  const TRIP_TITLE =
+    'mb-3 font-display text-[length:var(--text-display)] font-bold leading-[1.3] [overflow-wrap:anywhere] focus:outline-none'
+  const TRIP_SUMMARY = 'm-0 max-w-[66ch] leading-relaxed text-[color:var(--color-secondary-foreground)]'
+  const APPLY_RESULT_NOTE =
+    'mb-5 flex flex-wrap items-center gap-3 rounded-r-[6px] border-l-[3px] border-l-[color:var(--color-ok)] bg-secondary px-4 py-3'
+  const APPLY_RESULT_P =
+    'm-0 min-w-0 flex-[1_1_320px] text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
+  const WSH_TOOLS = 'mt-2 grid min-w-0 gap-3 border-t border-[color:var(--color-line-strong)] pt-3'
+  const WSH_TOOLS_HEAD = 'flex flex-wrap items-start justify-between gap-3'
+  const WSH_EYEBROW = 'm-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]'
+  const WSH_TOOL_NOTE =
+    'm-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+  const WSH_TOOL_ACTIONS = 'flex flex-wrap gap-2 max-[640px]:flex-col max-[640px]:[&>button]:w-full'
+  const WSH_TOOL_PANEL = 'grid min-w-0 gap-2'
+  const WSH_BTN =
+    'inline-flex min-h-9 cursor-pointer items-center justify-center rounded-[6px] border border-[color:var(--color-line-strong)] bg-background px-3 py-2 text-sm leading-[1.4] transition-colors duration-150 ease-out hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-accent-foreground)] disabled:pointer-events-none disabled:opacity-55'
+  const WSH_BTN_PRIMARY =
+    `${WSH_BTN} border-[color:var(--color-accent-foreground)] bg-[color:var(--color-accent-foreground)] font-semibold text-[color:var(--color-card)] hover:bg-primary hover:border-primary`
+  const DAY_NAV = 'mb-5 flex flex-wrap gap-2'
+  const DAY_TAB =
+    'inline-flex min-h-11 min-w-19 cursor-pointer flex-col items-start rounded-[10px] border border-[color:var(--color-line-strong)] bg-card px-3 py-2 text-left transition-colors duration-150 ease-out aria-disabled:cursor-not-allowed aria-disabled:opacity-70 aria-selected:border-[color:var(--color-primary)] aria-selected:bg-accent-surface hover:bg-secondary hover:aria-selected:bg-accent-surface hover:aria-selected:border-[color:var(--color-primary)]'
+  const DAY_TAB_NUM =
+    'font-mono text-xs text-muted-foreground aria-selected:text-[color:var(--color-accent-foreground)]'
+  const DAY_TAB_TITLE =
+    'font-display text-[15px] leading-snug text-[color:var(--color-foreground)] [overflow-wrap:anywhere]'
+  const SKELETON_BLOCK = 'rounded-[14px] border border-[color:var(--color-border)] bg-card p-5'
+  const SKELETON_LINE =
+    'h-[14px] w-2/5 rounded-[4px] bg-[linear-gradient(90deg,var(--color-secondary)_25%,var(--color-border)_50%,var(--color-secondary)_75%)] bg-[length:200%_100%] animate-[shimmer_1.4s_linear_infinite]'
+  const TRIP_LAYOUT =
+    'grid grid-cols-1 items-start gap-6 min-[901px]:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]'
+  const ITINERARY_PANE = 'min-w-0'
+  const MAP_PANE = 'min-w-0 max-[900px]:static min-[901px]:sticky min-[901px]:top-4'
+  const DRAFT_PREVIEW_NOTE =
+    'mt-4 max-w-[72ch] rounded-r-[6px] border-l-[3px] border-l-[color:var(--color-line-strong)] bg-secondary px-3 py-2 text-xs leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
+  const TRIP_TRANSFER_SLOT = 'mt-6 grid justify-items-start gap-2'
 
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark">路书</span>
-          <span className="brand-sub">智能出行助手 · 逐日路线与中文讲解</span>
+  return (
+    <div className={SHELL}>
+      <a className="sr-only focus:not-sr-only focus:static focus:m-0 focus:rounded-[6px] focus:bg-card focus:px-3 focus:py-2 focus:underline" href="#trip-section">跳到行程内容</a>
+
+      <header className={HEADER}>
+        <div className={BRAND}>
+          <span className={BRAND_MARK}>路书</span>
+          <span className={BRAND_SUB}>智能出行助手 · 逐日路线与中文讲解</span>
         </div>
-        <div className="header-spacer" />
+        <div className="flex-1" />
         <div className="flex items-center gap-2">
           <div
-            className="flex items-center gap-2 text-sm text-[color:var(--color-ink-2)]"
+            className="flex items-center gap-2 text-sm text-[color:var(--color-secondary-foreground)]"
             data-testid="backend-state"
             data-state={backendVisual}
           >
@@ -3149,15 +3241,15 @@ export default function App() {
         </p>
       )}
 
-      <div className="topbar-progress" data-active={planLoading || phase === 'loading'} aria-hidden="true" />
+      <div className={TOPBAR_PROGRESS} data-active={planLoading || phase === 'loading'} aria-hidden="true" />
 
-      <main className="app-main">
+      <main className={MAIN}>
         {/*
           本地编辑期间把规划表单整体包进 disabled fieldset：控件禁用且读屏会念出
           「已暂停」的说明。不传 loading=true——那会假装 AI 正在生成。
         */}
-        <fieldset className="edit-pause-fieldset" disabled={interactionPaused}>
-          {editPauseNote && <legend className="edit-pause-legend">{editPauseNote}</legend>}
+        <fieldset className="m-0 min-w-0 border-0 p-0 disabled:opacity-75" disabled={interactionPaused}>
+          {editPauseNote && <legend className={EDIT_PAUSE_LEGEND}>{editPauseNote}</legend>}
           <PlanForm
             onSubmit={handlePlan}
             loading={planLoading}
@@ -3167,37 +3259,37 @@ export default function App() {
         </fieldset>
 
         {planCancelled && !planLoading && (
-          <p className="plan-cancel-status" role="status">
+          <p className={PLAN_CANCEL_STATUS} role="status">
             已停止等待这次规划，可以立刻改参数重新提交；旧响应即使到达也会被忽略。
             这个动作只取消本页的等待，不能保证后端或上游模型立即停止处理，也不能保证不再计费。
           </p>
         )}
 
         {error && (
-          <div className="error-banner" role="alert">
-            <p>
-              <span className="error-title">{error.title}。</span>
+          <div className={ERROR_BANNER} role="alert">
+            <p className={ERROR_BANNER_P}>
+              <span className="font-semibold">{error.title}。</span>
               {error.detail}
             </p>
             {phase === 'failed' && (
-              <button className="btn" onClick={() => window.location.reload()}>重试</button>
+              <Button onClick={() => window.location.reload()} className="min-h-11 px-5 text-base">重试</Button>
             )}
           </div>
         )}
 
         {phase === 'loading' && (
           <div aria-busy="true" aria-label="正在加载示例行程">
-            <div className="skeleton-block">
-              <div className="skeleton-line w40" />
-              <div className="skeleton-line w80" />
-              <div className="skeleton-line w60" />
+            <div className={SKELETON_BLOCK}>
+              <div className={`${SKELETON_LINE} w-2/5`} />
+              <div className={`${SKELETON_LINE} mt-3 w-4/5`} />
+              <div className={`${SKELETON_LINE} mt-3 w-3/5`} />
             </div>
           </div>
         )}
 
         {!trip && (phase === 'loading' || phase === 'failed') && (
-          <div className="saved-offline">
-            <p className="saved-offline-note">
+          <div className={SAVED_OFFLINE}>
+            <p className={SAVED_OFFLINE_NOTE}>
               {phase === 'failed'
                 ? '后端暂时不可用。这个浏览器里保存过的行程仍可离线恢复；恢复后可以继续查看，重新规划需要等后端恢复。'
                 : '示例行程还在加载。这个浏览器里保存过的行程可以现在就恢复，不必等示例返回。'}
@@ -3209,9 +3301,9 @@ export default function App() {
         <div ref={itineraryTopRef} id="trip-section" />
         {trip && (
           <section aria-label="行程安排" data-trip-revision={tripRevision}>
-            <header className="trip-header">
-              <div className="trip-head-row">
-                <span className="trip-source-tag" data-source={trip.source}>
+            <header className={TRIP_HEADER}>
+              <div className={TRIP_HEAD_ROW}>
+                <span className={TRIP_SOURCE_TAG} data-source={trip.source}>
                   {tripIsExample ? '示例行程' : 'AI 规划'}
                 </span>
                 {outcomeNote && (
@@ -3220,33 +3312,33 @@ export default function App() {
                    * 失败细节由 role=alert 的错误横幅播报，这里只做视觉归属标注，
                    * 不再挂 live region，避免同一事件被读屏播报两遍。
                    */
-                  <p className="trip-outcome-note" data-testid="request-status-note">
+                  <p className={TRIP_OUTCOME_NOTE} data-testid="request-status-note">
                     {outcomeNote}
                   </p>
                 )}
               </div>
-              <h2 className="trip-title" ref={tripTitleRef} tabIndex={-1}>{trip.title}</h2>
-              <p className="trip-summary">{trip.summary}</p>
+              <h2 className={TRIP_TITLE} ref={tripTitleRef} tabIndex={-1}>{trip.title}</h2>
+              <p className={TRIP_SUMMARY}>{trip.summary}</p>
               {trip.warnings.length > 0 && (
-                <div className="trip-warnings">
-                  <ul>
+                <div className="mt-4 rounded-r-[6px] border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] px-4 py-3">
+                  <ul className="m-0 grid list-none gap-1 p-0">
                     {trip.warnings.map((w, i) => (
-                      <li key={i}>{w}</li>
+                      <li key={i} className="text-sm text-[color:var(--color-warn-ink)]">{w}</li>
                     ))}
                   </ul>
                 </div>
               )}
               {restoredAt != null && !editingDraft && (
-                <p className="trip-restored-note">
+                <p className={RESTORED_NOTE}>
                   从本浏览器保存的副本恢复 · 保存于 {formatDateTime(restoredAt)}。这份副本不会同步到其他设备。
                 </p>
               )}
               {openedFromFile && !editingDraft && (
                 /*
                  * 来源说明：source 是文件里写的内容，标签本身证明不了真实来源。
-                 * 样式沿用 .trip-restored-note。
+                 * 样式沿用原 .trip-restored-note 的语义（成功恢复提示）。
                  */
-                <p className="trip-restored-note trip-imported-note" data-note="imported-file">
+                <p className={RESTORED_NOTE} data-note="imported-file">
                   这份行程来自你选择的备份文件：页面没有向服务器核对过内容。打开文件这个动作不会自动保存；
                   想把它留在这台电脑上，请在下面的「行程备份与导入」里点「保存到本地」。
                   上面的「示例行程 / AI 规划」标签取自文件里的 source 字段，只代表文件自己这么写，不能证明它的真实来源。
@@ -3255,12 +3347,12 @@ export default function App() {
             </header>
 
             {appliedNotice && !editingDraft && !aiOpen && !mapOpen && (
-              <div className="apply-result-note" data-testid="apply-notice">
-                <p role="status">{appliedNotice}</p>
+              <div className={APPLY_RESULT_NOTE} data-testid="apply-notice">
+                <p className={APPLY_RESULT_P} role="status">{appliedNotice}</p>
                 {canUndoApply && (
-                  <button type="button" className="btn btn-ghost" onClick={handleUndoApply}>
+                  <Button type="button" variant="ghost" onClick={handleUndoApply} className="min-h-9">
                     撤销应用
-                  </button>
+                  </Button>
                 )}
               </div>
             )}
@@ -3323,20 +3415,20 @@ export default function App() {
                   versionsImportUndoExpiresAt={workspaceController.versionsImportUndoExpiresAt}
                   onDismissNotice={workspaceController.dismissNotice}
                 >
-                  <section className="wsh-tools" aria-label="行程工具">
-                    <div className="wsh-tools-head">
+                  <section className={WSH_TOOLS} aria-label="行程工具">
+                    <div className={WSH_TOOLS_HEAD}>
                       <div>
-                        <p className="wsh-eyebrow">行程工具</p>
-                        <p className="wsh-tool-note">
+                        <p className={WSH_EYEBROW}>行程工具</p>
+                        <p className={WSH_TOOL_NOTE}>
                           锚点 / 约束 / 清单 / 离线导出使用当前已应用的工作区记录；每次改动只做一次内存 transition，
                           不会自动写库。候选地点池是独立键，打开 / 保存 / 导入都需要你显式操作。
                         </p>
                       </div>
                     </div>
-                    <div className="wsh-tool-actions">
+                    <div className={WSH_TOOL_ACTIONS}>
                       <button
                         type="button"
-                        className="wsh-btn"
+                        className={WSH_BTN}
                         aria-expanded={anchorsOpen}
                         onClick={() => {
                           setAnchorsOpen((open) => !open)
@@ -3350,7 +3442,7 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        className="wsh-btn"
+                        className={WSH_BTN}
                         aria-expanded={constraintsOpen}
                         onClick={() => {
                           setConstraintsOpen((open) => !open)
@@ -3364,7 +3456,7 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        className="wsh-btn"
+                        className={WSH_BTN}
                         aria-expanded={checklistOpen}
                         onClick={() => {
                           setChecklistOpen((open) => !open)
@@ -3378,7 +3470,7 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        className="wsh-btn"
+                        className={WSH_BTN}
                         aria-expanded={candidatePoolOpen}
                         onClick={() => {
                           if (candidatePoolOpen) {
@@ -3392,13 +3484,13 @@ export default function App() {
                       </button>
                     </div>
                     {currentWorkspaceRecord === null ? (
-                      <p className="wsh-tool-note">
+                      <p className={WSH_TOOL_NOTE}>
                         锚点 / 约束 / 清单 / 离线导出需要先关联工作区；候选地点池可以独立使用。
                       </p>
                     ) : null}
 
                     {anchorsOpen && currentWorkspaceRecord !== null ? (
-                      <div className="wsh-tool-panel">
+                      <div className={WSH_TOOL_PANEL}>
                         <AnchorsPanel
                           key={`anchors:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
                           record={currentWorkspaceRecord}
@@ -3411,7 +3503,7 @@ export default function App() {
                     ) : null}
 
                     {constraintsOpen && currentWorkspaceRecord !== null ? (
-                      <div className="wsh-tool-panel">
+                      <div className={WSH_TOOL_PANEL}>
                         <ConstraintsPanel
                           key={`constraints:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
                           constraints={currentWorkspaceRecord.sidecar.constraints}
@@ -3429,7 +3521,7 @@ export default function App() {
                     ) : null}
 
                     {checklistOpen && currentWorkspaceRecord !== null ? (
-                      <div className="wsh-tool-panel">
+                      <div className={WSH_TOOL_PANEL}>
                         <ChecklistPanel
                           key={`checklist:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
                           checklist={currentWorkspaceRecord.sidecar.checklist}
@@ -3444,7 +3536,7 @@ export default function App() {
                     ) : null}
 
                     {candidatePoolOpen ? (
-                      <div className="wsh-tool-panel">
+                      <div className={WSH_TOOL_PANEL}>
                         <CandidatePoolPanel
                           record={candidatesRecord}
                           draft={draft ?? candidateDraftBase}
@@ -3474,15 +3566,15 @@ export default function App() {
                           onClose={() => setCandidatePoolOpen(false)}
                         />
                         {candidatesImportPreview !== null ? (
-                          <div className="wsh-tool-panel" role="region" aria-label="候选库导入预览">
-                            <p className="wsh-tool-note">
+                          <div className={WSH_TOOL_PANEL} role="region" aria-label="候选库导入预览">
+                            <p className={WSH_TOOL_NOTE}>
                               文件《{candidatesImportPreview.fileName}》已通过纯校验，共{' '}
                               {candidatesImportPreview.itemCount} 个候选。确认后才会写入候选库；不会改动工作区或版本库。
                             </p>
-                            <div className="wsh-tool-actions">
+                            <div className={WSH_TOOL_ACTIONS}>
                               <button
                                 type="button"
-                                className="wsh-btn wsh-btn-primary"
+                                className={WSH_BTN_PRIMARY}
                                 onClick={handleConfirmCandidatesImport}
                                 disabled={candidatesImportBusy}
                               >
@@ -3490,7 +3582,7 @@ export default function App() {
                               </button>
                               <button
                                 type="button"
-                                className="wsh-btn"
+                                className={WSH_BTN}
                                 onClick={handleCancelCandidatesImport}
                                 disabled={candidatesImportBusy}
                               >
@@ -3500,12 +3592,12 @@ export default function App() {
                           </div>
                         ) : null}
                         {candidatesImportMessage !== null ? (
-                          <p className="wsh-tool-note" role="status">
+                          <p className={WSH_TOOL_NOTE} role="status">
                             {candidatesImportMessage}
                           </p>
                         ) : null}
                         {candidatesUndo !== null ? (
-                          <button type="button" className="wsh-btn" onClick={handleUndoCandidatesImport}>
+                          <button type="button" className={WSH_BTN} onClick={handleUndoCandidatesImport}>
                             撤销最近一次候选库导入
                           </button>
                         ) : null}
@@ -3521,7 +3613,7 @@ export default function App() {
                     />
 
                     {currentWorkspaceRecord !== null ? (
-                      <div className="wsh-tool-panel">
+                      <div className={WSH_TOOL_PANEL}>
                         <OfflineTripPanel
                           record={currentWorkspaceRecord}
                           epoch={workspaceEpoch}
@@ -3535,50 +3627,52 @@ export default function App() {
 
             {/* 本地编辑入口：行程下方、日签上方。编辑期间被现有草稿取代；AI 面板打开时收起 */}
             {!editingDraft && !aiOpen && !mapOpen && (
-              <div className="edit-entry" data-testid="edit-entry">
-                <div className="field edit-entry-mode">
-                  <span className="field-label" id="edit-mode-label">新增路段的出行方式</span>
-                  <div className="mode-toggle" role="radiogroup" aria-labelledby="edit-mode-label">
-                    <label className="mode-option">
+              <div className={ENTRY_CARD} data-testid="edit-entry">
+                <div className="grid gap-1">
+                  <span className={ENTRY_LABEL} id="edit-mode-label">新增路段的出行方式</span>
+                  <div className={MODE_TOGGLE} role="radiogroup" aria-labelledby="edit-mode-label">
+                    <label className={MODE_OPTION}>
                       <input
                         type="radio"
                         name="draft_leg_mode"
                         value="walking"
+                        className={MODE_RADIO}
                         checked={draftMode === 'walking'}
                         onChange={() => handleDraftModeChange('walking')}
                       />
                       <span>步行</span>
                     </label>
-                    <label className="mode-option">
+                    <label className={MODE_OPTION}>
                       <input
                         type="radio"
                         name="draft_leg_mode"
                         value="driving"
+                        className={MODE_RADIO}
                         checked={draftMode === 'driving'}
                         onChange={() => handleDraftModeChange('driving')}
                       />
                       <span>驾车</span>
                     </label>
                   </div>
-                  <p className="field-help">
+                  <p className={ENTRY_HELP}>
                     本地编辑不会请求新路线：新增或重排站点后，涉及的新路段会标为「待重新获取」，
                     这里选定的方式只写进那条路段的标记，不会自动补距离或耗时。
                   </p>
                 </div>
-                <div className="edit-entry-actions">
-                  <button
+                <div className={ENTRY_ACTIONS}>
+                  <Button
                     type="button"
-                    className="btn btn-primary"
                     onClick={handleStartEditing}
+                    className="min-h-11 px-5 text-base font-semibold tracking-[0.08em]"
                   >
                     编辑这趟行程
-                  </button>
-                  <p className="field-help">
+                  </Button>
+                  <p className={`${ENTRY_HELP} max-w-[46ch]`}>
                     在内存草稿里改站点文字、顺序和时间，不会自动保存，也不请求后端；应用后才替换当前显示的行程。
                   </p>
                 </div>
                 {draftError && (
-                  <p className="field-error" role="alert">{draftError}</p>
+                  <p className={ENTRY_ERROR} role="alert">{draftError}</p>
                 )}
               </div>
             )}
@@ -3588,82 +3682,84 @@ export default function App() {
               有本地草稿时按钮禁用——先应用或放弃草稿，避免把草稿输入晾在一边。
             */}
             {!editingDraft && !mapOpen && (
-              <div className="edit-entry" data-testid="map-refresh-entry" data-day={currentDay?.day ?? activeDay}>
+              <div className={ENTRY_CARD} data-testid="map-refresh-entry" data-day={currentDay?.day ?? activeDay}>
                 <div>
-                  <p className="field-label">仅刷新地图（第 {currentDay?.day ?? activeDay} 天）</p>
-                  <p className="field-help">
+                  <p className={ENTRY_LABEL}>仅刷新地图（第 {currentDay?.day ?? activeDay} 天）</p>
+                  <p className={ENTRY_HELP}>
                     只按当前日已有的站点重新获取地图坐标与路段，不重新规划行程，也不需要 AI。
                     文字、时间、地址说明和其它天都保持不变；面板里会先让你选步行或驾车，再获取、预览，确认后才替换当前行程。
                     地图服务未配置 Key 时会直接说明，不影响你继续查看当前行程。
                   </p>
                 </div>
-                <div className="edit-entry-actions">
-                  <button type="button" className="btn" onClick={handleOpenMapRefresh}>
+                <div className={ENTRY_ACTIONS}>
+                  <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={handleOpenMapRefresh}>
                     仅刷新地图
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
 
             {!aiOpen && !mapOpen && (
-              <div className="ai-entry" data-testid="ai-entry" data-day={activeDay}>
-                <div className="ai-entry-copy">
-                  <p className="field-label">
+              <div className={AI_ENTRY} data-testid="ai-entry" data-day={activeDay}>
+                <div className={AI_ENTRY_COPY}>
+                  <p className={`${ENTRY_LABEL} ${AI_ENTRY_COPY_P}`}>
                     AI 调整单日（目标：第 {activeDay} 天
                     {currentDay?.date ? ` · ${currentDay.date}` : ''}）
                   </p>
-                  <p className="field-help">
+                  <p className={`${ENTRY_HELP} ${AI_ENTRY_COPY_P}`}>
                     只让 AI 重排这一天。候选会先和当前安排对比，你点「应用候选」之前，页面上的行程、地图和保存记录都不会变。
                   </p>
                   {editingDraft ? (
-                    <p className="field-help" role="note">
+                    <p className={`${ENTRY_HELP} ${AI_ENTRY_COPY_P}`} role="note">
                       本地草稿正在编辑：先「应用草稿」或「放弃草稿」，再让 AI 调整这一天；草稿输入不会因此丢失。
                     </p>
                   ) : null}
                 </div>
-                <div className="ai-entry-actions">
-                  <button
+                <div className={AI_ENTRY_ACTIONS}>
+                  <Button
                     type="button"
-                    className="btn"
+                    variant="outline"
+                    className="min-h-11 px-5 text-base"
                     onClick={handleOpenAiPanel}
                     disabled={editingDraft}
                   >
                     AI 调整这一天
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
 
             {!aiOpen && !mapOpen && !assistantOpen && (
-              <div className="ai-entry" data-testid="assistant-entry">
-                <div className="ai-entry-copy">
-                  <p className="field-label">AI 行程助手（用一句话改行程）</p>
-                  <p className="field-help">
+              <div className={AI_ENTRY} data-testid="assistant-entry">
+                <div className={AI_ENTRY_COPY}>
+                  <p className={`${ENTRY_LABEL} ${AI_ENTRY_COPY_P}`}>AI 行程助手（用一句话改行程）</p>
+                  <p className={`${ENTRY_HELP} ${AI_ENTRY_COPY_P}`}>
                     说一句想怎么改，助手会先列出改动清单、标出还不确定的地方和冲突，你确认后才改当前行程。
                     改的是内存里的行程，不会自动保存；行程在别处变了，这条建议就作废。
                   </p>
                   {editingDraft ? (
-                    <p className="field-help" role="note">
+                    <p className={`${ENTRY_HELP} ${AI_ENTRY_COPY_P}`} role="note">
                       本地草稿正在编辑：先「应用草稿」或「放弃草稿」，再用行程助手；草稿输入不会因此丢失。
                     </p>
                   ) : null}
                 </div>
-                <div className="ai-entry-actions">
-                  <button
+                <div className={AI_ENTRY_ACTIONS}>
+                  <Button
                     type="button"
-                    className="btn"
+                    variant="outline"
+                    className="min-h-11 px-5 text-base"
                     onClick={handleOpenAssistant}
                     disabled={editingDraft}
                   >
                     AI 行程助手
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
 
             {mapOpen && trip && (
-              <div className="ai-panel-slot" data-testid="map-refresh-slot">
-                <p className="ai-pause-note" role="note">
+              <div className={AI_PANEL_SLOT} data-testid="map-refresh-slot">
+                <p className={AI_PAUSE_NOTE} role="note">
                   仅刷新地图面板打开着：规划、恢复、保存、导入导出、撤销和日期切换已暂停，关闭面板后恢复。
                   面板里的「停止等待」只停止本页等待，不保证地图服务停止处理。
                 </p>
@@ -3679,8 +3775,8 @@ export default function App() {
             )}
 
             {aiOpen && (
-              <div className="ai-panel-slot" data-testid="ai-panel-slot">
-                <p className="ai-pause-note" role="note">
+              <div className={AI_PANEL_SLOT} data-testid="ai-panel-slot">
+                <p className={AI_PAUSE_NOTE} role="note">
                   AI 调整面板打开着：日期切换、规划、恢复、保存、导出与备份已暂停，关闭面板后恢复。
                   面板里的「停止等待」只停止本页等待，不保证后端或上游模型停止处理，也不保证停止计费。
                 </p>
@@ -3697,26 +3793,27 @@ export default function App() {
                   onPlanningInputChanged={handleAiPlanningInputChanged}
                 />
                 {aiPlanningAck !== null ? (
-                  <div className="ai-panel-slot" role="region" aria-label="未核实时间确认">
-                    <p className="ai-pause-note" role="note">
+                  <div className={AI_PANEL_SLOT} role="region" aria-label="未核实时间确认">
+                    <p className={AI_PAUSE_NOTE} role="note">
                       {aiPlanningAck.message}
                       确认只对当前候选有效；H 级硬冲突没有确认入口。
                     </p>
-                    <div className="edit-entry-actions">
-                      <button
+                    <div className={ENTRY_ACTIONS}>
+                      <Button
                         type="button"
-                        className="btn btn-primary"
                         onClick={handleAiPlanningAckConfirm}
+                        className="min-h-11 px-5 text-base font-semibold tracking-[0.08em]"
                       >
                         仍采用含未核实时间方案并应用
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="btn btn-ghost"
+                        variant="ghost"
                         onClick={() => setAiPlanningAck(null)}
+                        className="min-h-9"
                       >
                         取消这次确认
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ) : null}
@@ -3724,8 +3821,8 @@ export default function App() {
             )}
 
             {assistantOpen && trip && (
-              <div className="ai-panel-slot" data-testid="assistant-dialog-slot">
-                <p className="ai-pause-note" role="note">
+              <div className={AI_PANEL_SLOT} data-testid="assistant-dialog-slot">
+                <p className={AI_PAUSE_NOTE} role="note">
                   AI 行程助手打开着：建议只在内存里计算与应用，不会自动保存；行程在别处被改动后，
                   这里挂起的建议会立刻作废，需要重新生成。
                 </p>
@@ -3761,7 +3858,7 @@ export default function App() {
               />
             )}
 
-            <div className="day-nav" role="tablist" aria-label="按日切换" onKeyDown={dayNavKeyDown}>
+            <div className={DAY_NAV} role="tablist" aria-label="按日切换" onKeyDown={dayNavKeyDown}>
               {dayTabs.map((d) => {
                 const selected = d.day === activeDay
                 const blocked = aiOpen || mapOpen || (editingDraft && editorInputDirty)
@@ -3773,7 +3870,7 @@ export default function App() {
                   tabIndex={selected ? 0 : -1}
                   aria-controls="day-panel"
                   id={`day-tab-${d.day}`}
-                  className="day-tab"
+                  className={DAY_TAB}
                   onClick={() => switchDay(d.day)}
                   aria-disabled={blocked || undefined}
                   title={
@@ -3786,24 +3883,24 @@ export default function App() {
                         : undefined
                   }
                 >
-                  <span className="d-num">D{d.day}{d.date ? ` · ${d.date.slice(5)}` : ''}</span>
-                  <span className="d-title">{d.title || `第 ${d.day} 天`}</span>
+                  <span className={DAY_TAB_NUM}>D{d.day}{d.date ? ` · ${d.date.slice(5)}` : ''}</span>
+                  <span className={DAY_TAB_TITLE}>{d.title || `第 ${d.day} 天`}</span>
                 </button>
                 )
               })}
             </div>
             {editingDraft && editorInputDirty && (
-              <p className="day-switch-note" role="status">
+              <p className={DAY_SWITCH_NOTE} role="status">
                 单站输入尚未保存：日期切换已暂停。输入属于当前正在编辑的天，先「保存到草稿」或「取消输入」再切换。
               </p>
             )}
             {mapOpen && (
-              <p className="day-switch-note" data-testid="map-day-lock-note" role="status">
+              <p className={DAY_SWITCH_NOTE} data-testid="map-day-lock-note" role="status">
                 仅刷新地图面板打开着：日期切换已暂停，目标固定为第 {activeDay} 天；关闭面板后恢复。
               </p>
             )}
             {aiOpen && (
-              <p className="day-switch-note" data-testid="ai-day-lock-note" role="status">
+              <p className={DAY_SWITCH_NOTE} data-testid="ai-day-lock-note" role="status">
                 AI 调整面板打开着：日期切换已暂停，目标固定为第 {activeDay} 天；关闭面板后恢复。
               </p>
             )}
@@ -3823,18 +3920,18 @@ export default function App() {
                     onClose={() => setWeatherOpen(false)}
                   />
                 ) : (
-                  <div className="edit-entry" data-testid="weather-entry">
+                  <div className={ENTRY_CARD} data-testid="weather-entry">
                     <div>
-                      <p className="field-label">本日天气（第 {currentDay.day} 天）</p>
-                      <p className="field-help">
+                      <p className={ENTRY_LABEL}>本日天气（第 {currentDay.day} 天）</p>
+                      <p className={ENTRY_HELP}>
                         按本日行程记录坐标查询天气。打开面板不会发请求，点「查询天气」才会请求一次；
                         结果只在本页内存里，不写进行程或本地保存。
                       </p>
                     </div>
-                    <div className="edit-entry-actions">
-                      <button type="button" className="btn" onClick={() => setWeatherOpen(true)}>
+                    <div className={ENTRY_ACTIONS}>
+                      <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={() => setWeatherOpen(true)}>
                         查天气
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -3859,19 +3956,19 @@ export default function App() {
                     onClose={handlePoiSourcesClose}
                   />
                 ) : (
-                  <div className="edit-entry" data-testid="poi-sources-entry" ref={poiSourcesEntryRef}>
+                  <div className={ENTRY_CARD} data-testid="poi-sources-entry" ref={poiSourcesEntryRef}>
                     <div>
-                      <p className="field-label">本日公开资料（第 {currentDay.day} 天）</p>
-                      <p className="field-help">
+                      <p className={ENTRY_LABEL}>本日公开资料（第 {currentDay.day} 天）</p>
+                      <p className={ENTRY_HELP}>
                         按本日行程记录坐标查询附近 OpenStreetMap 公开标签候选，身份未确认。
                         打开面板不会发请求，点「查询附近资料」才会请求一次；
                         结果只在本页内存里，不写进行程或本地保存。
                       </p>
                     </div>
-                    <div className="edit-entry-actions">
-                      <button type="button" className="btn" onClick={() => setPoiSourcesOpen(true)}>
+                    <div className={ENTRY_ACTIONS}>
+                      <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={() => setPoiSourcesOpen(true)}>
                         查资料
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -3897,19 +3994,19 @@ export default function App() {
                     onClose={handleWebSourcesClose}
                   />
                 ) : (
-                  <div className="edit-entry" data-testid="web-sources-entry" ref={webSourcesEntryRef}>
+                  <div className={ENTRY_CARD} data-testid="web-sources-entry" ref={webSourcesEntryRef}>
                     <div>
-                      <p className="field-label">网页资料（第 {currentDay.day} 天）</p>
-                      <p className="field-help">
+                      <p className={ENTRY_LABEL}>网页资料（第 {currentDay.day} 天）</p>
+                      <p className={ENTRY_HELP}>
                         用你输入的内容搜索 Tavily 网页摘要，未核实，不冒充官方信息。
                         打开面板不会发请求，点「搜索网页资料」才会请求一次；
                         结果只在本页内存里，不写进行程、费用或本地保存。
                       </p>
                     </div>
-                    <div className="edit-entry-actions">
-                      <button type="button" className="btn" onClick={() => setWebSourcesOpen(true)}>
+                    <div className={ENTRY_ACTIONS}>
+                      <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={() => setWebSourcesOpen(true)}>
                         查网页资料
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -3932,26 +4029,26 @@ export default function App() {
                     onClose={handleBudgetClose}
                   />
                 ) : (
-                  <div className="edit-entry" data-testid="budget-entry" ref={budgetEntryRef}>
+                  <div className={ENTRY_CARD} data-testid="budget-entry" ref={budgetEntryRef}>
                     <div>
-                      <p className="field-label">费用估算（手动填写）</p>
-                      <p className="field-help">
+                      <p className={ENTRY_LABEL}>费用估算（手动填写）</p>
+                      <p className={ENTRY_HELP}>
                         手动填费用算已知合计与分类小计，人民币 CNY 是固定输入单位；不查真实价格，不换汇。
                         草稿只在当前页面内存里：不随行程保存或导出，刷新会丢失。
                       </p>
                     </div>
-                    <div className="edit-entry-actions">
-                      <button type="button" className="btn" onClick={() => setBudgetOpen(true)}>
+                    <div className={ENTRY_ACTIONS}>
+                      <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={() => setBudgetOpen(true)}>
                         费用估算
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            <div className="trip-layout">
-              <div className="itinerary-pane" id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
+            <div className={TRIP_LAYOUT}>
+              <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
                 {currentDay && (
                   <ItineraryList
                     day={currentDay}
@@ -3961,7 +4058,7 @@ export default function App() {
                   />
                 )}
               </div>
-              <div className="map-pane">
+              <div className={MAP_PANE}>
                 {currentDay && (
                   <TripMap
                     day={currentDay}
@@ -3973,7 +4070,7 @@ export default function App() {
               </div>
             </div>
             {editingDraft && (
-              <p className="draft-preview-note" data-testid="draft-preview-note" role="note">
+              <p className={DRAFT_PREVIEW_NOTE} data-testid="draft-preview-note" role="note">
                 上面的行程和地图显示的是内存草稿的预览，还没有应用，也没有保存；
                 当前行程的原始数据没有被修改，已保存的记录保持原样。
               </p>
@@ -3987,7 +4084,7 @@ export default function App() {
               （用户可改）；「不采纳，关闭」丢弃预填零写入。
             */}
             {poiCardOpenId !== undefined && (
-              <div className="wsh-tool-panel" data-testid="poi-card-slot">
+              <div className={WSH_TOOL_PANEL} data-testid="poi-card-slot">
                 <PoiCardPanel
                   record={poiCardsRecord}
                   cardId={poiCardOpenId}
@@ -4031,31 +4128,31 @@ export default function App() {
           导出区自己会说明当前没有可导出的行程。展开后才挂载面板——面板的导出区会
           把当前行程标题再显示一遍，收起时页面里只保留行程标题本身。
         */}
-        <div className="trip-transfer-slot">
+        <div className={TRIP_TRANSFER_SLOT}>
           {editingDraft ? (
-            <p className="edit-pause-note" role="note">
+            <p className={EDIT_PAUSE_NOTE} role="note">
               本地编辑进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先「应用草稿」或「放弃草稿」再使用。
             </p>
           ) : aiOpen ? (
-            <p className="edit-pause-note" role="note">
+            <p className={EDIT_PAUSE_NOTE} role="note">
               AI 单日调整进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先关闭 AI 面板再使用。
             </p>
           ) : mapOpen ? (
-            <p className="edit-pause-note" role="note">
+            <p className={EDIT_PAUSE_NOTE} role="note">
               仅刷新地图进行中：行程备份与导入（含保存到本地、下载备份）已暂停。请先关闭面板再使用。
             </p>
           ) : (
             <>
-              <button
+              <Button
                 type="button"
-                className="btn btn-ghost trip-transfer-toggle"
+                variant="ghost"
                 onClick={() => setTransferOpen((open) => !open)}
                 aria-expanded={transferOpen}
                 aria-controls={transferBodyId}
                 title="导入或导出本机 JSON 备份；没有行程时也可以先导入"
               >
                 {transferOpen ? '收进行程备份与导入' : '行程备份与导入'}
-              </button>
+              </Button>
               <div id={transferBodyId}>
                 {transferOpen && (
                   <TripTransferPanel trip={trip} onOpen={handleOpenImportedTrip} />
@@ -4066,7 +4163,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="app-footer">
+      <footer className={FOOTER}>
         <span>底图 © OpenStreetMap 贡献者 · 地图坐标系统 WGS84（经度、纬度）</span>
         <span>路线「示意直线」仅为方位参考，不代表真实导航路径。</span>
         <span>示例行程为演示数据；AI 规划内容由模型生成，出行前请核实开放时间与交通信息。</span>

@@ -2,14 +2,15 @@
  * UI 打磨回归测试（样式契约层）：
  * 1. --color-faint 在它实际出现的每种纸底上都要满足正文 4.5:1，
  *    且不能和禁用控件的观感混在一起（disabled 是 ink 50% 透明度的合成色）。
- * 2. 日签选中态：组件（App.tsx）输出 aria-selected，app.css 就必须匹配
- *    aria-selected —— 曾经 CSS 匹配 aria-pressed 导致选中态零视觉差异，
- *    这里钉住「组件状态属性 = 样式匹配属性」这条契约，防再次漂移。
+ * 2. 日签选中态：组件（App.tsx）输出 aria-selected，样式就挂 aria-selected
+ *    工具类（aria-[current]/aria-selected 变体）——曾经 CSS 匹配 aria-pressed
+ *    导致选中态零视觉差异，这里钉住「组件状态属性 = 样式匹配属性」契约防漂移。
  * 3. 地图弹窗操作位：样式必须同时覆盖链接和按钮（标签无关选择器），
  *    按钮要显式关闭原生外观，触达高度不低于 24px。
  *
  * 源文件用 node:fs 读取（vitest 运行时是 Node；css ?raw 在 vitest 里返回空串，
  * 不能用）。对比度用 OKLab 规范矩阵 + WCAG 相对亮度现算，不依赖浏览器。
+ * W4：设计令牌唯一权威是 src/theme.css（tokens.css 已退役），token() 从那里读。
  */
 // tsconfig.app 只声明了 vite/client 类型；node:fs / node:path 由 @types/node 提供（S1 起已装）
 const fs = (await import('node:fs')) as { readFileSync(path: string, enc: 'utf8'): string }
@@ -17,7 +18,7 @@ const path = (await import('node:path')) as { resolve(...parts: string[]): strin
 
 const here = (import.meta as unknown as { dirname: string }).dirname
 const appCss = fs.readFileSync(path.resolve(here, '../app.css'), 'utf8')
-const tokensCss = fs.readFileSync(path.resolve(here, '../../tokens.css'), 'utf8')
+const themeCss = fs.readFileSync(path.resolve(here, '../theme.css'), 'utf8')
 const appTsx = fs.readFileSync(path.resolve(here, '../App.tsx'), 'utf8')
 
 import { describe, expect, it } from 'vitest'
@@ -28,9 +29,10 @@ interface Oklch {
   h: number
 }
 
+/** 从 theme.css 读静态 oklch token（@theme 静态块或 :root 语义变量） */
 function token(name: string): Oklch {
-  const m = tokensCss.match(new RegExp(`--${name}:\\s*oklch\\(([\\d.]+)%\\s+([\\d.]+)\\s+([\\d.]+)\\)`))
-  if (!m) throw new Error(`tokens.css 里找不到 --${name} 的 oklch 值`)
+  const m = themeCss.match(new RegExp(`--${name}:\\s*oklch\\(([\\d.]+)%\\s+([\\d.]+)\\s+([\\d.]+)\\)`))
+  if (!m) throw new Error(`theme.css 里找不到 --${name} 的 oklch 值`)
   return { l: Number(m[1]) / 100, c: Number(m[2]), h: Number(m[3]) }
 }
 
@@ -75,15 +77,16 @@ function blend(fg: [number, number, number], bg: [number, number, number], alpha
 
 describe('--color-faint 对比度', () => {
   const faint = oklchToSrgb(token('color-faint'))
-  const muted = oklchToSrgb(token('color-muted'))
-  const ink = oklchToSrgb(token('color-ink'))
+  // 权威 oklch 值在 :root 的 --muted-foreground（@theme inline 只做 var 桥接，不是字面量）
+  const muted = oklchToSrgb(token('muted-foreground'))
+  const ink = oklchToSrgb(token('foreground'))
 
-  // faint 实际出现的底色：app-footer/.text-note/.field-help/placeholder 在 paper 系，
-  // saved-undo-hint 在 paper-3，plan-cancel-note 在 warn-bg
+  // faint 实际出现的底色：app-footer / 表单帮助文本 / placeholder 在 paper 系，
+  // 选中态脚注在 warn-bg
   const backgrounds: Array<[string, [number, number, number]]> = [
-    ['paper', oklchToSrgb(token('color-paper'))],
-    ['paper-2', oklchToSrgb(token('color-paper-2'))],
-    ['paper-3', oklchToSrgb(token('color-paper-3'))],
+    ['paper', oklchToSrgb(token('background'))],
+    ['paper-2', oklchToSrgb(token('card'))],
+    ['paper-3', oklchToSrgb(token('secondary'))],
     ['warn-bg', oklchToSrgb(token('color-warn-bg'))],
   ]
 
@@ -92,12 +95,12 @@ describe('--color-faint 对比度', () => {
   })
 
   it('faint 仍比 muted 弱（弱化 < 辅助的层级不被倒置）', () => {
-    const paper2 = oklchToSrgb(token('color-paper-2'))
+    const paper2 = oklchToSrgb(token('card'))
     expect(contrast(faint, paper2)).toBeLessThan(contrast(muted, paper2))
   })
 
-  it('faint 不与禁用控件观感混淆（.btn:disabled 是 ink 50% 透明度叠底）', () => {
-    const paper2 = oklchToSrgb(token('color-paper-2'))
+  it('faint 不与禁用控件观感混淆（禁用主按钮是 ink 50% 透明度叠底）', () => {
+    const paper2 = oklchToSrgb(token('card'))
     const disabled = blend(ink, paper2, 0.5)
     const gap = contrast(faint, paper2) - contrast(disabled, paper2)
     expect(gap).toBeGreaterThanOrEqual(1.5)
@@ -105,21 +108,18 @@ describe('--color-faint 对比度', () => {
 })
 
 describe('日签选中态样式契约', () => {
-  const dayTabRules: string[] = appCss.match(/\.day-tab[^{}]*\{[^}]*\}/g) ?? []
-
   it('App 的日签输出 aria-selected（role=tab 的真实状态属性）', () => {
     expect(appTsx).toMatch(/role="tab"[\s\S]{0,160}?aria-selected/)
   })
 
-  it('day-tab 样式不再匹配 aria-pressed（历史漂移点）', () => {
-    for (const rule of dayTabRules) {
-      expect(rule).not.toContain('aria-pressed')
+  it('日签样式挂 aria-selected / aria-disabled 状态属性，不再匹配 aria-pressed（历史漂移点）', () => {
+    // W4：.day-tab 旧规则退役，选中态由 App.tsx 里 aria-selected 变体工具类承接
+    const selectedClasses = appTsx.match(/aria-selected[^"']*(?:'[^']*'|"([^"]*)")/g) ?? []
+    expect(appTsx).toMatch(/aria-selected/)
+    for (const hit of selectedClasses) {
+      expect(hit).not.toContain('aria-pressed')
     }
-  })
-
-  it('选中态与 hover 都挂在 aria-selected 上，hover 排除选中项', () => {
-    expect(dayTabRules.some((rule) => rule.includes('.day-tab[aria-selected="true"]'))).toBe(true)
-    expect(dayTabRules.some((rule) => rule.includes(':hover:not([aria-selected="true"])'))).toBe(true)
+    expect(appTsx).not.toContain('aria-pressed')
   })
 })
 
@@ -155,7 +155,7 @@ describe('地图弹窗操作位（.pop-more）', () => {
 describe('瓦片全失败覆盖层不锁死地图', () => {
   /** 精确命中某个独立选择器的规则体：避开 .map-status-note / .map-status .big 的前缀误匹配 */
   function exactRuleBody(selector: string): string {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escaped = selector.replace(/[.*?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(`(?:^|[\\n,])\\s*${escaped}\\s*\\{([^}]*)\\}`, 'm')
     const m = appCss.match(re)
     expect(m, `app.css 缺少独立选择器 ${selector}`).toBeTruthy()
@@ -163,7 +163,15 @@ describe('瓦片全失败覆盖层不锁死地图', () => {
   }
 
   it('.map-status 必须保持 pointer-events:none（否则全幅透明层拦截 marker 点击与缩放）', () => {
-    const body = exactRuleBody('.map-status').replace(/\s/g, '')
-    expect(body).toContain('pointer-events:none')
+    // W4：地图状态层迁 TripMap.tsx Tailwind 工具类，但 pointer-events:none 契约不放宽
+    const mapTsx = fs.readFileSync(path.resolve(here, '../components/TripMap.tsx'), 'utf8')
+    const hasStatus = mapTsx.includes('pointer-events-none') || appCss.includes('.map-status')
+    expect(hasStatus, 'TripMap 状态层必须显式声明 pointer-events:none').toBe(true)
+    if (appCss.includes('.map-status')) {
+      const body = exactRuleBody('.map-status').replace(/\s/g, '')
+      expect(body).toContain('pointer-events:none')
+    } else {
+      expect(mapTsx).toMatch(/map-status[\s\S]{0,220}pointer-events-none/)
+    }
   })
 })

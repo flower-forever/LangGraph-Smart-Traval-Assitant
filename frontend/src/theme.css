@@ -1,19 +1,20 @@
 /* Hallmark · theme bridge: 宣纸路书 朱砂手账 → shadcn/ui 语义变量
- * scope: design-system（S1 基建，不改任何面板）
- * paper: oklch(96.5% 0.012 85) · accent: oklch(52% 0.14 30) 朱砂
+ * scope: design-system（W4 起本文件是全部设计 token 的唯一权威）
+ * paper: oklch(96.5% 0.012 85) · accent(朱砂): oklch(52% 0.14 30)
  *
- * 来源：frontend/tokens.css（W4 波次退役前保持只读，本文件不复制其类名，也不覆盖其变量）。
- * 这里只做两件事：
- *   1) 定义 shadcn/ui 约定的语义变量（--background / --foreground / --primary / …）；
- *   2) 用 @theme inline 把它们桥接成 Tailwind 工具类（bg-background / text-foreground / …）。
+ * 这里做三件事：
+ *   1) :root 定义 shadcn/ui 约定的语义变量（--background / --foreground / --primary / …）；
+ *   2) :root 承接整套设计刻度（字体 / 字号 / 间距 / 圆角 / 动效 / 阴影 / 语义色扩展），
+ *      原 tokens.css 已在 W4 退役，这些值一字未改地搬到这里；
+ *   3) @theme 把它们桥接成 Tailwind 工具类（bg-background / text-foreground / …）。
  *
- * 命名冲突说明（重要）：
- *   tokens.css 里已有 --color-accent（朱砂）与 --color-muted（辅助文字色），
- *   它们在 :root 且未分层，会覆盖 @theme 里的同名变量。
- *   因此本文件故意不桥接 --color-accent / --color-muted 两个工具类，
- *   改用 --color-accent-surface / --color-muted-surface 作为迁移期别名：
- *   引入 shadcn 组件后，把 bg-accent 改成 bg-accent-surface、bg-muted 改成 bg-muted-surface
- *   （或直接用 bg-secondary / bg-paper-3）。详见 docs/UI_DESIGN.md「新旧组件映射表」。
+ * 命名说明：
+ *   - 朱砂主色统一走 --primary（shadcn 语义）；朱砂淡底表面 = --accent（shadcn 语义，
+ *     取 accent-soft 值）；朱砂文字 / focus = --accent-foreground。旧色板文件里的
+ *     同名三件套已全部 retire，代码里不再出现。
+ *   - hover 深朱砂 = --color-primary-strong（静态 token，@theme 桥接 bg-primary-strong）。
+ *   - @theme inline 的自引用（--font-display: var(--font-display)）只为生成工具类，
+ *     运行期取 :root 的真实值。
  */
 
 :root {
@@ -46,7 +47,7 @@
   --input: oklch(78% 0.018 85);                 /* line-strong */
   --ring: oklch(38% 0.14 30);                   /* accent-ink：与 :focus-visible 一致 */
 
-  /* ---- 圆角：沿用 tokens.css 的 6 / 10 / 14 ---- */
+  /* ---- 圆角：6 / 10 / 14（--radius 与 --radius-md 对齐） ---- */
   --radius: 10px;
 
   /* ---- 图表（两期未做图表，先占位，保持色板同源） ---- */
@@ -56,6 +57,66 @@
   --chart-4: oklch(58% 0.07 230);
   --chart-5: oklch(38% 0.02 150);
   --chart-6: oklch(78% 0.018 85);
+}
+
+/* ---- 设计刻度（静态值，W4 从旧色板文件原值承接） ---- */
+:root {
+  /* 字体 */
+  --font-display: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", "Songti SC", "SimSun", serif;
+  --font-body: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+
+  /* 字号（工具类 text-sm/base 等维持 Tailwind 默认刻度，见 UI_DESIGN §7 W4） */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+  --text-display: clamp(27px, 4.2vw, 38px);
+
+  /* 4pt 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* 圆角 / 线 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --rule: 1px solid var(--border);
+  --rule-strong: 1px solid var(--color-line-strong);
+
+  /* 动效 */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* 阴影（克制，纸面感） */
+  --shadow-1: 0 1px 2px oklch(24% 0.018 150 / 0.06);
+  --shadow-2: 0 2px 10px oklch(24% 0.018 150 / 0.08);
+}
+
+/* ---- 静态语义色扩展（@theme 生成 :root 变量 + Tailwind 工具类） ----
+ * faint 弱化文字 / ok 成功 / warn 琥珀提示 / line-strong 二级描边 /
+ * map-water 地图未加载底色 / primary-strong hover 深朱砂 */
+@theme {
+  --color-faint: oklch(51.5% 0.012 150);
+  --color-ok: oklch(50% 0.11 150);
+  --color-warn-bg: oklch(94% 0.035 85);
+  --color-warn-ink: oklch(42% 0.09 65);
+  --color-line-strong: oklch(78% 0.018 85);
+  --color-map-water: oklch(90% 0.02 230);
+  --color-primary-strong: oklch(44% 0.15 30);
 }
 
 @theme inline {
@@ -83,18 +144,16 @@
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
 
-  /* 迁移期别名：避开 tokens.css 的 --color-accent / --color-muted 冲突 */
+  /* 迁移期别名：W2–W3b 面板使用中；与 --accent 同值 */
   --color-accent-surface: var(--accent);
   --color-muted-surface: var(--muted);
 
-  /* 字体：正文沿用 tokens.css 的苹方 / 雅黑栈 */
+  /* 字体：正文苹方 / 雅黑；等宽 JetBrains 栈；display 楷体（运行期取 :root 值） */
   --font-sans: var(--font-body);
-
-  /* 楷体 display（UI_DESIGN §2.2）：tokens.css 在 :root 未分层定义同名变量，
-   * 运行期以它为准；这里只为生成 font-display 工具类（W2 面板标题用）。 */
+  --font-mono: var(--font-mono);
   --font-display: var(--font-display);
 
-  /* 区块标题 17px（UI_DESIGN §2.2 md 档）：tokens.css :root 已有 --text-md，
-   * 这里只为生成 text-md 工具类（font-size 引用运行期变量，行高继承）。 */
+  /* 区块标题 17px（UI_DESIGN §2.2 md 档）与品牌 display 字号（运行期取 :root 值） */
   --text-md: var(--text-md);
+  --text-display: var(--text-display);
 }

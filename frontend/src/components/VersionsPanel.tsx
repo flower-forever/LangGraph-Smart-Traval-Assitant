@@ -135,11 +135,11 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
 
   return (
     <div className="grid min-w-0 gap-3">
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
         站点：新增 {added.length} · 删除 {removed.length} · 跨日移动 {moved.length} · 同日变化{' '}
         {changed.length} · 未变化 {diff.stops.unchangedCount}
       </p>
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
         预约：新增 {constraintsAdded.length} · 删除 {constraintsRemoved.length} · 变化{' '}
         {constraintsChanged.length} · 未变化 {diff.constraints.unchangedCount}
       </p>
@@ -170,17 +170,17 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
           <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatCostSummary(diff.cost.after)}</dd>
         </div>
       </dl>
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{costChangeText(diff.cost)}</p>
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{costChangeText(diff.cost)}</p>
 
       <details
         className="rounded-[6px] border border-border bg-card px-4 py-3"
         open
       >
-        <summary className="cursor-pointer text-sm font-semibold text-[color:var(--color-ink-2)]">站点与预约明细</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-[color:var(--color-secondary-foreground)]">站点与预约明细</summary>
         {added.length === 0 && removed.length === 0 && moved.length === 0 && changed.length === 0 ? (
           <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">没有站点差异。</p>
         ) : (
-          <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-ink-2)]">
+          <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)]">
             {added.map((ref) => (
               <li key={`added-${ref.id}-${ref.day}`}>新增：{stopRefText(ref)}</li>
             ))}
@@ -206,7 +206,7 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
         constraintsChanged.length === 0 ? (
           <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">没有预约差异。</p>
         ) : (
-          <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-ink-2)]">
+          <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)]">
             {constraintsAdded.map((item) => (
               <li key={`constraint-added-${item.id}`}>预约新增：{constraintText(item)}</li>
             ))}
@@ -418,11 +418,11 @@ export default function VersionsPanel({
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">版本库</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">版本库</p>
           <h2 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]" id={headingId}>
             行程版本与方案对比
           </h2>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
             显式命名的不可变快照：保存当前 Trip、sidecar 与预算；后续编辑不会串改旧版本。
             面板不自动分叉、不自动驱逐旧版本。
           </p>
@@ -465,7 +465,7 @@ export default function VersionsPanel({
         </p>
         <form className="flex flex-wrap items-end gap-3" onSubmit={handleSave}>
           <label className="grid min-w-0 flex-[1_1_260px] gap-1" htmlFor={nameId}>
-            <span className="text-sm font-semibold text-[color:var(--color-ink-2)]">版本名称</span>
+            <span className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">版本名称</span>
             <input
               id={nameId}
               className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -541,16 +541,16 @@ export default function VersionsPanel({
 
       {pendingAdopt !== null ? (
         <section
-          className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-accent)] bg-accent-surface p-4"
+          className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-primary)] bg-accent-surface p-4"
           aria-labelledby={previewHeadingId}
         >
           <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={previewHeadingId}>
             采用预览：{pendingAdopt.versionName}
           </h3>
-          <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             将一次整体恢复该版本的 Trip、sidecar 与预算；当前记录在确认前不会改变。
           </p>
-          <ul className="m-0 list-disc pl-5 grid gap-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <ul className="m-0 list-disc pl-5 grid gap-0 text-sm leading-[1.7] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             <li>
               revision：当前 {current?.workspaceRevision ?? '未知'} →{' '}
               {pendingAdopt.nextWorkspaceRevision}；快照内旧 revision{' '}
@@ -586,7 +586,7 @@ export default function VersionsPanel({
                   以下当前工作区条目不在该版本中，采用后不会恢复；请先确认或取消预览：
                 </AlertDescription>
               </Alert>
-              <ul className="m-0 list-disc pl-5 grid gap-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <ul className="m-0 list-disc pl-5 grid gap-0 text-sm leading-[1.7] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 {pendingAdopt.needsReconfirmation.map((item) => (
                   <li key={`${item.kind}-${item.id}`}>
                     {item.label}（{item.kind}）
@@ -624,11 +624,11 @@ export default function VersionsPanel({
 
       {undoProposal !== null && undoProposal !== undefined ? (
         <section
-          className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-accent)] bg-accent-surface p-4"
+          className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-primary)] bg-accent-surface p-4"
           aria-label="最近一次采用可撤销"
         >
           <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]">最近一次采用可整体撤销</h3>
-          <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             撤销会恢复采用前的 Trip、sidecar 与预算；revision 仍从当前{' '}
             {undoProposal.base.identity.workspaceRevision} →{' '}
             {undoProposal.nextWorkspaceRevision}，epoch → {undoProposal.nextEpoch}。
@@ -656,7 +656,7 @@ export default function VersionsPanel({
           <>
             <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-3 max-md:grid-cols-[minmax(0,1fr)]">
               <label className="grid min-w-0 gap-1" htmlFor={diffAIdInput}>
-                <span className="text-sm font-semibold text-[color:var(--color-ink-2)]">版本 A</span>
+                <span className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">版本 A</span>
                 <select
                   id={diffAIdInput}
                   className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -671,7 +671,7 @@ export default function VersionsPanel({
                 </select>
               </label>
               <label className="grid min-w-0 gap-1" htmlFor={diffBIdInput}>
-                <span className="text-sm font-semibold text-[color:var(--color-ink-2)]">版本 B</span>
+                <span className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">版本 B</span>
                 <select
                   id={diffBIdInput}
                   className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -723,7 +723,7 @@ export default function VersionsPanel({
               下载备份文件
             </Button>
           ) : null}
-          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-ink-2)]" htmlFor={fileId}>
+          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-secondary-foreground)]" htmlFor={fileId}>
             <span>选择版本库备份文件</span>
             <input
               id={fileId}
@@ -746,7 +746,7 @@ export default function VersionsPanel({
 
         {backupPreview !== null ? (
           <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-3">
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
               备份预览：仅版本库 · {backupPreview.record.items.length} 个版本 ·{' '}
               {backupPreview.bytes} 字节（UTF-8）
             </p>
@@ -769,7 +769,7 @@ export default function VersionsPanel({
 
         {importPreview !== null ? (
           <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-3">
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
               导入预览：仅版本库 · {importPreview.record.items.length} 个版本 ·{' '}
               {importPreview.bytes} 字节（UTF-8）· 未写入
             </p>

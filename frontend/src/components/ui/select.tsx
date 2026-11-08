@@ -5,6 +5,10 @@ import { cn } from '@/lib/utils'
  * Select（手工落盘，原生 select 兜底）：现有面板全部用原生 select + label，
  * 测试用 user.selectOptions 依赖原生行为；引入 Radix Select 属行为变化，
  * 不在本波范围。样式与 Input 同一描边 / 凹面底。
+ *
+ * 技术限制（W2 验收登记）：SVG data-URI 里的 stroke 色无法用 CSS 变量，
+ * 下面 %23405640 是 theme.css --secondary-foreground（oklch(38% 0.02 150)）
+ * 的 sRGB 近似值；改主题时需同步这两个值（theme.css 是唯一权威）。
  */
 function Select({
   className,

@@ -195,7 +195,7 @@ export default function TripBudgetPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">行程级工具 · 不写行程</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">行程级工具 · 不写行程</p>
           <h3 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]" id={headingId}>
             费用估算（{trip.title}）
           </h3>
@@ -205,14 +205,14 @@ export default function TripBudgetPanel({
         </Button>
       </div>
 
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
         手动填写费用做估算：人民币 CNY 是这里的固定输入单位，金额按整项总费用填，
         不按人数或天数自动乘算，也不会去查询真实价格、库存或汇率。
         名称和金额都是你输入或此前确认导入的记录，不是任何服务提供者的报价。
       </p>
       <p
         role="note"
-        className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]"
+        className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]"
       >
         {memoryNotice()}
       </p>
@@ -254,7 +254,7 @@ export default function TripBudgetPanel({
         <legend className="sr-only">费用明细与预算</legend>
 
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={budgetInputId} className="text-sm font-semibold text-[color:var(--color-ink-2)]">
+          <label htmlFor={budgetInputId} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">
             整趟行程总预算（元，可留空）
           </label>
           <input
@@ -291,7 +291,7 @@ export default function TripBudgetPanel({
                   data-rowid={row.id}
                 >
                   <div className="grid min-w-0 gap-1">
-                    <label htmlFor={`${labelFor('name', index)}-cat`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">分类</label>
+                    <label htmlFor={`${labelFor('name', index)}-cat`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">分类</label>
                     <select
                       id={`${labelFor('name', index)}-cat`}
                       className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -308,7 +308,7 @@ export default function TripBudgetPanel({
                     </select>
                   </div>
                   <div className="grid min-w-0 gap-1">
-                    <label htmlFor={labelFor('name', index)} className="text-sm font-semibold text-[color:var(--color-ink-2)]">名称（可留空）</label>
+                    <label htmlFor={labelFor('name', index)} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">名称（可留空）</label>
                     <input
                       id={labelFor('name', index)}
                       className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -321,7 +321,7 @@ export default function TripBudgetPanel({
                     />
                   </div>
                   <div className="grid min-w-0 gap-1">
-                    <label htmlFor={labelFor('amount', index)} className="text-sm font-semibold text-[color:var(--color-ink-2)]">金额（元）</label>
+                    <label htmlFor={labelFor('amount', index)} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">金额（元）</label>
                     <input
                       id={labelFor('amount', index)}
                       className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
@@ -391,7 +391,7 @@ export default function TripBudgetPanel({
           <p
             data-testid="budget-notice"
             data-tone={result.comparison.kind}
-            className="m-0 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary px-4 py-3 text-sm leading-[1.65] text-[color:var(--color-ink-2)] data-[tone=over]:border-[color:var(--color-accent)] data-[tone=over]:bg-[color:var(--color-warn-bg)] data-[tone=over]:text-[color:var(--color-warn-ink)]"
+            className="m-0 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary px-4 py-3 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] data-[tone=over]:border-[color:var(--color-primary)] data-[tone=over]:bg-[color:var(--color-warn-bg)] data-[tone=over]:text-[color:var(--color-warn-ink)]"
           >
             {result.comparison.kind === 'none'
               ? result.comparison.message
@@ -419,13 +419,13 @@ export default function TripBudgetPanel({
               ))}
             </dl>
           ) : (
-            <p className="m-0 font-display text-md text-[color:var(--color-ink-2)]" data-testid="budget-no-amounts">
+            <p className="m-0 font-display text-md text-[color:var(--color-secondary-foreground)]" data-testid="budget-no-amounts">
               暂无可合计金额。
             </p>
           )}
 
           {result.emptyCount > 0 && (
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
               未填写金额的 {result.emptyCount} 项没有计入合计（含 0 元以外留空的行）：
               {result.emptyLines.map((line, index) => (
                 <span key={line.rowId}>
@@ -438,7 +438,7 @@ export default function TripBudgetPanel({
           )}
 
           {result.issueCount > 0 && (
-            <div className="grid gap-2 rounded-[10px] border border-[color:var(--color-accent)] bg-[color:var(--color-warn-bg)] p-3 px-4" data-testid="budget-issues">
+            <div className="grid gap-2 rounded-[10px] border border-[color:var(--color-primary)] bg-[color:var(--color-warn-bg)] p-3 px-4" data-testid="budget-issues">
               <p className="m-0 text-sm font-semibold leading-[1.65] text-[color:var(--color-warn-ink)]">
                 以下 {result.issueCount} 项金额无效，未计入合计，原文已保留：
               </p>

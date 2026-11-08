@@ -266,8 +266,8 @@ function formatBytes(bytes: number): string {
 
 /** W3b：notice 与隐私清单通用类名，从 OfflineTripPanel.css 迁来（shadcn + Tailwind）。 */
 const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
-  ok: 'bg-[color:var(--color-accent-soft)]/40 text-[color:var(--color-accent-ink)]',
-  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-ink-2)]',
+  ok: 'bg-[color:var(--color-primary)]/40 text-[color:var(--color-accent-foreground)]',
+  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-secondary-foreground)]',
   error: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-warn-ink)]',
 }
 const NOTICE =
@@ -484,7 +484,7 @@ export default function OfflineTripPanel({ record, epoch }: OfflineTripPanelProp
       {livePreview && (
         <div className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4">
           <h5
-            className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+            className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]"
             id={previewHeadingId}
           >
             预览：{livePreview.filename}
@@ -512,7 +512,7 @@ export default function OfflineTripPanel({ record, epoch }: OfflineTripPanelProp
       )}
 
       <div className="grid gap-1.5 border-t border-t-border pt-3">
-        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">分享前请留意</p>
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">分享前请留意</p>
         <ul className="m-0 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {/* A2 合并：DATA_SCOPE_NOTICE 已含「不含候选库、版本库…」一句，原第 4 条与之重复，合并为一条。 */}
           <li>{OFFLINE_TRIP_DATA_SCOPE_NOTICE}</li>

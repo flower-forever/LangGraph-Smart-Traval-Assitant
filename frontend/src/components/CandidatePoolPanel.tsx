@@ -746,9 +746,9 @@ export default function CandidatePoolPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">独立候选库 · 不写行程</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">独立候选库 · 不写行程</p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">候选地点池</h3>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
             攒下想去的地点，规划某天时再加入草稿。所有条目都是「未核实」，
             没有真实搜索、地理编码或账户同步。
           </p>
@@ -782,7 +782,7 @@ export default function CandidatePoolPanel({
 
       <div className="grid minmax(0,1fr) grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={`${baseId}-filter-text`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">筛选候选（名称 / 地址 / 备注 / 标签）</label>
+          <label htmlFor={`${baseId}-filter-text`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">筛选候选（名称 / 地址 / 备注 / 标签）</label>
           <Input
             id={`${baseId}-filter-text`}
             value={filterText}
@@ -791,7 +791,7 @@ export default function CandidatePoolPanel({
           />
         </div>
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={`${baseId}-filter-tag`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">按区域标签筛选</label>
+          <label htmlFor={`${baseId}-filter-tag`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">按区域标签筛选</label>
           <Select
             id={`${baseId}-filter-tag`}
             value={tagFilter}
@@ -884,8 +884,8 @@ export default function CandidatePoolPanel({
                   >
                     <div className="grid min-w-0 flex-[1_1_240px] gap-1">
                       <p className="m-0 font-display text-sm font-bold leading-[1.5] [overflow-wrap:anywhere]">{suggestion.name}</p>
-                      <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">{suggestion.reason}</p>
-                      <p className="m-0 text-xs leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+                      <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">{suggestion.reason}</p>
+                      <p className="m-0 text-xs leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
                         场景：{suggestion.scene} · 坐标未核实
                       </p>
                       {suggestion.duplicateOf.length > 0 ? (
@@ -923,7 +923,7 @@ export default function CandidatePoolPanel({
 
         {mode === 'copy' ? (
           <div className="grid min-w-0 gap-1">
-            <label htmlFor={`${baseId}-copy-stop`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">从哪个行程站点复制</label>
+            <label htmlFor={`${baseId}-copy-stop`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">从哪个行程站点复制</label>
             <Select
               id={`${baseId}-copy-stop`}
               value={selectedCopy?.stopId ?? ''}
@@ -958,7 +958,7 @@ export default function CandidatePoolPanel({
           {mode === 'manual' ? (
             <>
               <div className="grid min-w-0 gap-1">
-                <label htmlFor={`${baseId}-name`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">候选名称</label>
+                <label htmlFor={`${baseId}-name`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">候选名称</label>
                 <Input
                   id={`${baseId}-name`}
                   value={addForm.name}
@@ -968,7 +968,7 @@ export default function CandidatePoolPanel({
                 />
               </div>
               <div className="grid min-w-0 gap-1">
-                <label htmlFor={`${baseId}-address`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">地址（可选）</label>
+                <label htmlFor={`${baseId}-address`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">地址（可选）</label>
                 <Input
                   id={`${baseId}-address`}
                   value={addForm.address}
@@ -980,7 +980,7 @@ export default function CandidatePoolPanel({
           ) : null}
 
           <div className="grid min-w-0 gap-1">
-            <label htmlFor={`${baseId}-notes`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">备注（可选）</label>
+            <label htmlFor={`${baseId}-notes`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">备注（可选）</label>
             <Textarea
               id={`${baseId}-notes`}
               value={addForm.notes}
@@ -989,7 +989,7 @@ export default function CandidatePoolPanel({
             />
           </div>
           <div className="grid min-w-0 gap-1">
-            <label htmlFor={`${baseId}-tags`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">区域标签（用逗号分隔，可选）</label>
+            <label htmlFor={`${baseId}-tags`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">区域标签（用逗号分隔，可选）</label>
             <Input
               id={`${baseId}-tags`}
               value={addForm.tags}
@@ -999,7 +999,7 @@ export default function CandidatePoolPanel({
             />
           </div>
           <div className="grid min-w-0 gap-1">
-            <label htmlFor={`${baseId}-priority`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">优先级</label>
+            <label htmlFor={`${baseId}-priority`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">优先级</label>
             <Select
               id={`${baseId}-priority`}
               value={addForm.priority}
@@ -1016,7 +1016,7 @@ export default function CandidatePoolPanel({
           {mode === 'manual' ? (
             <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
               <div className="grid min-w-0 gap-1">
-                <label htmlFor={`${baseId}-lng`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">经度（可选）</label>
+                <label htmlFor={`${baseId}-lng`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">经度（可选）</label>
                 <Input
                   id={`${baseId}-lng`}
                   inputMode="decimal"
@@ -1027,7 +1027,7 @@ export default function CandidatePoolPanel({
                 />
               </div>
               <div className="grid min-w-0 gap-1">
-                <label htmlFor={`${baseId}-lat`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">纬度（可选）</label>
+                <label htmlFor={`${baseId}-lat`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">纬度（可选）</label>
                 <Input
                   id={`${baseId}-lat`}
                   inputMode="decimal"
@@ -1132,14 +1132,14 @@ export default function CandidatePoolPanel({
                       )
                     })()}
                   </h5>
-                  <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">{candidate.address ?? '地址未知'}</p>
+                  <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">{candidate.address ?? '地址未知'}</p>
                   {candidate.notes ? (
-                    <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{candidate.notes}</p>
+                    <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{candidate.notes}</p>
                   ) : null}
-                  <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+                  <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
                     {candidate.tags.length === 0 ? '无标签' : `区域：${candidate.tags.join('、')}`}
                   </p>
-                  <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">{formatCandidateLocation(candidate.location)}</p>
+                  <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">{formatCandidateLocation(candidate.location)}</p>
                   {duplicates.length > 0 ? (
                     <Alert variant="warning" role="note">
                       <AlertDescription>
@@ -1177,7 +1177,7 @@ export default function CandidatePoolPanel({
                 {editingId === candidate.id ? (
                   <form className="grid min-w-0 gap-3 rounded-[6px] border border-border bg-card p-3" onSubmit={handleEditSubmit} aria-label={`编辑候选 ${candidate.name}`}>
                     <div className="grid min-w-0 gap-1">
-                      <label htmlFor={`${baseId}-edit-name`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑名称</label>
+                      <label htmlFor={`${baseId}-edit-name`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑名称</label>
                       <Input
                         id={`${baseId}-edit-name`}
                         value={editForm.name}
@@ -1187,7 +1187,7 @@ export default function CandidatePoolPanel({
                       />
                     </div>
                     <div className="grid min-w-0 gap-1">
-                      <label htmlFor={`${baseId}-edit-address`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑地址（可选）</label>
+                      <label htmlFor={`${baseId}-edit-address`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑地址（可选）</label>
                       <Input
                         id={`${baseId}-edit-address`}
                         value={editForm.address}
@@ -1196,7 +1196,7 @@ export default function CandidatePoolPanel({
                       />
                     </div>
                     <div className="grid min-w-0 gap-1">
-                      <label htmlFor={`${baseId}-edit-notes`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑备注（可选）</label>
+                      <label htmlFor={`${baseId}-edit-notes`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑备注（可选）</label>
                       <Textarea
                         id={`${baseId}-edit-notes`}
                         value={editForm.notes}
@@ -1205,7 +1205,7 @@ export default function CandidatePoolPanel({
                       />
                     </div>
                     <div className="grid min-w-0 gap-1">
-                      <label htmlFor={`${baseId}-edit-tags`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑区域标签（逗号分隔）</label>
+                      <label htmlFor={`${baseId}-edit-tags`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑区域标签（逗号分隔）</label>
                       <Input
                         id={`${baseId}-edit-tags`}
                         value={editForm.tags}
@@ -1214,7 +1214,7 @@ export default function CandidatePoolPanel({
                       />
                     </div>
                     <div className="grid min-w-0 gap-1">
-                      <label htmlFor={`${baseId}-edit-priority`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑优先级</label>
+                      <label htmlFor={`${baseId}-edit-priority`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑优先级</label>
                       <Select
                         id={`${baseId}-edit-priority`}
                         value={editForm.priority}
@@ -1229,7 +1229,7 @@ export default function CandidatePoolPanel({
                     </div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
                       <div className="grid min-w-0 gap-1">
-                        <label htmlFor={`${baseId}-edit-lng`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑经度（可选）</label>
+                        <label htmlFor={`${baseId}-edit-lng`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑经度（可选）</label>
                         <Input
                           id={`${baseId}-edit-lng`}
                           inputMode="decimal"
@@ -1240,7 +1240,7 @@ export default function CandidatePoolPanel({
                         />
                       </div>
                       <div className="grid min-w-0 gap-1">
-                        <label htmlFor={`${baseId}-edit-lat`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">编辑纬度（可选）</label>
+                        <label htmlFor={`${baseId}-edit-lat`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">编辑纬度（可选）</label>
                         <Input
                           id={`${baseId}-edit-lat`}
                           inputMode="decimal"
@@ -1280,7 +1280,7 @@ export default function CandidatePoolPanel({
             <>
               <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
                 <div className="grid min-w-0 gap-1">
-                  <label htmlFor={`${baseId}-add-day`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">加入第几天草稿</label>
+                  <label htmlFor={`${baseId}-add-day`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">加入第几天草稿</label>
                   <Select
                     id={`${baseId}-add-day`}
                     value={selectedDraftDay.day}
@@ -1295,7 +1295,7 @@ export default function CandidatePoolPanel({
                   </Select>
                 </div>
                 <div className="grid min-w-0 gap-1">
-                  <label htmlFor={`${baseId}-add-time`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">加入时间（HH:MM）</label>
+                  <label htmlFor={`${baseId}-add-time`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">加入时间（HH:MM）</label>
                   <Input
                     id={`${baseId}-add-time`}
                     value={addTime}
@@ -1304,7 +1304,7 @@ export default function CandidatePoolPanel({
                   />
                 </div>
                 <div className="grid min-w-0 gap-1">
-                  <label htmlFor={`${baseId}-add-duration`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">停留分钟（可选，留空为未知）</label>
+                  <label htmlFor={`${baseId}-add-duration`} className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]">停留分钟（可选，留空为未知）</label>
                   <Input
                     id={`${baseId}-add-duration`}
                     inputMode="numeric"
@@ -1355,26 +1355,26 @@ export default function CandidatePoolPanel({
               <h5 className="m-0 font-display text-base font-bold leading-[1.45] [overflow-wrap:anywhere]">
                 预览（未写入）：第 {proposal.day} 天 · {proposal.candidateName} · {proposal.time}
               </h5>
-              <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+              <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
                 新站点 id：<code>{proposal.visitStopId}</code>（不复用候选 id）
               </p>
-              <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+              <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
                 草稿 revision {proposal.draftRevision} · 预览行程 {proposal.previewTripBytes} 字节 ·
                 checkTripShape 已通过
               </p>
-              <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+              <p className="m-0 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
                 {proposal.localChecks.length === 0
                   ? '本次预览没有新增本地检查项。'
                   : `本地检查 ${proposal.localChecks.length} 条：`}
               </p>
               {proposal.localChecks.length > 0 ? (
-                <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-[1.6] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+                <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-[1.6] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
                   {proposal.localChecks.slice(0, 8).map((check, index) => (
                     <li key={`${check.kind}-${check.stopId ?? 'none'}-${index}`}>{check.message}</li>
                   ))}
                 </ul>
               ) : null}
-              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-[1.6] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-[1.6] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 {proposal.caveats.map((caveat) => (
                   <li key={caveat}>{caveat}</li>
                 ))}
@@ -1412,7 +1412,7 @@ export default function CandidatePoolPanel({
             导入候选库…
           </Button>
         </div>
-        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]" role="status">
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]" role="status">
           {saveStatus === 'pending'
             ? '正在请求父级存储 adapter 保存候选库…'
             : saveStatus === 'error'

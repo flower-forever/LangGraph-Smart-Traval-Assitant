@@ -271,7 +271,7 @@ function sentQueryOf(raw: string): string {
 const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
 const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
 const TAG =
-  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-primary)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-foreground)]'
 const TAG_UNVERIFIED =
   'inline-flex shrink-0 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground'
 const RESULT_BOX = 'grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4'
@@ -469,7 +469,7 @@ export default function WebSourcesPanel({
       <section className={PANEL} aria-label="网页资料" data-testid="web-sources-panel">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-[1_1_260px]">
-            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
               独立资料查询
             </p>
             <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
@@ -480,7 +480,7 @@ export default function WebSourcesPanel({
             收起
           </Button>
         </div>
-        <p className="m-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" role="note">
+        <p className="m-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" role="note">
           当前行程里没有可显示的这一天，无法搜索网页资料。行程内容保持不变。
         </p>
       </section>
@@ -503,7 +503,7 @@ export default function WebSourcesPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
             独立资料查询 · Tavily 搜索摘要 · 不写行程
           </p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
@@ -590,7 +590,7 @@ export default function WebSourcesPanel({
 
       {pending ? (
         <p
-          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
           role="status"
         >
           正在等待网页资料服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
@@ -613,7 +613,7 @@ export default function WebSourcesPanel({
       >
         数据来源：Tavily Search API（搜索摘要）·{' '}
         <a
-          className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+          className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]"
           href={report?.source.docs_url ?? 'https://docs.tavily.com/api-reference/endpoint/search'}
           target="_blank"
           rel="noopener noreferrer"
@@ -647,7 +647,7 @@ function ReportBlock({
       </div>
 
       <p
-        className="m-0 rounded-[6px] border border-dashed border-[color:var(--color-accent)]/50 bg-[color:var(--color-accent-soft)]/40 p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]"
+        className="m-0 rounded-[6px] border border-dashed border-[color:var(--color-primary)]/50 bg-[color:var(--color-primary)]/40 p-3 text-sm leading-relaxed text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]"
         data-testid="web-sources-unverified"
         role="note"
       >
@@ -673,7 +673,7 @@ function ReportBlock({
         </>
       ) : (
         <p
-          className="m-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+          className="m-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]"
           role="status"
           data-testid="web-sources-empty"
         >
@@ -684,25 +684,25 @@ function ReportBlock({
       <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1">
         <div>
           <dt className="text-xs text-muted-foreground">查询发起时间</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {checkedAt}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">本次获取时间</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {fetchedAt}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">实发查询</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {report.requested_query ?? '（invalid_request：未发送）'}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">上游返回条目</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {report.results_seen} 条
           </dd>
         </div>
@@ -721,13 +721,13 @@ function ResultItem({
 }) {
   return (
     <li className="grid min-w-0 gap-1.5 rounded-[6px] border border-border bg-card p-3">
-      <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+      <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
         {result.title ?? '（来源未提供标题）'}
         <span className={TAG_UNVERIFIED}>未核实</span>
       </p>
       <p className="m-0 min-w-0 break-all text-sm leading-relaxed [overflow-wrap:anywhere]">
         <a
-          className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+          className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]"
           href={result.url}
           target="_blank"
           rel="noopener noreferrer"
@@ -736,7 +736,7 @@ function ResultItem({
         </a>
       </p>
       {result.snippet !== null ? (
-        <p className="m-0 whitespace-pre-wrap text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+        <p className="m-0 whitespace-pre-wrap text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
           {result.snippet}
           {result.snippet_truncated ? '（摘录超长，已截断显示）' : ''}
         </p>

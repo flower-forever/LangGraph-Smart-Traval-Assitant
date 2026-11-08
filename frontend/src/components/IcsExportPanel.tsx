@@ -43,8 +43,8 @@ const FIELD_HELP = 'm-0 text-xs leading-relaxed text-muted-foreground [overflow-
 const FIELD_ERROR =
   'm-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-2.5 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]'
 const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
-  ok: 'bg-[color:var(--color-accent-soft)]/40 text-[color:var(--color-accent-ink)]',
-  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-ink-2)]',
+  ok: 'bg-[color:var(--color-primary)]/40 text-[color:var(--color-accent-foreground)]',
+  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-secondary-foreground)]',
   error: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-warn-ink)]',
 }
 const NOTICE =
@@ -187,12 +187,12 @@ export default function IcsExportPanel({ trip }: IcsExportPanelProps) {
           </div>
 
           {isExample && (
-            <p className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+            <p className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
               示例行程：导出的事件标题会带【示例】前缀，描述里注明未含真实预约。
             </p>
           )}
 
-          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]" role="status">
+          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]" role="status">
             {preview.eventCount > 0
               ? `可导出 ${preview.eventCount} 个日历事件${preview.skippedCount > 0 ? `，跳过 ${preview.skippedCount} 个站点` : ''}。`
               : needsFirstDate && parsedFirstDate === null
@@ -303,11 +303,11 @@ export default function IcsExportPanel({ trip }: IcsExportPanelProps) {
             )}
 
             {preview.provisionalDates.length > 0 && (
-              <div className="grid gap-1 rounded-[6px] border-l-[3px] border-l-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]/30 p-3" aria-live="polite">
-                <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">
+              <div className="grid gap-1 rounded-[6px] border-l-[3px] border-l-[color:var(--color-primary)] bg-[color:var(--color-primary)]/30 p-3" aria-live="polite">
+                <p className="m-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">
                   本次导出使用的临时日期（按你选的首日推算）
                 </p>
-                <ul className="m-0 grid list-none gap-1 p-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                <ul className="m-0 grid list-none gap-1 p-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                   {preview.provisionalDates.map((item) => (
                     <li key={item.day}>
                       第 {item.day} 天 · {item.date}
@@ -332,7 +332,7 @@ export default function IcsExportPanel({ trip }: IcsExportPanelProps) {
 
             {preview.skipped.length > 0 && (
               <details className="rounded-[6px] border border-border p-3">
-                <summary className="cursor-pointer text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                <summary className="cursor-pointer text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                   查看被跳过的 {preview.skipped.length} 个站点
                 </summary>
                 <ul className="m-0 mt-2 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground">
@@ -344,7 +344,7 @@ export default function IcsExportPanel({ trip }: IcsExportPanelProps) {
             )}
 
             <div className="grid gap-2">
-              <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+              <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                 文件名：<code className="rounded-[4px] bg-secondary px-1.5 py-0.5 font-mono text-xs">{filename}</code>
               </p>
               {canDownload ? (

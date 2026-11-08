@@ -126,17 +126,17 @@ function pairKey(fromStopId: string, toStopId: string): string {
 const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
 const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
 const TAG =
-  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-primary)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-foreground)]'
 const NOTICE =
-  'm-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+  'm-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
 const BLOCK = 'grid gap-2 rounded-[10px] border border-border bg-background p-4'
 const SECTION_TITLE =
   'm-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]'
 const STOP_BOX = 'grid gap-2 rounded-[6px] border border-border bg-card p-3'
-const STOP_NAME = 'text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+const STOP_NAME = 'text-sm font-semibold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
 const KV_DL = 'm-0 grid gap-x-4 gap-y-1 text-sm'
 const KV_DT = 'shrink-0 text-xs text-muted-foreground'
-const KV_DD = 'm-0 min-w-0 leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+const KV_DD = 'm-0 min-w-0 leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
 const ERROR_STYLE =
   'm-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-3 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]'
 
@@ -337,7 +337,7 @@ export default function MapRefreshPanel({
     <section className={PANEL} aria-label="仅刷新地图">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
             只更新坐标与路线，其余内容原样保留
           </p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
@@ -364,7 +364,7 @@ export default function MapRefreshPanel({
       </p>
 
       <fieldset className={BLOCK} disabled={pending}>
-        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">
+        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-secondary-foreground)]">
           这一天的出行方式
         </legend>
         <p className={HINT} id={modeHintId}>
@@ -379,7 +379,7 @@ export default function MapRefreshPanel({
               checked={mode === 'walking'}
               onChange={() => setMode('walking')}
               aria-describedby={mode === '' ? modeErrorId : undefined}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />
             <span className="text-sm leading-relaxed">步行</span>
           </label>
@@ -391,7 +391,7 @@ export default function MapRefreshPanel({
               checked={mode === 'driving'}
               onChange={() => setMode('driving')}
               aria-describedby={mode === '' ? modeErrorId : undefined}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />
             <span className="text-sm leading-relaxed">驾车</span>
           </label>
@@ -424,7 +424,7 @@ export default function MapRefreshPanel({
 
       {pending ? (
         <p
-          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
           role="status"
         >
           正在向地图服务请求这一天的坐标与路线。等待可以随时停止，停止后旧行程完全不变。
@@ -438,7 +438,7 @@ export default function MapRefreshPanel({
           </p>
           {live.response.unresolved.length > 0 ? (
             <details className="rounded-[6px] border border-border p-3">
-              <summary className="cursor-pointer text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+              <summary className="cursor-pointer text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
                 未解析出位置的站点（{live.response.unresolved.length} 个）
               </summary>
               <ul className="m-0 mt-2 grid list-none gap-1.5 p-0">
@@ -509,11 +509,11 @@ export default function MapRefreshPanel({
           ) : null}
 
           {warnings.length > 0 ? (
-            <div className="grid gap-2 rounded-[6px] border-l-[3px] border-l-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]/30 p-3">
-              <h5 className="m-0 text-sm font-bold text-[color:var(--color-ink-2)]">
+            <div className="grid gap-2 rounded-[6px] border-l-[3px] border-l-[color:var(--color-primary)] bg-[color:var(--color-primary)]/30 p-3">
+              <h5 className="m-0 text-sm font-bold text-[color:var(--color-secondary-foreground)]">
                 本日提醒（{warnings.length} 条）
               </h5>
-              <ul className="m-0 grid list-none gap-1 p-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <ul className="m-0 grid list-none gap-1 p-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 {visibleWarnings.map((warning, index) => (
                   <li key={`warning-${index}`}>{warning}</li>
                 ))}

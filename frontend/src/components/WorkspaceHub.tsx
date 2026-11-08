@@ -146,7 +146,7 @@ export default function WorkspaceHub({
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">本机工作区</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">本机工作区</p>
           <h3 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">工作区与版本</h3>
           <p className="m-0 max-w-[72ch] text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             工作区把 Trip、锚点 / 约束 / 清单等 sidecar 与手工预算快照作为一个完整记录保存；
@@ -232,7 +232,7 @@ export default function WorkspaceHub({
       {notice !== null ? (
         <button
           type="button"
-          className="justify-self-start cursor-pointer border-0 bg-transparent p-0 text-xs text-[color:var(--color-muted)] underline"
+          className="justify-self-start cursor-pointer border-0 bg-transparent p-0 text-xs text-[color:var(--color-muted-foreground)] underline"
           onClick={onDismissNotice}
         >
           关闭提示
@@ -242,7 +242,7 @@ export default function WorkspaceHub({
       <div className="grid min-w-0 gap-3 border-t border-[color:var(--color-line-strong)] pt-3 mt-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">版本库（独立键）</p>
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">版本库（独立键）</p>
             <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               {versionsLoaded
                 ? versions === null

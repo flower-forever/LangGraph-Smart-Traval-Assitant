@@ -295,7 +295,7 @@ export default function DayWeatherPanel({
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-[1_1_260px]">
-            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">独立天气查询</p>
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">独立天气查询</p>
             <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">天气查询</h3>
           </div>
           <Button variant="outline" onClick={handleClose}>
@@ -323,7 +323,7 @@ export default function DayWeatherPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">独立天气查询 · 不写行程</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">独立天气查询 · 不写行程</p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
             第 {day.day} 天{day.date ? ` · ${day.date}` : ''} 天气
           </h3>
@@ -432,7 +432,7 @@ export default function DayWeatherPanel({
       )}
 
       {pending ? (
-        <p className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground" role="status">
+        <p className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-relaxed text-muted-foreground" role="status">
           正在等待天气服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
         </p>
       ) : null}
@@ -532,10 +532,15 @@ function ReportBlock({
       <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1" data-testid="weather-facts">
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">来源</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {report.source.provider}
             {' · '}
-            <a href={report.source.docs_url} target="_blank" rel="noreferrer">
+            <a
+              href={report.source.docs_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[color:var(--color-accent-foreground)] underline underline-offset-2 [text-decoration-thickness:1px]"
+            >
               数据说明
             </a>
             {' · '}
@@ -544,34 +549,34 @@ function ReportBlock({
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">目的地天气时区</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{timezoneText}</dd>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{timezoneText}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">查询日期</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{report.requested_date ?? '未知'}</dd>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{report.requested_date ?? '未知'}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">查询发起时间</dt>
-          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{formatWeatherTimestamp(report.checked_at)}</dd>
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{formatWeatherTimestamp(report.checked_at)}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">本次获取时间</dt>
-          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{formatWeatherTimestamp(report.fetched_at)}</dd>
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{formatWeatherTimestamp(report.fetched_at)}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">来源覆盖</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{coverageText}</dd>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{coverageText}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">请求坐标</dt>
-          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {formatCoord(report.coordinate.requested.lat)},{' '}
             {formatCoord(report.coordinate.requested.lon)}（WGS84，按行程记录查询，未核验）
           </dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">采样网格点</dt>
-          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {report.coordinate.grid
               ? `${formatCoord(report.coordinate.grid.lat)}, ${formatCoord(
                   report.coordinate.grid.lon,
@@ -638,12 +643,12 @@ function Attribution({
         href={attributionUrl ?? OPEN_METEO_ATTRIBUTION_URL}
         target="_blank"
         rel="noreferrer"
-        className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+        className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]"
       >
         Weather data by Open-Meteo.com
       </a>
       {' · '}
-      <a href={docsUrl ?? OPEN_METEO_DOCS_URL} target="_blank" rel="noreferrer" className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]">
+      <a href={docsUrl ?? OPEN_METEO_DOCS_URL} target="_blank" rel="noreferrer" className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]">
         数据源说明
       </a>
       {license ? ` · 许可：${license}` : null}

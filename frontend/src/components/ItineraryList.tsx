@@ -135,7 +135,7 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
         </Button>
       </div>
 
-      {day.summary && <p className="m-0 mb-4 text-sm text-[color:var(--color-ink-2)]">{day.summary}</p>}
+      {day.summary && <p className="m-0 mb-4 text-sm text-[color:var(--color-secondary-foreground)]">{day.summary}</p>}
 
       <div>
         {day.stops.map((stop, i) => {
@@ -147,13 +147,13 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
             <div key={stop.id}>
               <button
                 type="button"
-                className="grid w-full cursor-pointer grid-cols-[74px minmax(0,1fr) auto] gap-3 border-0 border-t border-t-border bg-none py-3 text-left font-[inherit] text-[inherit] hover:bg-secondary focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:-outline-offset-2 max-md:grid-cols-[58px_minmax(0,1fr)] aria-[current=true]:bg-accent-surface aria-[current=true]:shadow-[inset_3px_0_0_var(--color-accent)]"
+                className="grid w-full cursor-pointer grid-cols-[74px minmax(0,1fr) auto] gap-3 border-0 border-t border-t-border bg-none py-3 text-left font-[inherit] text-[inherit] hover:bg-secondary focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-foreground)] focus-visible:-outline-offset-2 max-md:grid-cols-[58px_minmax(0,1fr)] aria-[current=true]:bg-accent-surface aria-[current=true]:shadow-[inset_3px_0_0_var(--color-primary)]"
                 data-testid="stop-row"
                 aria-current={isActive || undefined}
                 aria-expanded={isActive}
                 onClick={() => onSelectStop(isActive ? '' : stop.id)}
               >
-                <span className="pt-0.5 font-mono text-sm tabular-nums text-[color:var(--color-ink-2)]">{displayTime(stop.time)}</span>
+                <span className="pt-0.5 font-mono text-sm tabular-nums text-[color:var(--color-secondary-foreground)]">{displayTime(stop.time)}</span>
                 <span className="min-w-0">
                   <span className="block text-base font-semibold [overflow-wrap:anywhere]">{stop.name}</span>
                   {stop.description && (
@@ -172,7 +172,7 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
                 <div className="mt-3 rounded-[10px] border border-border bg-secondary p-4" data-testid="stop-detail">
                   <h4 className="m-0 mb-2 font-display text-md">{stop.name}</h4>
                   {stop.description
-                    ? <p className="m-0 mb-2 whitespace-pre-line text-sm text-[color:var(--color-ink-2)]">{stop.description}</p>
+                    ? <p className="m-0 mb-2 whitespace-pre-line text-sm text-[color:var(--color-secondary-foreground)]">{stop.description}</p>
                     : <p className="m-0 mb-2 text-xs text-[color:var(--color-faint)]">后端暂未提供这一站点的讲解。</p>}
                   <p className="m-0 flex flex-wrap items-start gap-2 text-sm text-muted-foreground">
                     {stop.address || '地址未知'}
@@ -183,7 +183,14 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
                     <p className="m-0 mt-2 text-xs text-[color:var(--color-faint)]">
                       坐标 WGS84 {stop.location.lat.toFixed(4)}, {stop.location.lng.toFixed(4)}
                       {' · '}
-                      <a href={osmSearchUrl(stop)} target="_blank" rel="noopener noreferrer">在 OpenStreetMap 中查看</a>
+                      <a
+                        href={osmSearchUrl(stop)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[color:var(--color-accent-foreground)] underline underline-offset-2 [text-decoration-thickness:1px]"
+                      >
+                        在 OpenStreetMap 中查看
+                      </a>
                     </p>
                   )}
                   {(() => {
@@ -197,9 +204,9 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
                         aria-label={`景点资料卡：${card.name}`}
                       >
                         <p className="m-0 mb-1 text-sm font-semibold text-foreground">景点资料卡 · 未核实</p>
-                        <p className="m-0 mb-1 text-sm text-[color:var(--color-ink-2)]">介绍：{card.intro.trim() || '未知'}</p>
-                        <p className="m-0 mb-1 text-sm text-[color:var(--color-ink-2)]">开放时间：{card.openingHours.trim() || '未知'}</p>
-                        <p className="m-0 mb-1 text-sm text-[color:var(--color-ink-2)]">门票：{card.ticket.trim() || '未知'}</p>
+                        <p className="m-0 mb-1 text-sm text-[color:var(--color-secondary-foreground)]">介绍：{card.intro.trim() || '未知'}</p>
+                        <p className="m-0 mb-1 text-sm text-[color:var(--color-secondary-foreground)]">开放时间：{card.openingHours.trim() || '未知'}</p>
+                        <p className="m-0 mb-1 text-sm text-[color:var(--color-secondary-foreground)]">门票：{card.ticket.trim() || '未知'}</p>
                         <p className="m-0 text-xs text-muted-foreground">
                           按名称匹配，请自行核对
                           {card.provenance.intro?.source ? ` · 来源：${card.provenance.intro.source}` : ''}

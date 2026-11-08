@@ -163,7 +163,7 @@ export default function SessionResumePanel({
       aria-label="本机工作进度留存"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">在此浏览器保留工作进度</p>
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">在此浏览器保留工作进度</p>
         {!enabled && (
           <Button type="button" onClick={onEnable}>
             在此浏览器保留工作进度

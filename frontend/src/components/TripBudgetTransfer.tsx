@@ -493,7 +493,7 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
       aria-labelledby={headingId}
       data-testid="budget-transfer"
     >
-      <h4 className="m-0 font-display text-sm font-bold leading-[1.4] text-[color:var(--color-ink-2)]" id={headingId}>费用文件备份与导入</h4>
+      <h4 className="m-0 font-display text-sm font-bold leading-[1.4] text-[color:var(--color-secondary-foreground)]" id={headingId}>费用文件备份与导入</h4>
       <Button
         type="button"
         ref={openToggleRef}
@@ -507,7 +507,7 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
 
       {open && (
         <div className="flex min-w-0 flex-col gap-4 rounded-[10px] border border-border bg-background p-4">
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
             费用草稿只在本页内存里：刷新页面会丢失。可以先把草稿下载成一份费用备份文件，
             之后再用「选择文件」导入并确认替换来恢复。这与行程 JSON 备份是两个独立文件，互不通用。
           </p>
@@ -534,19 +534,19 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
                 <h6 className="m-0 font-display text-sm font-bold text-foreground [overflow-wrap:anywhere]" id={exportTextId}>
                   预览：{liveExportPreview.filename}
                 </h6>
-                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                   约 {formatBytes(liveExportPreview.bytes)}（UTF-8 字节） · 费用 {exportSummary.rowCount} 项
                   {exportSummary.knownTotalText !== null
                     ? ` · 已填合法金额合计 ${exportSummary.knownTotalText} 元`
                     : ' · 没有可合计的合法金额'}
                 </p>
                 {liveExportPreview.trip !== null ? (
-                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-export-owner">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" data-testid="budget-export-owner">
                     备份自述的原行程：{liveExportPreview.trip.title === '' ? '未命名' : liveExportPreview.trip.title}
                     （这是导出时的自述记录，不代表它属于当前行程版本）
                   </p>
                 ) : (
-                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-export-owner">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" data-testid="budget-export-owner">
                     这份草稿还没有绑定行程版本，备份里不记录行程归属。
                   </p>
                 )}
@@ -594,7 +594,7 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
           <section className="flex min-w-0 flex-col gap-2" aria-label="从费用备份文件导入">
             <h5 className="m-0 font-display text-sm font-bold text-foreground">从费用备份文件导入</h5>
             <div className="grid min-w-0 gap-1">
-              <label className="text-sm font-semibold text-[color:var(--color-ink-2)]" htmlFor={fileId}>选择费用备份文件（.budget.json）</label>
+              <label className="text-sm font-semibold text-[color:var(--color-secondary-foreground)]" htmlFor={fileId}>选择费用备份文件（.budget.json）</label>
               <input
                 id={fileId}
                 ref={fileInputRef}
@@ -611,28 +611,28 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
               </p>
             </div>
 
-            {reading && <p className="m-0 text-sm text-[color:var(--color-muted)]" role="status">正在读取文件…</p>}
+            {reading && <p className="m-0 text-sm text-[color:var(--color-muted-foreground)]" role="status">正在读取文件…</p>}
 
             {liveImportPreview && importSummary && importSummary.ok && (
               <div className="flex min-w-0 flex-col gap-2 rounded-[10px] border border-border bg-card p-3" data-testid="budget-import-preview">
                 <h6 className="m-0 font-display text-sm font-bold text-foreground">导入预览</h6>
-                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                   文件约 {formatBytes(liveImportPreview.bytes)} · 费用 {importSummary.rowCount} 项
                   {importSummary.knownTotalText !== null
                     ? ` · 已填合法金额合计 ${importSummary.knownTotalText} 元`
                     : ' · 没有可合计的合法金额'}
                 </p>
                 {liveImportPreview.fileTrip !== null ? (
-                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-file-trip">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" data-testid="budget-import-file-trip">
                     文件自述的行程：{liveImportPreview.fileTrip.title === '' ? '未命名' : liveImportPreview.fileTrip.title}
                     （只是文件里的记录，不能证明它真的来自这份行程）
                   </p>
                 ) : (
-                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-file-trip">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" data-testid="budget-import-file-trip">
                     文件里没有记录行程归属。
                   </p>
                 )}
-                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-target">
+                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" data-testid="budget-import-target">
                   应用目标：当前行程「{trip.title}」。导入只替换费用草稿，不恢复行程本身。
                 </p>
                 {liveImportPreview.draft.rows.length === 0 && liveImportPreview.draft.budgetRaw === '' ? (
@@ -659,7 +659,7 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
                     )}
                   </>
                 )}
-                <ul className="m-0 flex max-h-56 list-disc flex-col gap-1 overflow-y-auto pl-[1.1em] text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-rows">
+                <ul className="m-0 flex max-h-56 list-disc flex-col gap-1 overflow-y-auto pl-[1.1em] text-xs leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]" data-testid="budget-import-rows">
                   {liveImportPreview.draft.rows.map((row) => (
                     <li key={row.id} className="[overflow-wrap:anywhere]">
                       {row.name.trim() === '' ? '未命名' : row.name}（{CATEGORY_LABELS[row.category] ?? '其他'}）

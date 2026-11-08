@@ -128,10 +128,10 @@ const FIELD_LABEL = 'text-sm leading-relaxed text-muted-foreground'
 const CONTROL = 'min-h-11 w-full'
 const BOX = 'grid gap-2 rounded-[10px] border border-border bg-background p-4'
 const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
-const ISSUE_H = 'border-l-[3px] border-l-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]'
+const ISSUE_H = 'border-l-[3px] border-l-[color:var(--color-primary)] bg-[color:var(--color-primary)]'
 const ISSUE_U = 'border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)]'
 const KIND_BADGE =
-  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-primary)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-accent-foreground)]'
 
 function formFromItem(item: ConstraintItemV1): ConstraintFormState {
   return {
@@ -589,7 +589,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
     <section className={PANEL} aria-labelledby={`${ids}-heading`}>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
             F2 · 必去与预约
           </p>
           <h2
@@ -611,7 +611,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
 
       <div className={BOX}>
         <p
-          className="m-0 text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+          className="m-0 text-sm font-semibold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]"
           data-testid="constraints-verdict"
           aria-live="polite"
         >
@@ -629,7 +629,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
           {globalIssues.map((issue, index) => (
             <li
               key={`${issue.code}-${index}`}
-              className={`grid gap-1 rounded-[6px] p-2.5 pl-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] ${issueTone(issue)}`}
+              className={`grid gap-1 rounded-[6px] p-2.5 pl-3 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] ${issueTone(issue)}`}
             >
               <span className="inline-flex w-fit items-center rounded-full border border-border bg-card px-2 py-0.5 text-xs font-semibold">
                 {issue.severity}
@@ -652,7 +652,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                 setNotice('确认只在本次候选 / 工作区 / epoch 下有效；任何修改都会让它失效。')
               }}
             />
-            <span className="text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+            <span className="text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
               我确认仍采用含未核实时间方案（绑定当前工作区与候选，任何修改后失效）
             </span>
           </label>
@@ -694,7 +694,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                 key={item.id}
                 className={
                   selectedId === item.id
-                    ? 'grid gap-1.5 rounded-[10px] border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]/40 p-3'
+                    ? 'grid gap-1.5 rounded-[10px] border border-[color:var(--color-primary)] bg-[color:var(--color-primary)]/40 p-3'
                     : 'grid gap-1.5 rounded-[10px] border border-border bg-background p-3'
                 }
               >
@@ -707,7 +707,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                     onClick={() => handleSelect(item.id)}
                   >
                     <span className={KIND_BADGE}>{KIND_LABEL[item.kind]}</span>
-                    <span className="min-w-0 break-words text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                    <span className="min-w-0 break-words text-sm font-semibold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                       {item.title}
                     </span>
                   </button>
@@ -738,7 +738,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                   {describeItem(item)}
                 </p>
                 {item.notes ? (
-                  <p className="m-0 text-xs leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                  <p className="m-0 text-xs leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                     备注：{item.notes}
                   </p>
                 ) : null}
@@ -747,7 +747,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                     {issues.map((issue, index) => (
                       <li
                         key={`${issue.code}-${index}`}
-                        className={`grid gap-1 rounded-[6px] p-2.5 pl-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] ${issueTone(issue)}`}
+                        className={`grid gap-1 rounded-[6px] p-2.5 pl-3 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] ${issueTone(issue)}`}
                       >
                         <span className="inline-flex w-fit items-center rounded-full border border-border bg-card px-2 py-0.5 text-xs font-semibold">
                           {issue.severity}
@@ -772,7 +772,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
           }}
         >
           <fieldset className={BOX}>
-            <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">
+            <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-secondary-foreground)]">
               {form.id === null ? '添加约束' : `编辑约束「${form.title || '未命名'}」`}
             </legend>
             <p className={HINT}>{KIND_HINT[form.kind]}</p>
@@ -973,7 +973,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
 
       {ticket ? (
         <p
-          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] bg-secondary pl-3 font-mono text-xs leading-relaxed tabular-nums text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]"
+          className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] bg-secondary pl-3 font-mono text-xs leading-relaxed tabular-nums text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]"
           data-testid="constraints-ticket"
         >
           已生成 apply ticket：候选 {ticket.candidate.short} · epoch {ticket.epoch} ·
@@ -988,7 +988,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
           </p>
         ) : null}
         {error ? (
-          <p className="m-0 text-sm font-semibold leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm font-semibold leading-relaxed text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
             {error}
           </p>
         ) : null}

@@ -128,21 +128,17 @@ frontend/
 ├── src/
 │   ├── main.tsx               # 入口
 │   ├── App.tsx                # 页面编排：示例加载、规划/停止等待、日切换、恢复保存、站点联动、本地编辑与 AI 单日调整接线
-│   ├── app.css                # 样式（引用 ../tokens.css 设计令牌）
-│   ├── tokens.css             # 设计令牌（OKLCH 颜色 + 字体 + 4pt 间距）
+│   ├── app.css                # 全局样式（Leaflet 覆写 + 基础；引 src/theme.css 设计令牌）
+│   ├── theme.css              # 设计令牌唯一权威（OKLCH 语义变量 + 字体 + 4pt 间距 + Tailwind 桥接）
 │   ├── components/
 │   │   ├── PlanForm.tsx       # 规划表单（校验、loading、停止等待）
 │   │   ├── ItineraryList.tsx  # 逐日行程清单（逐点讲解、复制为文本）
 │   │   ├── TripMap.tsx        # Leaflet 地图（站点、路线、图例、空态）
 │   │   ├── TripDraftEditor.tsx # 本地行程草稿编辑器（受控组件，内存草稿）
-│   │   ├── tripDraftEditor.css # 草稿编辑器样式
 │   │   ├── DayReplanPanel.tsx # AI 单日调整面板（指令、模式、可选人数、候选对比、应用/关闭）
-│   │   ├── dayReplanPanel.css # 单日调整面板样式
 │   │   ├── DayWeatherPanel.tsx # 本日天气面板（记录坐标、日期、显式查询、停止等待、来源署名）
-│   │   ├── dayWeatherPanel.css # 天气面板样式（引用 tokens.css，不写死色值）
 │   │   ├── SavedTripsPanel.tsx # 本地保存 / 恢复 / 删除 / 撤销 / 清除
 │   │   ├── TripTransferPanel.tsx # 行程备份导出、文件导入预览、同 ID 覆盖确认
-│   │   ├── tripTransfer.css   # 备份面板样式（引用 tokens.css，不写死色值）
 │   │   └── IcsExportPanel.tsx # 日历导出（首日选择、跳过与导入提示）
 │   └── lib/
 │       ├── api.ts             # 后端客户端（/api/trips/example、/api/trips/plan）

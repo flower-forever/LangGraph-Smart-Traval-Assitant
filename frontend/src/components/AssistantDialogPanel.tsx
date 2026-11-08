@@ -470,7 +470,7 @@ export default function AssistantDialogPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">用一句话说想改哪里</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">用一句话说想改哪里</p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">AI 行程助手</h3>
           <p className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
             当前目标：第 {currentDay === null ? ASSISTANT_UNKNOWN_TEXT : currentDay} 天
@@ -550,7 +550,7 @@ export default function AssistantDialogPanel({
 
       {proposalStale ? (
         <div
-          className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)]"
+          className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-foreground)]"
           role="status"
         >
           <p className="m-0">提案已失效，请重新生成：行程在生成之后已经变化，旧提案不会再被应用。</p>
@@ -566,7 +566,7 @@ export default function AssistantDialogPanel({
 
       {proposal !== null && proposal.status === 'invalid' ? (
         <div
-          className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)]"
+          className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-foreground)]"
           role="status"
         >
           <p className="m-0">
@@ -584,13 +584,13 @@ export default function AssistantDialogPanel({
 
       {proposal !== null ? (
         <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-background p-4" aria-label="建议卡片">
-          <p className="m-0 font-display text-base font-bold text-[color:var(--color-accent-ink)]">{INTENT_LABEL[proposal.intent]}</p>
+          <p className="m-0 font-display text-base font-bold text-[color:var(--color-accent-foreground)]">{INTENT_LABEL[proposal.intent]}</p>
           <p className="m-0 text-sm leading-relaxed [overflow-wrap:anywhere]">{proposal.reason}</p>
 
           {assistantStopMatchNotes(proposal).map((note) => (
             <p
               key={`${note.name}-${note.day ?? 'unknown'}`}
-              className="m-0 text-sm leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]"
+              className="m-0 text-sm leading-relaxed text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]"
               data-testid="assistant-stop-match"
             >
               按「{note.typed}」匹配到{note.day === null ? '' : `第 ${note.day} 天的`}「{note.name}」；这是按名称匹配的结果，请核对后再应用。
@@ -660,7 +660,7 @@ export default function AssistantDialogPanel({
                 ))}
               </ul>
               {hardConflicts.length > 0 ? (
-                <p className="m-0 mt-2 text-xs font-semibold leading-relaxed text-[color:var(--color-accent-ink)]">
+                <p className="m-0 mt-2 text-xs font-semibold leading-relaxed text-[color:var(--color-accent-foreground)]">
                   存在 H 级硬冲突：不能应用，也没有确认绕过入口；请调整指令或先处理约束。
                 </p>
               ) : null}
@@ -713,7 +713,7 @@ export default function AssistantDialogPanel({
               </ul>
               <p className="m-0 text-xs leading-relaxed text-muted-foreground">候选里的时刻与地点都还没有核实；应用前请自己核对。</p>
               {replanStale ? (
-                <div className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)]" role="status">
+                <div className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-foreground)]" role="status">
                   <p className="m-0">
                     这条重排候选已经失效：候选生成之后行程在别处改过了（版本没变、只有内容变了也算）。
                     请重新生成建议。

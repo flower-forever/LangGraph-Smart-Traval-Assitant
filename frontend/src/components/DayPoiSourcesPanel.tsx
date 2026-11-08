@@ -203,11 +203,11 @@ export function collectPrefillFromPoiCandidate(
 const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
 const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
 const TAG =
-  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-primary)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-foreground)]'
 const TAG_UNCONFIRMED =
   'inline-flex shrink-0 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground'
 const NOTICE =
-  'm-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+  'm-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
 const RESULT_BOX = 'grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4'
 
 export default function DayPoiSourcesPanel({
@@ -410,7 +410,7 @@ export default function DayPoiSourcesPanel({
       <section className={PANEL} aria-label="本日公开资料候选">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-[1_1_260px]">
-            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
               独立资料查询
             </p>
             <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
@@ -443,7 +443,7 @@ export default function DayPoiSourcesPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
             独立资料查询 · 不写行程
           </p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
@@ -527,7 +527,7 @@ export default function DayPoiSourcesPanel({
 
       {pending ? (
         <p
-          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
           role="status"
         >
           正在等待公开资料服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
@@ -623,38 +623,38 @@ function ReportBlock({
       <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1">
         <div>
           <dt className="text-xs text-muted-foreground">数据来源</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {report.source.provider}（{report.source.data_source}）
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">查询发起时间</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {formatPoiTimestamp(report.checked_at)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">本次获取时间</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {formatPoiTimestamp(report.fetched_at)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">请求坐标</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {formatPoiCoordinate(report.requested?.lat ?? Number.NaN)},{' '}
             {formatPoiCoordinate(report.requested?.lon ?? Number.NaN)}（WGS84，按行程记录查询，未核验）
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">查询半径</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {formatPoiDistance(report.radius_m)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">候选身份</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             全部为公开资料候选，身份未确认（unconfirmed）
           </dd>
         </div>
@@ -680,7 +680,7 @@ function CandidateItem({
 }) {
   return (
     <li className="grid min-w-0 gap-1.5 rounded-[6px] border border-border bg-card p-3">
-      <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+      <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
         {candidate.name ?? '（来源未提供名称）'}
         <span className="text-xs font-normal text-muted-foreground">
           距离约 {formatPoiDistance(candidate.distance_m)}
@@ -688,7 +688,7 @@ function CandidateItem({
       </p>
       <p className="m-0 flex flex-wrap items-center gap-2 text-sm leading-relaxed">
         <a
-          className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+          className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]"
           href={osmObjectUrl(candidate.element_type, candidate.element_id)}
           target="_blank"
           rel="noopener noreferrer"
@@ -700,31 +700,31 @@ function CandidateItem({
       <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1">
         <div>
           <dt className="text-xs text-muted-foreground">opening_hours</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {tagFieldText(candidate.opening_hours)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">fee</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {tagFieldText(candidate.fee)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">charge</dt>
-          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {tagFieldText(candidate.charge)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">来源获取时间</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {formatPoiTimestamp(candidate.retrieved_at)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">对象编辑时间</dt>
-          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             {candidate.source_updated_at
               ? formatPoiTimestamp(candidate.source_updated_at)
               : '未知（来源未提供）'}
@@ -763,7 +763,7 @@ function Attribution({ report }: { report: PoiSourceReport | null }) {
     >
       数据 ©{' '}
       <a
-        className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+        className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]"
         href={report?.source.attribution_url ?? 'https://www.openstreetmap.org/copyright'}
         target="_blank"
         rel="noopener noreferrer"
@@ -772,7 +772,7 @@ function Attribution({ report }: { report: PoiSourceReport | null }) {
       </a>
       {' · '}
       <a
-        className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+        className="text-[color:var(--color-accent-foreground)] underline-offset-2 [text-decoration-thickness:1px]"
         href={report?.source.docs_url ?? 'https://wiki.openstreetmap.org/wiki/Overpass_API'}
         target="_blank"
         rel="noopener noreferrer"

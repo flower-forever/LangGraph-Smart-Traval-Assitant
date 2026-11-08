@@ -19,9 +19,9 @@
 | 主题承接 | `src/theme.css` | 新文件；`tokens.css` 一字未动（W4 才退役） |
 | 类型依赖 | `@types/node` 22.20.5 | `vite.config.ts` 用 `node:url` 拼绝对别名所需（与运行时 Node 22 对齐） |
 
-### 1.1 Tailwind 分层策略（重要）
+### 1.1 Tailwind 分层策略（S1 → W4 终态）
 
-`app.css` 当前只引入 `theme` + `utilities` 两层，**暂不引入 preflight**：
+S1 时 `app.css` 只引入 `theme` + `utilities` 两层，**暂不引入 preflight**：
 
 ```css
 @layer theme, base, components, utilities;
@@ -32,7 +32,7 @@
 ```
 
 原因：preflight 会重置标题字号、段落间距、列表缩进与表单外观，在面板迁移完成前必然改变现有渲染结果，违反 S1「零面板改动」。
-**W4 动作**：全局 shell 迁移完成后加回 preflight，并用同口径截图 + computed-style 快照复核。
+**W4 终态（已执行）**：全局 shell 与 PlanForm 迁移完成后 preflight 已加回（`@import "tailwindcss/preflight.css" layer(base)`，三层齐备）；同口径前后对比（computed-style 快照 + 截图 + 面板完好性探针）确认无面板布局/交互回归，2 处真实回归（裸链接失下划线、Leaflet 归属链接）已修复；证据与逐项结论见 §7 W4。
 
 另一条迁移约束：`app.css` 与各面板 CSS 目前**未分层**，其规则优先级高于 Tailwind utilities。因此每波迁移必须**删除/改写对应面板的旧 CSS**，不能只靠工具类覆盖；否则样式会静默失效。已在映射表与波次口径中登记。
 
@@ -48,7 +48,9 @@
 
 ## 2. 设计 tokens
 
-唯一来源仍是 `frontend/tokens.css`（W4 前只读）。`src/theme.css` 只做 **语义变量 + Tailwind 桥接**，不复制类名。
+> W4 终态：`frontend/tokens.css` 已退役删除，`src/theme.css` 是**唯一 token 权威**（语义变量 + 设计刻度 + Tailwind 桥接）；退役 grep 证据见 §7 W4。下表保留 S1 原始记录（当时的 token 名），现值以 theme.css 为准。
+
+S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 **语义变量 + Tailwind 桥接**。
 
 ### 2.1 色彩层次
 
@@ -372,3 +374,39 @@
 - 浏览器证据：dev-stub + Vite dev（挂 `@tailwindcss/vite`，复用 W3a 修复版脚本改 W3b 场景）+ 本机 Chromium，全程 loopback 离线、图片请求全 mock；22 张截图（后端状态三态含重新检测 → 行程备份导出 → Markdown 预览 → ICS 展开+下载 → 离线页预览+下载 → 锚点展开→编辑器（填名+起点勾选）→预览提案 → 约束展开→保存→应用（revision 证据）→ 网页搜索表单→结果 → POI 查询展开→候选 → 地图刷新选步行→预览 → 375 窄屏 → 1280 收尾）。桌面与窄屏均无横向滚动；Leaflet 地图容器正常（地图内部样式零改动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w3b-shots\`（w3b-01…w3b-23，22 张）。
 
 **遗留**：`.btn*/.field*/.req`（PlanForm + App shell）、`.saved-offline` / `.saved-offline-note` / `.trip-restored-note`、`.plan-cancel-status/.plan-cancel-note`、`.mode-option/.mode-toggle`、`.edit-entry` 入口卡（本波面板的「查资料/查网页资料」入口按钮仍在 App.tsx entry 卡内）、`.wsh-*` 死类（App.tsx 约 L3326-3329 仍引用 `wsh-tools` / `wsh-tools-head` / `wsh-eyebrow`，样式本体已随 W3a 删除 WorkspaceHub.css 而消失，W4 改 Tailwind 等价或删除死类名）——全部 W4 退役。约束面板「查看约束 X」选中项高亮与 ICS 自定义时区哨兵流程等交互行为均保持原样。
+
+### W4 · 全局 shell + PlanForm + tokens.css 退役 + preflight 加回 + hallmark 终审（2026-11-09 完成，待 PM 验收）
+
+**迁移范围**（§5 W4 名单全量）：App.tsx 全局 shell（header/brand/backend 胶囊/topbar 进度条/入口卡/警示条族/错误横幅/骨架屏/保存与恢复提示/trip source 标签/day-nav 日 tab/trip 布局与地图外框/行程工具组/transfer 槽位/footer/skip link）+ PlanForm 表单（卡面/三列栅格/字段标签/出行方式 radio/动作行/加载态）+ TripMap 渲染层外框（标题栏/地图框/状态浮层/图例；`.map-status`/`.map-status-note`/`.legend-*`/`.stop-dot*` 等测试耦合类名全部保留）。业务逻辑、数据流、文案红线零变化；`data-testid`/role/aria/按钮可访问名全量保留（含 `edit-entry` 等 shell 定位 testid）。
+
+**W3b 遗留 kill list 全清**（grep 零命中，逐项核对）：`.btn*/.field*/.req`、`.saved-offline`/`.saved-offline-note`/`.trip-restored-note`、`.plan-cancel-status`/`.plan-cancel-note`、`.mode-option`/`.mode-toggle`、`.edit-entry` 样式类、`.wsh-tools`/`.wsh-tools-head`/`.wsh-eyebrow`、`.empty-panel`/`.text-note`（W2 登记）。代码内仅存的字符串命中均为注释登记或 `data-testid`（行为红线保留）。
+
+**tokens.css 退役**：文件删除（git `D`），全部引用已迁 theme.css 语义变量。grep 证据（PCRE2 逐文件扫描，排除 theme.css 承接定义）：旧变量 `--color-paper` / 裸 `--color-ink` / 裸 `--color-accent` 在 src 内 **0 命中**；`tokens.css` 文件名字符串仅 3 处退役登记注释（app.css:6、theme.css:8、uiPolish.test.ts:13）。theme.css 为唯一 token 权威；W2 登记的 select/checkbox 内联 SVG data-URI 硬编码 hex 已带「从 theme.css 权威值同步」注释标记（无法用 CSS 变量的技术限制）。uiPolish.test.ts 的 token() 断言口径随本波修正（`color-muted-foreground` → `muted-foreground`：字面 oklch 值只存在于 :root 变量与 @theme static，@theme inline 桥接是 var() 引用）。
+
+**preflight 加回（§1.1 决策执行）+ 同口径前后对比**：`@import "tailwindcss/preflight.css" layer(base)` 加回 app.css（三层：preflight/theme/utilities），自有基础重置收敛为 preflight 不覆盖的页面骨架与品牌口径（盒模型兜底/骨架/表单字体继承/focus/选区/reduced-motion）。对比方法：W3b 截图基建（挂 @tailwindcss/vite）同口径跑两遍磁盘真实状态（before：无 preflight；after：加回），各采 computed-style 快照（h1/h3/p/ul/a/button/input/select/img/iframe/body/summary/textarea/details 的 margin/padding/border/font/display 等属性）+ 面板完好性探针（header 边框/PlanForm 显示与边框/输入高度/地图容器宽/状态浮层 pointer-events/tab 命中区/按钮高度圆角/横向滚动）+ 交互闸门（校验 alert 数/skip-link 聚焦可见/375 无横滚）。结果：探针与交互闸门 **逐项全等 PASS**；快照差异仅 9 项且全部属预期内元素级重置——标题/段落/列表/链接的 `border-top-style` 声明化为 solid 0px、链接 UA 蓝色改继承墨色、ghost 按钮 UA `2px outset` 边框与 1px padding 清零、`appearance: button` 规范化。发现并修复 2 处真实回归：(1) 应用内链接下划线回归共 **10 处**——preflight 的 `a{text-decoration:inherit}` 使原本靠 UA 下划线的全部裸链接失去下划线：3 处逐处补朱砂色 + underline 工具类（DayWeatherPanel「数据说明」、ItineraryList「在 OpenStreetMap 中查看」），其余 7 处（DayWeatherPanel Attribution×2、DayPoiSourcesPanel×3、WebSourcesPanel×2，均已有 `underline-offset-2`）由 app.css base 层一行恢复规则 `a { text-decoration: underline; }` 统一恢复（独立验收指出 3 处逐处修后同类回归漏 7 处，采纳其最小方案）；(2) Leaflet 归属链接 `a{text-decoration:inherit}` 压掉 UA 下划线（leaflet.css 未分层压不住 preflight）——app.css 增补 `.leaflet-control-attribution a` 恢复规则（地图内部零迁移纪律的边界内修复）。**期间发现并否决了一次假零差异**：内存 transform 注入 preflight 的方案因 @tailwindcss/vite 按磁盘内容编译而静默失效（原始 witness run：transform 命中 1 次但编译产物无 preflight 规则、裸 ul=disc；返修后剥离测试复现机制并重导出真实记录），改为磁盘真实状态两遍跑，确保对比口径成立。结论：preflight 加回成立，无面板布局/交互破坏。
+
+**A 清单终态（hallmark 终审，§3.1 逐条）**：
+
+| # | 终态 | 说明 |
+|---|---|---|
+| A1 | 已修 | W1-W3 各面板首屏一句 + 说明折叠；W4 shell 入口卡同样单句帮助 + 面板内 role=note 保留 |
+| A2 | 已修 | 各波逐条修正（W2 草稿拼接为正常排版核对不改；W3a 候选池空态合并、会话恢复同名核对不改；W3b 离线导出 4→3 条） |
+| A3 | 已修 | PanelHeader 口径全量落地：eyebrow（xs/accent-foreground/tracking）+ display 标题 + meta 行 + 状态 badge；站点详情截图核对 5 级强度分明 |
+| A4 | 已修 | W3a/W3b 面板一层 border + 凹面底；W4 shell 入口卡/警示条单层描边 |
+| A5 | 已修 | W3a 候选池空态收敛；W4 实测空态提示高度 **41px**（≤160px 口径） |
+| A6 | 已修 | Button variants 全量：default 主操作/outline、secondary 次/ghost 取消/destructive 危险；disabled 灰底明确 |
+| A7 | 已修 | 天气 dd/时间/坐标/金额 mono+tabular-nums（W2 起逐波）；W4 复核天气面板数字排版完好 |
+| A8 | 遗留（行为红线） | 入口名与面板标题不一致（「出行清单」→面板「出行清单与模板」等）——入口名是测试可访问名与用户习惯锚点，行为零变化红线优先，登记不修 |
+| A9 | 已修 | 说明段落 max-w-[72ch] 全量；W4 实测主线最大段落行盒 1198px 属表单/地图宽元素，说明文字均在 72ch 内 |
+| A10 | 已修 | 状态提示统一 Panel 头 badge（天气「已返回」等）；role=status/alert 语义保留 |
+| A11 | 已修 | W2 radio/checkbox min-h-6/size-4；W4 实测 4 个 radio 命中区全部 ≥24px 且 label 包裹整行，0 个裸小控件 |
+| A12 | 部分修，余项登记 | PanelHeader 骨架统一（eyebrow/title/status/collapse）；收起按钮文案仍有「收起/关闭提示/收进…」变体——统一为单一文案属文案红线（测试断言沿用），登记遗留随 S9 收尾审计裁决 |
+
+**验证证据**（2026-11-09，Node v22.21.1）：
+
+- `vitest` 全量（排除禁触探针 `--exclude '**/_indep-probe-0400.test.js'`）：本波三轮。第一轮 106 文件 / 2291 用例 2290 过（uiPolish token 口径 + CandidatePoolPanel 压测超时，修正后）；第二轮（preflight 加回 + 链接修复后）106 文件 / 2291 用例全部通过；第三轮（终稿复核，注释收尾后）再次 106 文件 / 2291 用例全部通过，0 失败 0 跳过，flake 白名单成员全程全绿，无需隔离复跑。
+- `typecheck`：`tsc -b --force` 通过（check-source-paths OK，198 文件）。
+- `build`：`vite build` 通过（dist CSS ≈ 63.9 kB / JS ≈ 1332.9 kB；W3b 71.79 kB → 再降 ≈ 7.9 kB，tokens.css 与 shell 旧规则退役，preflight 增量部分抵消）。
+- 浏览器证据：dev-stub + Vite dev（挂 `@tailwindcss/vite`）+ 本机 Chromium，全程 loopback 离线、瓦片 mock；截图目录（不进仓库）`C:\Users\86133\AppData\Local\Temp\opencode\p3-w4-shots\`：preflight 前后各 6 张（主线顶部/表单校验/表单提交/skip-link/375 窄屏/1280 全页，pre/post 成对）+ hallmark 终审补充 5 张（站点详情层级/天气结果/候选池空态/命中区/375 复核）+ preflight-diff.json（磁盘两遍跑口径的正面对比记录）/ preflight-impact-raw.json（注入法失效机制的原始记录——返修后以剥离测试忠实重导出，替代此前误拷贝失真文件）/ before-snapshot.json。桌面与窄屏均无横向滚动；Leaflet 地图容器、弹窗、站点圆点正常（地图内部样式零改动，归属链接恢复规则除外）。
+
+**遗留（交接 S7c/S8/S9）**：(1) `.stop-row` 仍为 button+data-testid（W2 登记 role=listitem 改造未做，属行为面改动）；(2) A12 收起文案变体、A8 入口名差异（文案红线，登记待 PM/S9 裁决）；(3) `data-testid="edit-entry"` 等 shell testid 保留（可访问名定位已可用，退役计划随 S9）；(4) JS bundle 1332.9 kB 超 500 kB 警告（代码分割不属 UI 迁移范围，登记不处理）。

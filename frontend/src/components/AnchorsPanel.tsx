@@ -267,7 +267,7 @@ export default function AnchorsPanel({
     <section className={PANEL} aria-label="住宿与抵离锚点" data-testid="anchors-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">
             F1 · 住宿与抵离
           </p>
           <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
@@ -275,7 +275,7 @@ export default function AnchorsPanel({
           </h3>
           <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {record.trip.title}
-            <span className="inline-flex items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]">
+            <span className="inline-flex items-center rounded-full bg-[color:var(--color-primary)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-foreground)]">
               未接入 App · 受控面板
             </span>
           </p>
@@ -289,7 +289,7 @@ export default function AnchorsPanel({
       </p>
 
       <fieldset className={SECTION_BOX}>
-        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">住宿（手工填写）</legend>
+        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-secondary-foreground)]">住宿（手工填写）</legend>
         {stay === null ? (
           <Button variant="outline" onClick={() => {
             setForm((current) => ({
@@ -372,14 +372,14 @@ export default function AnchorsPanel({
       </fieldset>
 
       <fieldset className={SECTION_BOX}>
-        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">每日起点 / 终点</legend>
+        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-secondary-foreground)]">每日起点 / 终点</legend>
         <p className="m-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
           引用已有站点只 link，不复制、不改原 id；手工地点若关联住宿，应用后会生成独立酒店停靠 id。
           同一酒店做起点和终点会得到两个不同 stop id，跨天也不会复用。
         </p>
         {record.trip.days.map((day) => (
           <div className="grid gap-2 rounded-[6px] border border-dashed border-border bg-card p-3" key={day.day} data-testid={`anchors-day-${day.day}`}>
-            <h4 className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-ink-2)]">
+            <h4 className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-secondary-foreground)]">
               第 {day.day} 天{day.date ? ` · ${day.date}` : ''}
               {day.stops.length === 0 ? '（当天没有站点）' : ''}
             </h4>
@@ -452,7 +452,7 @@ export default function AnchorsPanel({
       </fieldset>
 
       <fieldset className={SECTION_BOX}>
-        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">抵达 / 离开（机场 / 车站）</legend>
+        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-secondary-foreground)]">抵达 / 离开（机场 / 车站）</legend>
         <div className="grid gap-2">
           <label className="flex min-h-11 items-center gap-2.5">
             <Checkbox
@@ -521,7 +521,7 @@ export default function AnchorsPanel({
       ) : null}
       {status ? (
         <p
-          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] bg-secondary pl-3 text-sm leading-relaxed text-muted-foreground"
+          className="m-0 border-l-[3px] border-l-[color:var(--color-primary)] bg-secondary pl-3 text-sm leading-relaxed text-muted-foreground"
           role="status"
           data-testid="anchors-status"
         >
@@ -586,7 +586,7 @@ function DayAnchorEditor({
       className="grid gap-3 rounded-[10px] border border-border bg-background p-4"
       data-testid={`anchors-editor-${title}`}
     >
-      <p className="m-0 text-sm font-bold text-[color:var(--color-ink-2)]">{title}</p>
+      <p className="m-0 text-sm font-bold text-[color:var(--color-secondary-foreground)]">{title}</p>
       <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-3 max-md:grid-cols-1">
         <label className="grid gap-1.5" htmlFor={kindId}>
           <span className={FIELD_LABEL}>类型</span>
@@ -806,7 +806,7 @@ function PreviewBlock({ proposal }: { proposal: AnchorsProposal }) {
         <h4 className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]">
           提案预览（尚未应用）
         </h4>
-        <span className="inline-flex items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]">
+        <span className="inline-flex items-center rounded-full bg-[color:var(--color-primary)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-foreground)]">
           owner revision {proposal.baseRevision}
         </span>
       </div>
@@ -817,7 +817,7 @@ function PreviewBlock({ proposal }: { proposal: AnchorsProposal }) {
 
       {proposal.occurrences.length > 0 ? (
         <ul
-          className="m-0 grid list-none gap-1.5 p-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+          className="m-0 grid list-none gap-1.5 p-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]"
           data-testid="anchors-occurrences"
         >
           {proposal.occurrences.map((occurrence) => (
@@ -841,7 +841,7 @@ function PreviewBlock({ proposal }: { proposal: AnchorsProposal }) {
       )}
 
       <ul
-        className="m-0 grid list-none gap-1.5 p-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+        className="m-0 grid list-none gap-1.5 p-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]"
         data-testid="anchors-placements"
       >
         {proposal.placements.map((placement) => (

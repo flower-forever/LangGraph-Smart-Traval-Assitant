@@ -216,7 +216,7 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
       </Button>
     ) : (
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label={groupLabel}>
-        <span className="text-sm text-[color:var(--color-accent-ink)]">{confirmText}</span>
+        <span className="text-sm text-[color:var(--color-accent-foreground)]">{confirmText}</span>
         <Button type="button" onClick={handleClearStorage}>确认清除</Button>
         <Button type="button" variant="ghost" onClick={() => setConfirmClear(false)}>取消</Button>
       </div>
@@ -366,13 +366,13 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
                       : '这个浏览器里还没有保存过的行程。等后端恢复、打开一份行程后，就可以保存到本地。'}
                 </p>
               ) : (
-                <ul className="m-0 mt-0 grid list-none gap-3 p-0 focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-4 focus-visible:rounded-[10px]" ref={listRef} tabIndex={-1} aria-label="保存的行程">
+                <ul className="m-0 mt-0 grid list-none gap-3 p-0 focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-foreground)] focus-visible:outline-offset-4 focus-visible:rounded-[10px]" ref={listRef} tabIndex={-1} aria-label="保存的行程">
                   {state.trips.map((record) => {
                     const isCurrent = trip !== null && record.id === trip.id
                     const savedAtLabel = formatDateTime(record.savedAt)
                     return (
                       <li
-                        className="rounded-[10px] border border-border bg-background p-3 data-[current=true]:border-[color:var(--color-accent)] data-[current=true]:shadow-[inset_3px_0_0_var(--color-accent)]"
+                        className="rounded-[10px] border border-border bg-background p-3 data-[current=true]:border-[color:var(--color-primary)] data-[current=true]:shadow-[inset_3px_0_0_var(--color-primary)]"
                         key={record.id}
                         data-current={isCurrent || undefined}
                       >

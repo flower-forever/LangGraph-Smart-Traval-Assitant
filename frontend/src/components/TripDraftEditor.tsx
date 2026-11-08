@@ -856,7 +856,7 @@ export default function TripDraftEditor({
         <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1 [&>*]:min-w-0">
           <Field className="col-span-full">
             <FieldLabel htmlFor={`${formFieldId}-name`}>
-              站点名称 <span aria-hidden="true" className="ml-0.5 text-[color:var(--color-accent-ink)]">*</span>
+              站点名称 <span aria-hidden="true" className="ml-0.5 text-[color:var(--color-accent-foreground)]">*</span>
             </FieldLabel>
             <Input
               id={`${formFieldId}-name`}
@@ -881,7 +881,7 @@ export default function TripDraftEditor({
 
           <Field>
             <FieldLabel htmlFor={`${formFieldId}-time`}>
-              时间 <span aria-hidden="true" className="ml-0.5 text-[color:var(--color-accent-ink)]">*</span>
+              时间 <span aria-hidden="true" className="ml-0.5 text-[color:var(--color-accent-foreground)]">*</span>
             </FieldLabel>
             <Input
               id={`${formFieldId}-time`}
@@ -997,7 +997,7 @@ export default function TripDraftEditor({
         </div>
 
         {isNew && (
-          <p className="m-0 max-w-[78ch] text-xs font-semibold leading-relaxed text-[color:var(--color-ink-2)]">
+          <p className="m-0 max-w-[78ch] text-xs font-semibold leading-relaxed text-[color:var(--color-secondary-foreground)]">
             新站点没有坐标，这里不提供手填经纬度；插入后相关路段会标为待重新获取，不会用直线冒充已更新地图。
           </p>
         )}
@@ -1021,22 +1021,22 @@ export default function TripDraftEditor({
     <section className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5" role="region" aria-label="本地行程草稿编辑器">
       <header className="flex flex-wrap items-start justify-between gap-3 max-md:flex-col">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">本地行程编辑 · 内存草稿</p>
-          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-2 focus-visible:rounded-[6px]" ref={headingRef} tabIndex={-1} id={`${baseId}-title`}>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">本地行程编辑 · 内存草稿</p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-foreground)] focus-visible:outline-offset-2 focus-visible:rounded-[6px]" ref={headingRef} tabIndex={-1} id={`${baseId}-title`}>
             {draft.base.title}
           </h3>
           <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
             <Badge variant={draft.base.source === 'example' ? 'warning' : 'secondary'} className="text-[10px] tracking-[0.08em]" data-source={draft.base.source}>
               {sourceLabel}
             </Badge>
-            <span className="font-mono tabular-nums text-[color:var(--color-ink-2)]">
+            <span className="font-mono tabular-nums text-[color:var(--color-secondary-foreground)]">
               {day ? `第 ${day.day} 天` : `第 ${dayNumber} 天（草稿里没有）`}
             </span>
             {day && <span>{day.date ?? '日期未填'}</span>}
-            {day && day.title && <span className="text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{day.title}</span>}
+            {day && day.title && <span className="text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{day.title}</span>}
             {day && <span>{day.stops.length} 个站点</span>}
           </p>
-          <p className="m-0 mt-2 max-w-[72ch] text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+          <p className="m-0 mt-2 max-w-[72ch] text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
             修改只写入这份内存草稿，不会自动保存到浏览器、也不会发送到后端。点「应用草稿」才会生成新的行程副本，
             之后仍需用现有的保存按钮手动保存。
           </p>
@@ -1044,7 +1044,7 @@ export default function TripDraftEditor({
         <p
           className={
             dirty
-              ? 'm-0 shrink-0 self-start rounded-full border border-[color:var(--color-accent)] bg-accent-surface px-3 py-1 text-xs text-[color:var(--color-accent-ink)]'
+              ? 'm-0 shrink-0 self-start rounded-full border border-[color:var(--color-primary)] bg-accent-surface px-3 py-1 text-xs text-[color:var(--color-accent-foreground)]'
               : 'm-0 shrink-0 self-start rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground'
           }
         >
@@ -1123,13 +1123,13 @@ export default function TripDraftEditor({
 
       {discardConfirm && (
         <div
-          className="rounded-[10px] border border-dashed border-[color:var(--color-accent)] bg-accent-surface p-3 focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-2"
+          className="rounded-[10px] border border-dashed border-[color:var(--color-primary)] bg-accent-surface p-3 focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-foreground)] focus-visible:outline-offset-2"
           role="group"
           aria-label="确认放弃草稿"
           tabIndex={-1}
           ref={confirmRef}
         >
-          <p className="m-0 mb-2 text-sm text-[color:var(--color-accent-ink)]">确认放弃本地草稿？未应用的修改会丢失，当前查看的原始行程不会被修改。</p>
+          <p className="m-0 mb-2 text-sm text-[color:var(--color-accent-foreground)]">确认放弃本地草稿？未应用的修改会丢失，当前查看的原始行程不会被修改。</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={handleConfirmDiscard}>
               确认放弃草稿
@@ -1180,7 +1180,7 @@ export default function TripDraftEditor({
                 session.dayNumber === day.day
               return (
                 <li
-                  className={`border-t border-t-border py-3 first:border-t-0 ${isEditing ? 'rounded-[10px] border-t-border bg-background pl-3 shadow-[inset_3px_0_0_var(--color-accent)]' : ''}`}
+                  className={`border-t border-t-border py-3 first:border-t-0 ${isEditing ? 'rounded-[10px] border-t-border bg-background pl-3 shadow-[inset_3px_0_0_var(--color-primary)]' : ''}`}
                   key={stop.id}
                   data-editing={isEditing || undefined}
                 >
@@ -1189,7 +1189,7 @@ export default function TripDraftEditor({
                     {onSelectStop ? (
                       <button
                         type="button"
-                        className="m-0 min-h-[28px] min-w-0 cursor-pointer appearance-none border-0 bg-none p-0 text-left font-[inherit] font-semibold text-foreground hover:text-[color:var(--color-accent-ink)] hover:underline hover:underline-offset-[3px] focus-visible:rounded-[6px] focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-2 [overflow-wrap:anywhere]"
+                        className="m-0 min-h-[28px] min-w-0 cursor-pointer appearance-none border-0 bg-none p-0 text-left font-[inherit] font-semibold text-foreground hover:text-[color:var(--color-accent-foreground)] hover:underline hover:underline-offset-[3px] focus-visible:rounded-[6px] focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-foreground)] focus-visible:outline-offset-2 [overflow-wrap:anywhere]"
                         onClick={() => onSelectStop(stop.id)}
                         aria-label={`在地图中查看${describeStop(stop, index)}`}
                       >
@@ -1198,7 +1198,7 @@ export default function TripDraftEditor({
                     ) : (
                       <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{stop.name}</span>
                     )}
-                    <span className="font-mono text-sm tabular-nums text-[color:var(--color-ink-2)]">{stop.time || '时间未填'}</span>
+                    <span className="font-mono text-sm tabular-nums text-[color:var(--color-secondary-foreground)]">{stop.time || '时间未填'}</span>
                     <span className="text-xs text-muted-foreground">
                       {stop.duration_minutes === null
                         ? '停留未填'
@@ -1272,7 +1272,7 @@ export default function TripDraftEditor({
               type="checkbox"
               checked={dailyStopLimitEnabled}
               onChange={(event) => setDailyStopLimitEnabled(event.target.checked)}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />{' '}
             启用每天站点数上限检查
           </label>
@@ -1316,7 +1316,7 @@ export default function TripDraftEditor({
         {dailyLimitNotices.length > 0 && (
           <ul className="m-0 grid list-none gap-2 p-0" aria-label="每天站点数上限提醒">
             {dailyLimitNotices.map((item) => (
-              <li key={item.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <li key={item.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">超过上限</Badge>
                 <span>{item.message}</span>
               </li>
@@ -1356,7 +1356,7 @@ export default function TripDraftEditor({
                 setEndTimeRun(null)
                 setEndTimeError(null)
               }}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />{' '}
             启用每天最晚结束检查
           </label>
@@ -1420,7 +1420,7 @@ export default function TripDraftEditor({
         {endTimeDays !== null && (
           <ul className="m-0 grid list-none gap-2 p-0" aria-label="最晚结束时间检查结果">
             {endTimeDays.map((dayResult) => (
-              <li key={dayResult.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <li key={dayResult.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">
                   {dayResult.status === 'over_limit'
                     ? '超限'
@@ -1480,7 +1480,7 @@ export default function TripDraftEditor({
                 setWalkingDistanceRun(null)
                 setWalkingDistanceError(null)
               }}
-              className="size-4 accent-[color:var(--color-accent)]"
+              className="size-4 accent-[color:var(--color-primary)]"
             />{' '}
             启用每天步行距离检查
           </label>
@@ -1552,7 +1552,7 @@ export default function TripDraftEditor({
         {walkingDistanceDays !== null && walkingDistanceDays.length > 0 && (
           <ul className="m-0 grid list-none gap-2 p-0" aria-label="每天步行距离检查结果">
             {walkingDistanceDays.map((dayResult) => (
-              <li key={dayResult.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <li key={dayResult.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">
                   {dayResult.status === 'over_limit'
                     ? '已记录超限'
@@ -1598,7 +1598,7 @@ export default function TripDraftEditor({
         ) : (
           <ul className="m-0 grid list-none gap-2 p-0" data-testid="local-check-list">
             {checkPreview.map((check: DraftLocalCheck, index) => (
-              <li key={`${check.kind}-${index}`} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+              <li key={`${check.kind}-${index}`} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
                 <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">{CHECK_KIND_LABEL[check.kind]}</Badge>
                 <span>{check.message}</span>
               </li>

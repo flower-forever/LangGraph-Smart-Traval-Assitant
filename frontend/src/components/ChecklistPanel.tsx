@@ -665,14 +665,14 @@ export default function ChecklistPanel({
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
-          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">出行准备</p>
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">出行准备</p>
           <h2 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]" id={headingId}>
             准备清单
           </h2>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
             手工记录要准备的事；打勾只代表你已经准备或核对过，不代查票务状态。
           </p>
-          <p className="m-0 mt-1 text-xs leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
+          <p className="m-0 mt-1 text-xs leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere]">
             共 {checklist.items.length} 项 · 已准备 {prepared} · 未准备 {checklist.items.length - prepared}
           </p>
         </div>
@@ -718,7 +718,7 @@ export default function ChecklistPanel({
           role="group"
           aria-label="撤销"
         >
-          <span className={`text-sm leading-[1.65] [overflow-wrap:anywhere] ${undoAvailable ? 'text-[color:var(--color-muted)]' : 'text-[color:var(--color-faint)]'}`}>
+          <span className={`text-sm leading-[1.65] [overflow-wrap:anywhere] ${undoAvailable ? 'text-[color:var(--color-muted-foreground)]' : 'text-[color:var(--color-faint)]'}`}>
             {undoAvailable ? '上一步已保存，可撤销一次。' : '当前清单已变化，撤销提案已失效。'}
           </span>
           <Button
@@ -735,7 +735,7 @@ export default function ChecklistPanel({
       {audit.issues.length > 0 ||
       (audit.unrecordedConstraintItems.length > 0 && constraintItems.length > 0) ? (
         <section
-          className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-accent)] bg-accent-surface p-4"
+          className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-primary)] bg-accent-surface p-4"
           aria-label="需重新关联的清单项"
         >
           <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">关联核对</h3>
@@ -751,7 +751,7 @@ export default function ChecklistPanel({
                 >
                   <span>{issue.message}</span>
                   {issue.reason === 'stop_unlinked' ? (
-                    <span className="inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                    <span className="inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
                       已标记需重新关联
                     </span>
                   ) : (
@@ -862,7 +862,7 @@ export default function ChecklistPanel({
                     </p>
                     <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{suggestion.reason}</p>
                     {suggestion.duplicateOf.length > 0 ? (
-                      <p className="m-0 inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                      <p className="m-0 inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
                         清单里已有「{suggestion.duplicateOf.join('、')}」；不会自动合并
                       </p>
                     ) : null}
@@ -898,7 +898,7 @@ export default function ChecklistPanel({
 
       {templateOpen ? (
         <section className="grid gap-3 rounded-[6px] border border-border bg-background p-4" aria-label="模板建议">
-          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={`${notesFieldId}-template`}>
+          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={`${notesFieldId}-template`}>
             <span>选择模板</span>
             <Select
               id={`${notesFieldId}-template`}
@@ -917,7 +917,7 @@ export default function ChecklistPanel({
             <>
               <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{template.description}</p>
               {templateApplied ? (
-                <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
                   这个模板已经采纳过；可再次添加缺少的条目。
                 </p>
               ) : null}
@@ -961,7 +961,7 @@ export default function ChecklistPanel({
             </p>
           ) : null}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={categoryFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={categoryFieldId}>
               <span>分类</span>
               <Select
                 id={categoryFieldId}
@@ -976,7 +976,7 @@ export default function ChecklistPanel({
                 ))}
               </Select>
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)] col-span-full" htmlFor={titleFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)] col-span-full" htmlFor={titleFieldId}>
               <span>标题</span>
               <Input
                 id={titleFieldId}
@@ -987,7 +987,7 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={dateFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={dateFieldId}>
               <span>日期（可选）</span>
               <Input
                 id={dateFieldId}
@@ -997,7 +997,7 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={dayFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={dayFieldId}>
               <span>天序号（可选）</span>
               <Input
                 id={dayFieldId}
@@ -1010,7 +1010,7 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={stopFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={stopFieldId}>
               <span>关联地点（可选）</span>
               <Select
                 id={stopFieldId}
@@ -1037,7 +1037,7 @@ export default function ChecklistPanel({
                 ) : null}
               </Select>
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={constraintFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={constraintFieldId}>
               <span>关联预约（可选）</span>
               <Select
                 id={constraintFieldId}
@@ -1060,7 +1060,7 @@ export default function ChecklistPanel({
                 ) : null}
               </Select>
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)] col-span-full" htmlFor={notesFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)] col-span-full" htmlFor={notesFieldId}>
               <span>备注（可选）</span>
               <Textarea
                 id={notesFieldId}
@@ -1159,7 +1159,7 @@ export default function ChecklistPanel({
                       disabled={disabled}
                       aria-label={`${item.title}：${item.done ? CHECKLIST_PREPARED_LABELS.done : CHECKLIST_PREPARED_LABELS.pending}`}
                     />
-                    <span className="text-sm text-[color:var(--color-muted)]">
+                    <span className="text-sm text-[color:var(--color-muted-foreground)]">
                       {item.done ? CHECKLIST_PREPARED_LABELS.done : CHECKLIST_PREPARED_LABELS.pending}
                     </span>
                   </label>
@@ -1193,12 +1193,12 @@ export default function ChecklistPanel({
                   <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{meta.join(' · ')}</p>
                 ) : null}
                 {needsRelink ? (
-                  <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                  <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
                     需重新关联
                   </p>
                 ) : null}
                 {item.notes !== null ? (
-                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere] whitespace-pre-wrap">{item.notes}</p>
+                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted-foreground)] [overflow-wrap:anywhere] whitespace-pre-wrap">{item.notes}</p>
                 ) : null}
               </li>
             )
