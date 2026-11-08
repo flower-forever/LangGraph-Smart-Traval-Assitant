@@ -1,5 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { Trip } from '../lib/api'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatDateTime } from '../lib/format'
 import { countStops } from '../lib/mapData'
 import {
@@ -208,14 +211,14 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
         ? '确认清除？此操作无法撤销，会删除本浏览器里无法读取的本地数据（能读到的保存行程也会一起删除）。'
         : '确认清除？此操作无法撤销，会删除本浏览器里所有保存的行程，包括无法识别的那部分原始数据。'
     return !confirmClear ? (
-      <button type="button" className="btn btn-ghost" onClick={() => setConfirmClear(true)}>
+      <Button type="button" variant="ghost" onClick={() => setConfirmClear(true)}>
         {actionLabel}
-      </button>
+      </Button>
     ) : (
-      <div className="saved-confirm" role="group" aria-label={groupLabel}>
-        <span>{confirmText}</span>
-        <button type="button" className="btn" onClick={handleClearStorage}>确认清除</button>
-        <button type="button" className="btn btn-ghost" onClick={() => setConfirmClear(false)}>取消</button>
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={groupLabel}>
+        <span className="text-sm text-[color:var(--color-accent-ink)]">{confirmText}</span>
+        <Button type="button" onClick={handleClearStorage}>确认清除</Button>
+        <Button type="button" variant="ghost" onClick={() => setConfirmClear(false)}>取消</Button>
       </div>
     )
   }
@@ -242,50 +245,52 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
           : ''
 
   return (
-    <div className="saved-area" role="region" aria-label="本地行程保存">
-      <div className="saved-toolbar">
-        <div className="saved-actions">
+    <div className="mb-6 min-w-0" role="region" aria-label="本地行程保存">
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           {trip ? (
-            <button
+            <Button
               type="button"
-              className="btn btn-save"
               onClick={handleSave}
               aria-describedby={scopeNoteId}
             >
               保存当前行程
-            </button>
+            </Button>
           ) : (
-            <span className="saved-no-trip">当前还没有打开行程，不能保存；可以恢复下面的本地副本。</span>
+            <span className="text-sm text-muted-foreground">当前还没有打开行程，不能保存；可以恢复下面的本地副本。</span>
           )}
-          <button
+          <Button
             type="button"
-            className="btn saved-toggle"
+            variant="outline"
             aria-expanded={open}
             aria-controls={panelId}
             onClick={handleToggle}
           >
             已保存行程{savedSuffix}
-          </button>
-          <span className="saved-scope-note" id={scopeNoteId}>
+          </Button>
+          <span className="text-xs text-[color:var(--color-faint)]" id={scopeNoteId}>
             仅保存在当前浏览器与当前网址，不上传、不跨设备同步
           </span>
         </div>
-        <div className="saved-notice-live" aria-live="polite" aria-atomic="true">
+        <div aria-live="polite" aria-atomic="true">
           {notice && (
-            <p className="saved-notice" data-tone={notice.tone}>
-              {notice.text}
-            </p>
+            <Alert
+              role="status"
+              variant={notice.tone === 'ok' ? 'success' : notice.tone === 'warn' ? 'warning' : 'destructive'}
+            >
+              <AlertDescription>{notice.text}</AlertDescription>
+            </Alert>
           )}
         </div>
       </div>
 
       {open && (
-        <section className="saved-panel" id={panelId} aria-label="已保存的行程列表">
-          <div className="saved-panel-head">
-            <h3 className="saved-panel-title" ref={headingRef} tabIndex={-1}>
+        <section className="mt-3 grid gap-3 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-4 max-md:p-3" id={panelId} aria-label="已保存的行程列表">
+          <div>
+            <h3 className="m-0 mb-1 font-display text-md leading-[1.4] tracking-[0.03em]" ref={headingRef} tabIndex={-1}>
               已保存的行程
             </h3>
-            <p className="saved-panel-note">
+            <p className="m-0 max-w-[72ch] text-xs leading-[1.65] text-muted-foreground">
               保存在当前浏览器与当前网址的本地存储中，最多 {MAX_SAVED_TRIPS} 份，单份约 {humanBytes(MAX_SAVED_TRIP_BYTES)}，
               总计约 {humanBytes(MAX_SAVED_STORAGE_BYTES)}。达到上限时不会自动替换旧记录，需要先删除一份再保存。
               清除浏览器站点数据会一并删除这些记录。
@@ -293,59 +298,67 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
           </div>
 
           {state.status === 'unavailable' && (
-            <div className="saved-state" data-tone="error" role="status">
-              {state.message ?? '当前浏览器无法访问本地存储，保存和恢复暂不可用。'}
-            </div>
+            <Alert variant="destructive" role="status">
+              <AlertDescription>{state.message ?? '当前浏览器无法访问本地存储，保存和恢复暂不可用。'}</AlertDescription>
+            </Alert>
           )}
 
           {state.status === 'corrupt' && (
-            <div className="saved-state" data-tone="error" role="alert">
-              <p>{state.message ?? '本地保存数据已损坏。'}</p>
-              <p className="saved-state-note">
-                为避免覆盖无法读取的旧数据，保存已暂停。确认不再需要这些旧数据后，可以清除后重新保存。
-              </p>
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>
+                <p className="m-0 mb-2">{state.message ?? '本地保存数据已损坏。'}</p>
+                <p className="m-0 mb-2 text-xs text-muted-foreground">
+                  为避免覆盖无法读取的旧数据，保存已暂停。确认不再需要这些旧数据后，可以清除后重新保存。
+                </p>
+              </AlertDescription>
               {clearControls('corrupt')}
-            </div>
+            </Alert>
           )}
 
           {(state.status === 'ok' || state.status === 'empty') && state.skipped > 0 && (
-            <div className="saved-state" data-tone="warn" role="status">
-              <p>{state.message ?? '本地保存里有无法识别的记录。'}</p>
-              <p className="saved-state-note">
-                仍可查看和恢复能读到的记录；在确认不再需要这些数据前，不会写入或覆盖原始内容。
-                需要继续保存或删除时，请先清除全部本地数据。
-              </p>
+            <Alert variant="warning" role="status">
+              <AlertDescription>
+                <p className="m-0 mb-2">{state.message ?? '本地保存里有无法识别的记录。'}</p>
+                <p className="m-0 mb-2 text-xs text-muted-foreground">
+                  仍可查看和恢复能读到的记录；在确认不再需要这些数据前，不会写入或覆盖原始内容。
+                  需要继续保存或删除时，请先清除全部本地数据。
+                </p>
+              </AlertDescription>
               {clearControls('anomaly')}
-            </div>
+            </Alert>
           )}
 
           {state.status !== 'unavailable' && state.status !== 'corrupt' && (
             <>
               {undoRecord && (
-                <div className="saved-undo" role="group" aria-label="删除撤销">
+                <div
+                  className="flex flex-wrap items-center gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary px-3 py-2 text-sm"
+                  role="group"
+                  aria-label="删除撤销"
+                >
                   <span role="status">已删除《{undoRecord.trip.title}》。</span>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-ghost"
+                    variant="ghost"
                     ref={undoButtonRef}
                     onClick={handleUndo}
                   >
                     撤销删除
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="btn btn-ghost"
+                    variant="ghost"
                     aria-label="关闭删除撤销提示"
                     onClick={handleDismissUndo}
                   >
                     关闭
-                  </button>
-                  <span className="saved-undo-hint">关闭页面后无法恢复。</span>
+                  </Button>
+                  <span className="text-xs text-[color:var(--color-faint)]">关闭页面后无法恢复。</span>
                 </div>
               )}
 
               {state.trips.length === 0 ? (
-                <p className="saved-empty">
+                <p className="m-0 rounded-[10px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-5 text-center text-sm text-muted-foreground">
                   {state.skipped > 0
                     ? '没有能安全读取的保存记录。原始数据仍保留在浏览器里，未做修改。'
                     : trip
@@ -353,35 +366,43 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
                       : '这个浏览器里还没有保存过的行程。等后端恢复、打开一份行程后，就可以保存到本地。'}
                 </p>
               ) : (
-                <ul className="saved-list" ref={listRef} tabIndex={-1} aria-label="保存的行程">
+                <ul className="m-0 mt-0 grid list-none gap-3 p-0 focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-4 focus-visible:rounded-[10px]" ref={listRef} tabIndex={-1} aria-label="保存的行程">
                   {state.trips.map((record) => {
                     const isCurrent = trip !== null && record.id === trip.id
                     const savedAtLabel = formatDateTime(record.savedAt)
                     return (
-                      <li className="saved-item" key={record.id} data-current={isCurrent || undefined}>
-                        <div className="saved-item-head">
-                          <span className="saved-source-tag" data-source={record.trip.source}>
+                      <li
+                        className="rounded-[10px] border border-border bg-background p-3 data-[current=true]:border-[color:var(--color-accent)] data-[current=true]:shadow-[inset_3px_0_0_var(--color-accent)]"
+                        key={record.id}
+                        data-current={isCurrent || undefined}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={record.trip.source === 'example' ? 'default' : 'secondary'}>
                             {record.trip.source === 'example' ? '示例' : 'AI 规划'}
-                          </span>
-                          <h4 className="saved-item-title">{record.trip.title}</h4>
-                          {isCurrent && <span className="saved-current-tag">当前行程</span>}
+                          </Badge>
+                          <h4 className="m-0 font-display text-md leading-[1.4] [overflow-wrap:anywhere]">{record.trip.title}</h4>
+                          {isCurrent && (
+                            <Badge variant="success">当前行程</Badge>
+                          )}
                         </div>
-                        <p className="saved-item-meta">
+                        <p className="m-0 mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                           {record.trip.destination} · {record.trip.days.length} 天 ·{' '}
                           {countStops(record.trip)} 个站点 · 保存于 {savedAtLabel}
                         </p>
                         {record.trip.source === 'example' && (
-                          <p className="saved-item-note">示例数据，仅用于演示，不是实际出行安排。</p>
+                          <p className="m-0 mt-1 text-xs text-[color:var(--color-faint)]">
+                            示例数据，仅用于演示，不是实际出行安排。
+                          </p>
                         )}
                         {record.trip.warnings.length > 0 && (
-                          <p className="saved-item-note">
+                          <p className="m-0 mt-1 text-xs text-[color:var(--color-faint)]">
                             保存时保留了 {record.trip.warnings.length} 条行程提醒。
                           </p>
                         )}
-                        <div className="saved-item-actions">
-                          <button
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
                             type="button"
-                            className="btn"
+                            variant="outline"
                             aria-label={`恢复保存的行程《${record.trip.title}》（保存于 ${savedAtLabel}）`}
                             ref={(element) => {
                               if (element) itemButtonRefs.current.set(record.id, element)
@@ -390,15 +411,15 @@ export default function SavedTripsPanel({ trip, onRestore }: SavedTripsPanelProp
                             onClick={() => handleRestore(record)}
                           >
                             恢复这份行程
-                          </button>
-                          <button
+                          </Button>
+                          <Button
                             type="button"
-                            className="btn btn-ghost"
+                            variant="ghost"
                             aria-label={`删除保存的行程《${record.trip.title}》（保存于 ${savedAtLabel}）`}
                             onClick={() => handleDelete(record)}
                           >
                             删除
-                          </button>
+                          </Button>
                         </div>
                       </li>
                     )

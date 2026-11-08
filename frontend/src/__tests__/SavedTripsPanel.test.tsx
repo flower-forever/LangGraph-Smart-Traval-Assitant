@@ -208,7 +208,7 @@ describe('本地保存行程', () => {
     await user.click(within(panel).getByRole('button', { name: /删除保存的行程《杭州三日漫步路书》/ }))
     await waitFor(() => expect(storedTrips()).toHaveLength(0))
     expect(
-      within(savedToolbar()).getByText(/已删除《杭州三日漫步路书》/, { selector: '.saved-notice' }),
+      within(savedToolbar()).getByText(/已删除《杭州三日漫步路书》/, { selector: '[data-slot="alert-description"]' }),
     ).toBeInTheDocument()
     expect(within(savedPanel()).getByRole('button', { name: '撤销删除' })).toBeInTheDocument()
     expect(within(savedPanel()).getByText(/还没有保存的行程/)).toBeInTheDocument()
@@ -269,7 +269,7 @@ describe('本地保存行程', () => {
     await user.click(within(savedToolbar()).getByRole('button', { name: '保存当前行程' }))
     await waitFor(() => {
       expect(
-        within(savedToolbar()).getByText(/最多保存 20 份/, { selector: '.saved-notice' }),
+        within(savedToolbar()).getByText(/最多保存 20 份/, { selector: '[data-slot="alert-description"]' }),
       ).toBeInTheDocument()
     })
     // fail-closed：超限时不删除旧记录，也不写入任何字节
@@ -299,7 +299,7 @@ describe('本地保存行程', () => {
     await user.click(within(savedToolbar()).getByRole('button', { name: '保存当前行程' }))
     await waitFor(() => {
       expect(
-        within(savedToolbar()).getByText(/无法识别、重复或超出上限/, { selector: '.saved-notice' }),
+        within(savedToolbar()).getByText(/无法识别、重复或超出上限/, { selector: '[data-slot="alert-description"]' }),
       ).toBeInTheDocument()
     })
     expect(localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBe(raw)
@@ -415,7 +415,7 @@ describe('本地存储失败状态', () => {
     await user.click(within(savedToolbar()).getByRole('button', { name: '保存当前行程' }))
     await waitFor(() => {
       expect(
-        within(savedToolbar()).getByText(/浏览器拒绝读取本地存储/, { selector: '.saved-notice' }),
+        within(savedToolbar()).getByText(/浏览器拒绝读取本地存储/, { selector: '[aria-live="polite"] [data-slot="alert-description"]' }),
       ).toBeInTheDocument()
     })
   })

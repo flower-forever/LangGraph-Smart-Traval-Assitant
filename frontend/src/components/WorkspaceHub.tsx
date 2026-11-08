@@ -8,6 +8,9 @@
  */
 import type { ReactNode } from 'react'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+
 import type { VersionsRecordV1, WorkspaceRecordV1 } from '../lib/workspaceTypes'
 import type {
   VersionAdoptProposalV1,
@@ -22,7 +25,6 @@ import type {
   WorkspaceNotice,
 } from '../lib/useWorkspaceController'
 import VersionsPanel from './VersionsPanel'
-import './WorkspaceHub.css'
 
 export interface WorkspaceHubProps {
   readonly workspace: WorkspaceRecordV1 | null
@@ -92,9 +94,12 @@ function statusLabel(status: WorkspaceLinkStatus): string {
 function NoticeLine({ notice }: { notice: WorkspaceNotice | null }): ReactNode {
   if (notice === null) return null
   return (
-    <p className="wsh-notice" data-tone={notice.tone} role={notice.tone === 'error' ? 'alert' : 'status'}>
-      {notice.text}
-    </p>
+    <Alert
+      variant={notice.tone === 'ok' ? 'success' : notice.tone === 'error' ? 'destructive' : 'default'}
+      role={notice.tone === 'error' ? 'alert' : 'status'}
+    >
+      <AlertDescription>{notice.text}</AlertDescription>
+    </Alert>
   )
 }
 
@@ -134,12 +139,16 @@ export default function WorkspaceHub({
   const controlsDisabled = disabled || busy || !canWrite
 
   return (
-    <section className="wsh" role="region" aria-label="工作区与版本">
-      <header className="wsh-head">
+    <section
+      className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4"
+      role="region"
+      aria-label="工作区与版本"
+    >
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="wsh-eyebrow">本机工作区</p>
-          <h3 className="wsh-title">工作区与版本</h3>
-          <p className="wsh-note">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">本机工作区</p>
+          <h3 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">工作区与版本</h3>
+          <p className="m-0 max-w-[72ch] text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             工作区把 Trip、锚点 / 约束 / 清单等 sidecar 与手工预算快照作为一个完整记录保存；
             版本库是独立的不可变快照，两者分别保存，不会一键跨库原子写入。
           </p>
@@ -147,12 +156,17 @@ export default function WorkspaceHub({
       </header>
 
       {!canWrite ? (
-        <p className="wsh-alert">
-          当前浏览器不支持安全的本地写入互斥：可以读取和导出，工作区与版本库的保存已停用。
-        </p>
+        <Alert variant="warning">
+          <AlertDescription>
+            当前浏览器不支持安全的本地写入互斥：可以读取和导出，工作区与版本库的保存已停用。
+          </AlertDescription>
+        </Alert>
       ) : null}
 
-      <p className="wsh-status" data-testid="workspace-status">
+      <p
+        data-testid="workspace-status"
+        className="m-0 rounded-[6px] bg-secondary px-3 py-2 text-sm leading-[1.6] [overflow-wrap:anywhere]"
+      >
         {linked ? (
           <>
             已关联《{workspace.trip.title}》 · revision {workspace.workspaceRevision} ·{' '}
@@ -163,72 +177,73 @@ export default function WorkspaceHub({
         )}
       </p>
 
-      {workspaceMessage !== null ? <p className="wsh-muted">{workspaceMessage}</p> : null}
+      {workspaceMessage !== null ? (
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{workspaceMessage}</p>
+      ) : null}
       {workspaceExternallyChanged ? (
-        <p className="wsh-alert">
-          另一处已更新本地工作区。当前页面没有自动覆盖；重新打开工作区才能看到最新内容。
-        </p>
+        <Alert variant="warning">
+          <AlertDescription>
+            另一处已更新本地工作区。当前页面没有自动覆盖；重新打开工作区才能看到最新内容。
+          </AlertDescription>
+        </Alert>
       ) : null}
 
-      <div className="wsh-actions">
+      <div className="flex flex-wrap items-center gap-2 max-md:items-stretch [&_button]:w-full max-md:[&_button]:w-full">
         {!linked ? (
           <>
-            <button
-              type="button"
-              className="wsh-btn wsh-btn-primary"
-              onClick={onCreateWorkspace}
-              disabled={controlsDisabled}
-            >
+            <Button onClick={onCreateWorkspace} disabled={controlsDisabled}>
               用当前行程新建工作区
-            </button>
-            <button type="button" className="wsh-btn" onClick={onOpenWorkspace} disabled={disabled || busy}>
+            </Button>
+            <Button variant="outline" onClick={onOpenWorkspace} disabled={disabled || busy}>
               打开本地工作区
-            </button>
+            </Button>
           </>
         ) : (
           <>
-            <button
-              type="button"
-              className="wsh-btn wsh-btn-primary"
-              onClick={onSaveWorkspace}
-              disabled={controlsDisabled || workspaceStatus === 'saved'}
-            >
+            <Button onClick={onSaveWorkspace} disabled={controlsDisabled || workspaceStatus === 'saved'}>
               保存工作区
-            </button>
-            <button type="button" className="wsh-btn" onClick={onOpenWorkspace} disabled={disabled || busy}>
+            </Button>
+            <Button variant="outline" onClick={onOpenWorkspace} disabled={disabled || busy}>
               重新打开本地工作区
-            </button>
-            <button type="button" className="wsh-btn wsh-btn-ghost" onClick={onDetach} disabled={disabled || busy}>
+            </Button>
+            <Button variant="ghost" onClick={onDetach} disabled={disabled || busy}>
               解除关联
-            </button>
+            </Button>
           </>
         )}
       </div>
 
       {!linked ? (
-        <p className="wsh-hint">
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
           新建与打开都只在你点击后读取自己的键；不会读取会话恢复副本，也不会仅凭内容相同就把旧行程自动挂到已有工作区。
         </p>
       ) : null}
 
       {linked && budgetDirty ? (
-        <p className="wsh-hint" data-testid="workspace-budget-dirty">
+        <p
+          data-testid="workspace-budget-dirty"
+          className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]"
+        >
           当前费用草稿与工作区里的预算快照不同。保存工作区会把当前费用快照一并写入；保存版本使用工作区里的快照，不会把未保存的费用变化混进版本。
         </p>
       ) : null}
 
       <NoticeLine notice={notice} />
       {notice !== null ? (
-        <button type="button" className="wsh-dismiss" onClick={onDismissNotice}>
+        <button
+          type="button"
+          className="justify-self-start cursor-pointer border-0 bg-transparent p-0 text-xs text-[color:var(--color-muted)] underline"
+          onClick={onDismissNotice}
+        >
           关闭提示
         </button>
       ) : null}
 
-      <div className="wsh-versions">
-        <div className="wsh-versions-head">
+      <div className="grid min-w-0 gap-3 border-t border-[color:var(--color-line-strong)] pt-3 mt-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="wsh-eyebrow">版本库（独立键）</p>
-            <p className="wsh-muted">
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">版本库（独立键）</p>
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               {versionsLoaded
                 ? versions === null
                   ? '版本库为空。'
@@ -236,16 +251,22 @@ export default function WorkspaceHub({
                 : '尚未读取版本库；点下方按钮后才访问版本库自己的键。'}
             </p>
           </div>
-          <button type="button" className="wsh-btn" onClick={onOpenVersions} disabled={disabled || busy}>
+          <Button variant="outline" onClick={onOpenVersions} disabled={disabled || busy}>
             {versionsLoaded ? '重新读取版本库' : '打开版本库'}
-          </button>
+          </Button>
         </div>
 
-        {versionsMessage !== null ? <p className="wsh-alert">{versionsMessage}</p> : null}
+        {versionsMessage !== null ? (
+          <Alert variant="warning">
+            <AlertDescription>{versionsMessage}</AlertDescription>
+          </Alert>
+        ) : null}
         {versionsExternallyChanged ? (
-          <p className="wsh-alert">
-            另一处已更新本地版本库。当前列表只读保留；重新读取后才能看到最新内容。
-          </p>
+          <Alert variant="warning">
+            <AlertDescription>
+              另一处已更新本地版本库。当前列表只读保留；重新读取后才能看到最新内容。
+            </AlertDescription>
+          </Alert>
         ) : null}
 
         {linked && versionsLoaded ? (
@@ -264,26 +285,27 @@ export default function WorkspaceHub({
               onDownloadBackup={onDownloadVersionsBackup}
             />
             {onUndoVersionsImport !== undefined && versionsImportUndoExpiresAt != null ? (
-              <div className="wsh-import-undo">
-                <button
-                  type="button"
-                  className="wsh-btn wsh-btn-ghost"
-                  onClick={onUndoVersionsImport}
-                  disabled={disabled || busy}
-                >
+              <div className="grid justify-items-start gap-1">
+                <Button variant="ghost" onClick={onUndoVersionsImport} disabled={disabled || busy}>
                   撤销最近一次版本库导入
-                </button>
-                <p className="wsh-muted">撤销窗口截止于 {new Date(versionsImportUndoExpiresAt).toLocaleTimeString()}；每侧只有一次机会。</p>
+                </Button>
+                <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+                  撤销窗口截止于 {new Date(versionsImportUndoExpiresAt).toLocaleTimeString()}；每侧只有一次机会。
+                </p>
               </div>
             ) : null}
           </>
         ) : null}
         {!linked && versionsLoaded ? (
-          <p className="wsh-alert">先关联一个工作区，版本面板才能保存或采用版本。</p>
+          <Alert variant="warning">
+            <AlertDescription>先关联一个工作区，版本面板才能保存或采用版本。</AlertDescription>
+          </Alert>
         ) : null}
       </div>
 
-      {children !== undefined ? <div className="wsh-tools">{children}</div> : null}
+      {children !== undefined ? (
+        <div className="grid min-w-0 gap-3 border-t border-[color:var(--color-line-strong)] pt-3 mt-2">{children}</div>
+      ) : null}
     </section>
   )
 }

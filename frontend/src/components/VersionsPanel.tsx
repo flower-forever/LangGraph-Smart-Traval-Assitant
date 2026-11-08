@@ -12,6 +12,9 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+
 import type { VersionsRecordV1, WorkspaceRecordV1 } from '../lib/workspaceTypes'
 import {
   MAX_VERSION_NAME_LENGTH,
@@ -33,7 +36,6 @@ import {
   type VersionUndoProposalV1,
 } from '../lib/versionSnapshots'
 import { formatDateTime } from '../lib/format'
-import './VersionsPanel.css'
 
 export interface VersionsPanelProps {
   /** 当前工作区记录；null = 还没有可保存的行程。面板只读。 */
@@ -132,50 +134,53 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
   const constraintsChanged = diff.constraints.changed
 
   return (
-    <div className="vrs-diff">
-      <p className="vrs-diff-summary">
+    <div className="grid min-w-0 gap-3">
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
         站点：新增 {added.length} · 删除 {removed.length} · 跨日移动 {moved.length} · 同日变化{' '}
         {changed.length} · 未变化 {diff.stops.unchangedCount}
       </p>
-      <p className="vrs-diff-summary">
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
         预约：新增 {constraintsAdded.length} · 删除 {constraintsRemoved.length} · 变化{' '}
         {constraintsChanged.length} · 未变化 {diff.constraints.unchangedCount}
       </p>
 
-      <dl className="vrs-facts">
-        <div>
-          <dt>用时 · {diff.before.name}</dt>
-          <dd>{formatMeasureSummary(diff.time.before, '分钟')}</dd>
+      <dl className="m-0 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-x-4 gap-y-2 max-md:grid-cols-[minmax(0,1fr)]">
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">用时 · {diff.before.name}</dt>
+          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.time.before, '分钟')}</dd>
         </div>
-        <div>
-          <dt>用时 · {diff.after.name}</dt>
-          <dd>{formatMeasureSummary(diff.time.after, '分钟')}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">用时 · {diff.after.name}</dt>
+          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.time.after, '分钟')}</dd>
         </div>
-        <div>
-          <dt>距离 · {diff.before.name}</dt>
-          <dd>{formatMeasureSummary(diff.distance.before, '米')}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">距离 · {diff.before.name}</dt>
+          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.distance.before, '米')}</dd>
         </div>
-        <div>
-          <dt>距离 · {diff.after.name}</dt>
-          <dd>{formatMeasureSummary(diff.distance.after, '米')}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">距离 · {diff.after.name}</dt>
+          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.distance.after, '米')}</dd>
         </div>
-        <div>
-          <dt>费用 · {diff.before.name}</dt>
-          <dd>{formatCostSummary(diff.cost.before)}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">费用 · {diff.before.name}</dt>
+          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatCostSummary(diff.cost.before)}</dd>
         </div>
-        <div>
-          <dt>费用 · {diff.after.name}</dt>
-          <dd>{formatCostSummary(diff.cost.after)}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">费用 · {diff.after.name}</dt>
+          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatCostSummary(diff.cost.after)}</dd>
         </div>
       </dl>
-      <p className="vrs-diff-summary">{costChangeText(diff.cost)}</p>
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{costChangeText(diff.cost)}</p>
 
-      <details className="vrs-details" open>
-        <summary>站点与预约明细</summary>
+      <details
+        className="rounded-[6px] border border-border bg-card px-4 py-3"
+        open
+      >
+        <summary className="cursor-pointer text-sm font-semibold text-[color:var(--color-ink-2)]">站点与预约明细</summary>
         {added.length === 0 && removed.length === 0 && moved.length === 0 && changed.length === 0 ? (
-          <p className="vrs-muted">没有站点差异。</p>
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">没有站点差异。</p>
         ) : (
-          <ul className="vrs-diff-list">
+          <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-ink-2)]">
             {added.map((ref) => (
               <li key={`added-${ref.id}-${ref.day}`}>新增：{stopRefText(ref)}</li>
             ))}
@@ -199,9 +204,9 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
         {constraintsAdded.length === 0 &&
         constraintsRemoved.length === 0 &&
         constraintsChanged.length === 0 ? (
-          <p className="vrs-muted">没有预约差异。</p>
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">没有预约差异。</p>
         ) : (
-          <ul className="vrs-diff-list">
+          <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-ink-2)]">
             {constraintsAdded.map((item) => (
               <li key={`constraint-added-${item.id}`}>预约新增：{constraintText(item)}</li>
             ))}
@@ -405,41 +410,52 @@ export default function VersionsPanel({
   const canSave = current !== null && !blocked && !busy
 
   return (
-    <section className="vrs" role="region" aria-label="行程版本与方案对比" aria-labelledby={headingId}>
-      <header className="vrs-head">
-        <div className="vrs-head-main">
-          <p className="vrs-eyebrow">版本库</p>
-          <h2 className="vrs-title" id={headingId}>
+    <section
+      className="grid min-w-0 gap-4 rounded-[10px] border border-border bg-background p-4"
+      role="region"
+      aria-label="行程版本与方案对比"
+      aria-labelledby={headingId}
+    >
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">版本库</p>
+          <h2 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]" id={headingId}>
             行程版本与方案对比
           </h2>
-          <p className="vrs-note">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
             显式命名的不可变快照：保存当前 Trip、sidecar 与预算；后续编辑不会串改旧版本。
             面板不自动分叉、不自动驱逐旧版本。
           </p>
         </div>
         {onClose !== undefined ? (
-          <button type="button" className="vrs-btn" onClick={onClose}>
+          <Button variant="outline" onClick={onClose}>
             收起版本面板
-          </button>
+          </Button>
         ) : null}
       </header>
 
-      <p className="vrs-live" id={liveId} role="status">
+      <p
+        id={liveId}
+        role="status"
+        className={`m-0 text-sm leading-[1.65] [overflow-wrap:anywhere] ${previewError ?? saveError ?? fileError ? 'text-destructive' : 'hidden'}`}
+      >
         {previewError ?? saveError ?? fileError ?? ''}
       </p>
 
       {blocked ? (
-        <p className="vrs-alert" role="alert">
-          {STATUS_TEXT[status]}
-        </p>
+        <Alert variant="warning" role="alert">
+          <AlertDescription>{STATUS_TEXT[status]}</AlertDescription>
+        </Alert>
       ) : null}
-      {status === 'empty' ? <p className="vrs-muted">{STATUS_TEXT.empty}</p> : null}
+      {status === 'empty' ? (
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{STATUS_TEXT.empty}</p>
+      ) : null}
 
-      <section className="vrs-block" aria-labelledby={saveHeadingId}>
-        <h3 className="vrs-block-title" id={saveHeadingId}>
+      <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={saveHeadingId}>
+        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={saveHeadingId}>
           保存当前版本
         </h3>
-        <p className="vrs-muted">
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
           当前：{currentVersionLabel}
           {current === null
             ? ''
@@ -447,11 +463,12 @@ export default function VersionsPanel({
               ? ' · 预算：没有预算数据'
               : ' · 预算：含预算快照'}
         </p>
-        <form className="vrs-save-form" onSubmit={handleSave}>
-          <label className="vrs-field" htmlFor={nameId}>
-            <span>版本名称</span>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={handleSave}>
+          <label className="grid min-w-0 flex-[1_1_260px] gap-1" htmlFor={nameId}>
+            <span className="text-sm font-semibold text-[color:var(--color-ink-2)]">版本名称</span>
             <input
               id={nameId}
+              className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
               value={name}
               onChange={(event) => {
                 setName(event.target.value)
@@ -463,65 +480,77 @@ export default function VersionsPanel({
               autoComplete="off"
             />
           </label>
-          <button type="submit" className="vrs-btn vrs-btn-primary" disabled={!canSave}>
+          <Button type="submit" disabled={!canSave}>
             保存为版本
-          </button>
+          </Button>
         </form>
-        <p className="vrs-hint" id={nameHelpId}>
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]" id={nameHelpId}>
           保存只记录当前内容；不会调用 AI、不会自动分叉。同名版本会各自成为独立条目。
         </p>
         {current === null ? (
-          <p className="vrs-alert">还没有打开的工作区记录，保存已禁用。</p>
+          <Alert variant="warning">
+            <AlertDescription>还没有打开的工作区记录，保存已禁用。</AlertDescription>
+          </Alert>
         ) : null}
       </section>
 
-      <section className="vrs-block" aria-labelledby={listHeadingId}>
-        <h3 className="vrs-block-title" id={listHeadingId}>
+      <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={listHeadingId}>
+        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={listHeadingId}>
           已保存版本（{items.length}/{VERSION_LIMITS.maxCount}）
         </h3>
         {items.length === 0 ? (
-          <p className="vrs-empty">还没有保存的版本。</p>
+          <p className="m-0 rounded-[10px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-4 text-sm text-muted-foreground">
+            还没有保存的版本。
+          </p>
         ) : (
-          <ul className="vrs-list">
+          <ul className="m-0 grid list-none gap-2 p-0">
             {items.map((version) => (
-              <li className="vrs-item" key={version.id}>
-                <div className="vrs-item-main">
-                  <h4 className="vrs-item-title">{version.name}</h4>
-                  <p className="vrs-muted">
+              <li
+                className="flex flex-wrap items-start justify-between gap-3 rounded-[6px] border border-border bg-card p-3"
+                key={version.id}
+              >
+                <div className="min-w-0 flex-[1_1_240px]">
+                  <h4 className="m-0 mb-1 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]">{version.name}</h4>
+                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
                     {formatDateTime(version.createdAt)} · 快照 revision{' '}
                     {version.workspaceRevision} ·{' '}
                     {version.budget === null ? '没有预算数据' : '含预算快照'}
                   </p>
                 </div>
-                <button
+                <Button
                   type="button"
-                  className="vrs-btn"
+                  variant="outline"
                   onClick={() => handlePreviewAdopt(version.id)}
                   disabled={busy || current === null || blocked}
                   aria-label={`预览采用版本 ${version.name}（${formatDateTime(version.createdAt)}）`}
                 >
                   预览采用
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
         )}
         {items.length >= VERSION_LIMITS.maxCount ? (
-          <p className="vrs-alert">
-            已达到 {VERSION_LIMITS.maxCount} 个版本上限；新保存会明确失败，不会自动驱逐旧版本。
-          </p>
+          <Alert variant="warning">
+            <AlertDescription>
+              已达到 {VERSION_LIMITS.maxCount} 个版本上限；新保存会明确失败，不会自动驱逐旧版本。
+            </AlertDescription>
+          </Alert>
         ) : null}
       </section>
 
       {pendingAdopt !== null ? (
-        <section className="vrs-preview" aria-labelledby={previewHeadingId}>
-          <h3 className="vrs-block-title" id={previewHeadingId}>
+        <section
+          className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-accent)] bg-accent-surface p-4"
+          aria-labelledby={previewHeadingId}
+        >
+          <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={previewHeadingId}>
             采用预览：{pendingAdopt.versionName}
           </h3>
-          <p>
+          <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             将一次整体恢复该版本的 Trip、sidecar 与预算；当前记录在确认前不会改变。
           </p>
-          <ul className="vrs-plain-list">
+          <ul className="m-0 list-disc pl-5 grid gap-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             <li>
               revision：当前 {current?.workspaceRevision ?? '未知'} →{' '}
               {pendingAdopt.nextWorkspaceRevision}；快照内旧 revision{' '}
@@ -547,13 +576,17 @@ export default function VersionsPanel({
           </ul>
 
           {pendingAdopt.needsReconfirmation.length === 0 ? (
-            <p className="vrs-muted">当前工作区没有该版本之外的额外条目。</p>
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+              当前工作区没有该版本之外的额外条目。
+            </p>
           ) : (
             <>
-              <p className="vrs-alert">
-                以下当前工作区条目不在该版本中，采用后不会恢复；请先确认或取消预览：
-              </p>
-              <ul className="vrs-plain-list">
+              <Alert variant="warning">
+                <AlertDescription>
+                  以下当前工作区条目不在该版本中，采用后不会恢复；请先确认或取消预览：
+                </AlertDescription>
+              </Alert>
+              <ul className="m-0 list-disc pl-5 grid gap-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
                 {pendingAdopt.needsReconfirmation.map((item) => (
                   <li key={`${item.kind}-${item.id}`}>
                     {item.label}（{item.kind}）
@@ -563,18 +596,17 @@ export default function VersionsPanel({
             </>
           )}
 
-          <div className="vrs-actions">
-            <button
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
               type="button"
-              className="vrs-btn vrs-btn-primary"
               onClick={handleConfirmAdopt}
               disabled={busy}
             >
               确认采用此版本
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="vrs-btn"
+              variant="outline"
               onClick={() => {
                 setPendingAdopt(null)
                 setPreviewError(null)
@@ -582,49 +614,52 @@ export default function VersionsPanel({
               disabled={busy}
             >
               取消预览
-            </button>
+            </Button>
           </div>
-          <p className="vrs-hint">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             只有点「确认采用此版本」才会把完整 proposal 交给父级；面板不写存储。
           </p>
         </section>
       ) : null}
 
       {undoProposal !== null && undoProposal !== undefined ? (
-        <section className="vrs-preview" aria-label="最近一次采用可撤销">
-          <h3 className="vrs-block-title">最近一次采用可整体撤销</h3>
-          <p>
+        <section
+          className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-accent)] bg-accent-surface p-4"
+          aria-label="最近一次采用可撤销"
+        >
+          <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]">最近一次采用可整体撤销</h3>
+          <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             撤销会恢复采用前的 Trip、sidecar 与预算；revision 仍从当前{' '}
             {undoProposal.base.identity.workspaceRevision} →{' '}
             {undoProposal.nextWorkspaceRevision}，epoch → {undoProposal.nextEpoch}。
             不会回放旧 revision，也不会只撤销其中一段。
           </p>
-          <div className="vrs-actions">
-            <button
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
               type="button"
-              className="vrs-btn vrs-btn-primary"
               onClick={handleUndo}
               disabled={busy}
             >
               撤销本次采用
-            </button>
+            </Button>
           </div>
         </section>
       ) : null}
 
-      <section className="vrs-block" aria-labelledby={diffHeadingId}>
-        <h3 className="vrs-block-title" id={diffHeadingId}>
+      <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={diffHeadingId}>
+        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={diffHeadingId}>
           两个版本对比
         </h3>
         {items.length < 2 ? (
-          <p className="vrs-muted">至少保存两个版本后才能对比。</p>
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">至少保存两个版本后才能对比。</p>
         ) : (
           <>
-            <div className="vrs-selects">
-              <label className="vrs-field" htmlFor={diffAIdInput}>
-                <span>版本 A</span>
+            <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-3 max-md:grid-cols-[minmax(0,1fr)]">
+              <label className="grid min-w-0 gap-1" htmlFor={diffAIdInput}>
+                <span className="text-sm font-semibold text-[color:var(--color-ink-2)]">版本 A</span>
                 <select
                   id={diffAIdInput}
+                  className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                   value={diffAId}
                   onChange={(event) => setDiffAId(event.target.value)}
                 >
@@ -635,10 +670,11 @@ export default function VersionsPanel({
                   ))}
                 </select>
               </label>
-              <label className="vrs-field" htmlFor={diffBIdInput}>
-                <span>版本 B</span>
+              <label className="grid min-w-0 gap-1" htmlFor={diffBIdInput}>
+                <span className="text-sm font-semibold text-[color:var(--color-ink-2)]">版本 B</span>
                 <select
                   id={diffBIdInput}
+                  className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                   value={diffBId}
                   onChange={(event) => setDiffBId(event.target.value)}
                 >
@@ -651,46 +687,47 @@ export default function VersionsPanel({
               </label>
             </div>
             {diffState.error !== null ? (
-              <p className="vrs-alert" role="alert">
-                {diffState.error}
-              </p>
+              <Alert variant="warning" role="alert">
+                <AlertDescription>{diffState.error}</AlertDescription>
+              </Alert>
             ) : null}
             {diffState.diff !== null ? <DiffView diff={diffState.diff} /> : null}
           </>
         )}
       </section>
 
-      <section className="vrs-block" aria-labelledby={backupHeadingId}>
-        <h3 className="vrs-block-title" id={backupHeadingId}>
+      <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={backupHeadingId}>
+        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={backupHeadingId}>
           版本库独立备份 / 导入
         </h3>
-        <p className="vrs-muted">
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
           只处理版本库自身，不包含工作区或候选库；不做跨库原子恢复。导入只预览，确认后才交给
           父级显式保存。
         </p>
-        <div className="vrs-actions">
-          <button
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
             type="button"
-            className="vrs-btn"
+            variant="outline"
             onClick={handleExportPreview}
             disabled={busy || items.length === 0}
           >
             预览版本库备份
-          </button>
+          </Button>
           {backupPreview !== null && onDownloadBackup !== undefined ? (
-            <button
+            <Button
               type="button"
-              className="vrs-btn"
+              variant="outline"
               onClick={() => onDownloadBackup(backupPreview)}
               disabled={busy}
             >
               下载备份文件
-            </button>
+            </Button>
           ) : null}
-          <label className="vrs-file" htmlFor={fileId}>
+          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-ink-2)]" htmlFor={fileId}>
             <span>选择版本库备份文件</span>
             <input
               id={fileId}
+              className="h-11 max-w-full rounded-[6px] border border-input bg-card px-2 py-1.5 text-sm file:mr-3 file:rounded-[4px] file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:font-medium"
               type="file"
               accept="application/json,.json"
               onChange={handleFileChange}
@@ -698,25 +735,27 @@ export default function VersionsPanel({
             />
           </label>
         </div>
-        {fileBusy ? <p className="vrs-muted">正在读取文件…</p> : null}
+        {fileBusy ? (
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">正在读取文件…</p>
+        ) : null}
         {fileError !== null ? (
-          <p className="vrs-alert" role="alert">
-            {fileError}
-          </p>
+          <Alert variant="warning" role="alert">
+            <AlertDescription>{fileError}</AlertDescription>
+          </Alert>
         ) : null}
 
         {backupPreview !== null ? (
-          <div className="vrs-small-preview">
-            <p>
+          <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-3">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
               备份预览：仅版本库 · {backupPreview.record.items.length} 个版本 ·{' '}
               {backupPreview.bytes} 字节（UTF-8）
             </p>
-            <p className="vrs-hint">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               预览与下载使用同一份字节；面板不直接写文件，下载由父级 callback 接入。
             </p>
-            <button
+            <Button
               type="button"
-              className="vrs-btn"
+              variant="outline"
               onClick={() => {
                 setBackupPreview(null)
                 setFileError(null)
@@ -724,36 +763,37 @@ export default function VersionsPanel({
               disabled={busy}
             >
               关闭备份预览
-            </button>
+            </Button>
           </div>
         ) : null}
 
         {importPreview !== null ? (
-          <div className="vrs-small-preview">
-            <p>
+          <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-3">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
               导入预览：仅版本库 · {importPreview.record.items.length} 个版本 ·{' '}
               {importPreview.bytes} 字节（UTF-8）· 未写入
             </p>
-            <div className="vrs-actions">
-              <button
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
                 type="button"
-                className="vrs-btn vrs-btn-primary"
                 onClick={handleConfirmImport}
                 disabled={busy || blocked || onImportVersions === undefined}
               >
                 确认导入版本库
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="vrs-btn"
+                variant="outline"
                 onClick={() => setImportPreview(null)}
                 disabled={busy}
               >
                 取消导入
-              </button>
+              </Button>
             </div>
             {onImportVersions === undefined ? (
-              <p className="vrs-hint">父级尚未接入导入 callback；当前只保留预览。</p>
+              <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+                父级尚未接入导入 callback；当前只保留预览。
+              </p>
             ) : null}
           </div>
         ) : null}

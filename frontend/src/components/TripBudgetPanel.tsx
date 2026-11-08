@@ -20,6 +20,8 @@
  */
 import { useEffect, useId, useState } from 'react'
 import type { Trip } from '../lib/api'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import {
   AMOUNT_LIMIT_TEXT,
   BUDGET_CATEGORIES,
@@ -44,7 +46,6 @@ import {
   type BudgetSessionState,
   type BudgetTripContext,
 } from '../lib/tripBudget'
-import './tripBudgetPanel.css'
 import TripBudgetTransfer from './TripBudgetTransfer'
 
 export interface TripBudgetPanelProps {
@@ -186,64 +187,79 @@ export default function TripBudgetPanel({
 
   return (
     <section
-      className="tbg"
+      className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4"
       role="region"
       aria-labelledby={headingId}
       data-testid="trip-budget-panel"
       aria-busy={false}
     >
-      <div className="tbg-head">
-        <div className="tbg-head-main">
-          <p className="tbg-eyebrow">行程级工具 · 不写行程</p>
-          <h3 className="tbg-title" id={headingId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">行程级工具 · 不写行程</p>
+          <h3 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]" id={headingId}>
             费用估算（{trip.title}）
           </h3>
         </div>
-        <button type="button" className="tbg-btn" onClick={onClose}>
+        <Button variant="outline" onClick={onClose}>
           收起
-        </button>
+        </Button>
       </div>
 
-      <p className="tbg-note">
+      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
         手动填写费用做估算：人民币 CNY 是这里的固定输入单位，金额按整项总费用填，
         不按人数或天数自动乘算，也不会去查询真实价格、库存或汇率。
         名称和金额都是你输入或此前确认导入的记录，不是任何服务提供者的报价。
       </p>
-      <p className="tbg-memory-note" role="note">{memoryNotice()}</p>
+      <p
+        role="note"
+        className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]"
+      >
+        {memoryNotice()}
+      </p>
 
       {locked && (
-        <div className="tbg-stale-actions">
-          <p className="tbg-owner-note" role="status" data-testid="budget-owner-note">
-            {stale
-              ? `${OWNER_MISMATCH_TEXT} 旧草稿属于${session.owner?.tripTitle ? `「${session.owner.tripTitle}」` : '旧行程'}，内容在下方只读保留。`
-              : OWNER_UNVERIFIABLE_TEXT}
-          </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Alert variant="warning" role="status" className="min-w-0 flex-[1_1_320px]" data-testid="budget-owner-note">
+            <AlertDescription>
+              {stale
+                ? `${OWNER_MISMATCH_TEXT} 旧草稿属于${session.owner?.tripTitle ? `「${session.owner.tripTitle}」` : '旧行程'}，内容在下方只读保留。`
+                : OWNER_UNVERIFIABLE_TEXT}
+            </AlertDescription>
+          </Alert>
           {stale && !unverifiable && (
             <>
-              <button type="button" className="tbg-btn" onClick={handleAdopt}>
+              <Button variant="outline" onClick={handleAdopt}>
                 沿用这份费用到当前行程
-              </button>
-              <button type="button" className="tbg-btn" onClick={handleCreate}>
+              </Button>
+              <Button variant="outline" onClick={handleCreate}>
                 新建当前行程费用草稿
-              </button>
+              </Button>
             </>
           )}
         </div>
       )}
 
       {noTripVersion && !locked && (
-        <p className="tbg-owner-note" role="status">
-          还没有绑定行程版本：直接填写或新增后，会自动归属当前显示的这版行程。
-        </p>
+        <Alert variant="warning" role="status">
+          <AlertDescription>
+            还没有绑定行程版本：直接填写或新增后，会自动归属当前显示的这版行程。
+          </AlertDescription>
+        </Alert>
       )}
 
-      <fieldset className="tbg-body" disabled={locked}>
-        <legend className="visually-hidden">费用明细与预算</legend>
+      <fieldset
+        className="grid min-w-0 gap-4 rounded-[10px] border border-border bg-background p-4 m-0 disabled:opacity-75"
+        disabled={locked}
+      >
+        <legend className="sr-only">费用明细与预算</legend>
 
-        <div className="tbg-budget">
-          <label htmlFor={budgetInputId}>整趟行程总预算（元，可留空）</label>
+        <div className="grid min-w-0 gap-1">
+          <label htmlFor={budgetInputId} className="text-sm font-semibold text-[color:var(--color-ink-2)]">
+            整趟行程总预算（元，可留空）
+          </label>
           <input
             id={budgetInputId}
+            className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
             type="text"
             inputMode="decimal"
             autoComplete="off"
@@ -252,24 +268,33 @@ export default function TripBudgetPanel({
             aria-describedby={budgetHelpId}
             placeholder={`例如 5000 或 ${AMOUNT_LIMIT_TEXT}`}
           />
-          <p id={budgetHelpId} className="tbg-hint">
+          <p id={budgetHelpId} className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             预算留空就不做预算比较；单项与预算最多 {AMOUNT_LIMIT_TEXT} 元、2 位小数。
           </p>
         </div>
 
-        <div className="tbg-rows">
+        <div className="grid min-w-0 gap-3">
           {session.rows.length === 0 ? (
-            <p className="tbg-empty" role="note">
+            <p
+              role="note"
+              className="m-0 rounded-[10px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-4 text-sm leading-[1.65] text-muted-foreground"
+            >
               还没有费用明细。点「添加费用项」开始填写；留空的金额不会按 0 计入。
             </p>
           ) : (
             session.rows.map((row, index) => {
             return (
-                <div className="tbg-row" key={row.id} data-testid="budget-row" data-rowid={row.id}>
-                  <div className="tbg-row-field tbg-row-category">
-                    <label htmlFor={`${labelFor('name', index)}-cat`}>分类</label>
+                <div
+                  className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)_minmax(0,1fr)_auto] items-end gap-3 rounded-[6px] border border-border bg-card p-3 max-md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] max-[400px]:grid-cols-[minmax(0,1fr)]"
+                  key={row.id}
+                  data-testid="budget-row"
+                  data-rowid={row.id}
+                >
+                  <div className="grid min-w-0 gap-1">
+                    <label htmlFor={`${labelFor('name', index)}-cat`} className="text-sm font-semibold text-[color:var(--color-ink-2)]">分类</label>
                     <select
                       id={`${labelFor('name', index)}-cat`}
+                      className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                       value={row.category}
                       onChange={(event) =>
                         handleFieldChange(row.id, { category: event.target.value as BudgetCategoryId })
@@ -282,10 +307,11 @@ export default function TripBudgetPanel({
                       ))}
                     </select>
                   </div>
-                  <div className="tbg-row-field tbg-row-name">
-                    <label htmlFor={labelFor('name', index)}>名称（可留空）</label>
+                  <div className="grid min-w-0 gap-1">
+                    <label htmlFor={labelFor('name', index)} className="text-sm font-semibold text-[color:var(--color-ink-2)]">名称（可留空）</label>
                     <input
                       id={labelFor('name', index)}
+                      className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                       type="text"
                       autoComplete="off"
                       value={row.name}
@@ -294,10 +320,11 @@ export default function TripBudgetPanel({
                       placeholder="例如 高铁票"
                     />
                   </div>
-                  <div className="tbg-row-field tbg-row-amount">
-                    <label htmlFor={labelFor('amount', index)}>金额（元）</label>
+                  <div className="grid min-w-0 gap-1">
+                    <label htmlFor={labelFor('amount', index)} className="text-sm font-semibold text-[color:var(--color-ink-2)]">金额（元）</label>
                     <input
                       id={labelFor('amount', index)}
+                      className="h-11 w-full rounded-[6px] border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                       type="text"
                       inputMode="decimal"
                       autoComplete="off"
@@ -306,60 +333,66 @@ export default function TripBudgetPanel({
                       placeholder="0 也算一项"
                     />
                   </div>
-                  <button
+                  <Button
                     type="button"
-                    className="tbg-btn tbg-row-remove"
+                    variant="outline"
+                    size="sm"
+                    className="justify-self-end max-md:justify-self-start"
                     onClick={() => handleRemoveRow(row.id)}
                     aria-label={`删除第 ${index + 1} 项费用`}
                   >
                     删除
-                  </button>
+                  </Button>
                 </div>
               )
             })
           )}
         </div>
 
-        <div className="tbg-actions">
-          <button
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
             type="button"
-            className="tbg-btn"
+            variant="outline"
             onClick={handleAddRow}
             disabled={session.rows.length >= MAX_BUDGET_ITEMS}
           >
             添加费用项
-          </button>
-          <button type="button" className="tbg-btn" onClick={handleClear}>
+          </Button>
+          <Button type="button" variant="outline" onClick={handleClear}>
             清空本次费用
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="tbg-btn"
+            variant="outline"
             onClick={handleUndo}
             disabled={session.undo === null}
           >
             撤销上一步
-          </button>
-          <button type="button" className="tbg-btn tbg-btn-primary" onClick={handleCompute}>
+          </Button>
+          <Button type="button" onClick={handleCompute}>
             计算已填费用
-          </button>
+          </Button>
         </div>
 
         {rowLimitReached && (
-          <p className="tbg-hint" role="note">
+          <p role="note" className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             费用明细最多 {MAX_BUDGET_ITEMS} 项；先删减或合并项目后再添加。
           </p>
         )}
         {actionError && (
-          <p className="tbg-error" role="alert" data-testid="budget-action-error">
-            {actionError}
-          </p>
+          <Alert variant="warning" role="alert" data-testid="budget-action-error">
+            <AlertDescription>{actionError}</AlertDescription>
+          </Alert>
         )}
       </fieldset>
 
-      <div className="tbg-live" aria-live="polite" aria-atomic="true" id={liveId}>
+      <div aria-live="polite" aria-atomic="true" id={liveId} className="[&:empty]:hidden">
         {result && (
-          <p className="tbg-notice" data-testid="budget-notice" data-tone={result.comparison.kind}>
+          <p
+            data-testid="budget-notice"
+            data-tone={result.comparison.kind}
+            className="m-0 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary px-4 py-3 text-sm leading-[1.65] text-[color:var(--color-ink-2)] data-[tone=over]:border-[color:var(--color-accent)] data-[tone=over]:bg-[color:var(--color-warn-bg)] data-[tone=over]:text-[color:var(--color-warn-ink)]"
+          >
             {result.comparison.kind === 'none'
               ? result.comparison.message
               : result.comparison.message}
@@ -368,31 +401,31 @@ export default function TripBudgetPanel({
       </div>
 
       {result && (
-        <div className="tbg-result" data-testid="budget-result">
-          <h4 className="tbg-result-title">计算结果</h4>
+        <div className="grid gap-3 rounded-[10px] border border-border bg-background p-4" data-testid="budget-result">
+          <h4 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]">计算结果</h4>
           {result.hasKnownAmounts ? (
-            <dl className="tbg-facts">
-              <div>
-                <dt>已知合计（{result.knownCount} 项）</dt>
-                <dd data-testid="budget-known-total">{result.knownTotalText} 元</dd>
+            <dl className="m-0 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-x-4 gap-y-2 max-md:grid-cols-[minmax(0,1fr)]">
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">已知合计（{result.knownCount} 项）</dt>
+                <dd className="m-0 font-display text-lg font-bold leading-[1.3] [overflow-wrap:anywhere]" data-testid="budget-known-total">{result.knownTotalText} 元</dd>
               </div>
               {result.categorySubtotals.map((subtotal) => (
-                <div key={subtotal.category}>
-                  <dt>
+                <div className="min-w-0" key={subtotal.category}>
+                  <dt className="text-xs text-muted-foreground">
                     {subtotal.label}（{subtotal.count} 项）
                   </dt>
-                  <dd>{formatCents(subtotal.cents)} 元</dd>
+                  <dd className="m-0 font-display text-lg font-bold leading-[1.3] [overflow-wrap:anywhere]">{formatCents(subtotal.cents)} 元</dd>
                 </div>
               ))}
             </dl>
           ) : (
-            <p className="tbg-empty-result" data-testid="budget-no-amounts">
+            <p className="m-0 font-display text-md text-[color:var(--color-ink-2)]" data-testid="budget-no-amounts">
               暂无可合计金额。
             </p>
           )}
 
           {result.emptyCount > 0 && (
-            <p className="tbg-missing">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
               未填写金额的 {result.emptyCount} 项没有计入合计（含 0 元以外留空的行）：
               {result.emptyLines.map((line, index) => (
                 <span key={line.rowId}>
@@ -405,9 +438,11 @@ export default function TripBudgetPanel({
           )}
 
           {result.issueCount > 0 && (
-            <div className="tbg-issues" data-testid="budget-issues">
-              <p className="tbg-issues-title">以下 {result.issueCount} 项金额无效，未计入合计，原文已保留：</p>
-              <ul>
+            <div className="grid gap-2 rounded-[10px] border border-[color:var(--color-accent)] bg-[color:var(--color-warn-bg)] p-3 px-4" data-testid="budget-issues">
+              <p className="m-0 text-sm font-semibold leading-[1.65] text-[color:var(--color-warn-ink)]">
+                以下 {result.issueCount} 项金额无效，未计入合计，原文已保留：
+              </p>
+              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-[1.65] text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]">
                 {result.issueLines.map((line) => (
                   <li key={line.rowId}>
                     {line.name.trim() === '' ? '未命名' : line.name}
@@ -418,7 +453,7 @@ export default function TripBudgetPanel({
             </div>
           )}
 
-          <p className="tbg-hint">{result.notice}</p>
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{result.notice}</p>
         </div>
       )}
 

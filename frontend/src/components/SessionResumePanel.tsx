@@ -10,6 +10,8 @@
  *   不触碰正式保存的行程。
  */
 import { useId, useRef, useState } from 'react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import type { SessionResumeLoad } from '../lib/sessionRestore'
 import type { WorkspaceRecordV1 } from '../lib/workspaceTypes'
 import { formatDateTime } from '../lib/format'
@@ -155,21 +157,25 @@ export default function SessionResumePanel({
   const canManageData = enabled || hasStoredData || state.kind === 'problem' || offCheckedFound
 
   return (
-    <section className="session-resume" data-testid="session-resume-card" aria-label="本机工作进度留存">
-      <div className="session-resume-head">
-        <p className="field-label">在此浏览器保留工作进度</p>
+    <section
+      className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-card p-4 mb-6"
+      data-testid="session-resume-card"
+      aria-label="本机工作进度留存"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">在此浏览器保留工作进度</p>
         {!enabled && (
-          <button type="button" className="btn" onClick={onEnable}>
+          <Button type="button" onClick={onEnable}>
             在此浏览器保留工作进度
-          </button>
+          </Button>
         )}
         {enabled && (
-          <button type="button" className="btn btn-ghost" onClick={onDisable}>
+          <Button type="button" variant="ghost" onClick={onDisable}>
             关闭保留（已留存的副本会保留）
-          </button>
+          </Button>
         )}
       </div>
-      <p className="field-help" id={noteId}>
+      <p className="m-0 text-xs leading-relaxed text-[color:var(--color-faint)]" id={noteId}>
         启用后本页面会把当前行程、未应用的草稿修改和手工费用原字符串自动留存到本浏览器，
         下次打开时先给你看概况，由你决定是否恢复。只在本地保存，不联网、不同步设备，
         也不等于「保存行程」：正式保存仍需点「保存当前行程」。编辑器里未提交的表单输入、
@@ -177,44 +183,50 @@ export default function SessionResumePanel({
       </p>
 
       {state.kind === 'problem' && (
-        <p className="field-error" role="alert">
-          {state.message}
-          {state.rawPreserved &&
-            !state.canRestore &&
-            ' 原始数据已原样保留；可用下方「删除本机恢复副本」清除后再重新开始。'}
-        </p>
+        <Alert variant="destructive" role="alert">
+          <AlertDescription>
+            {state.message}
+            {state.rawPreserved &&
+              !state.canRestore &&
+              ' 原始数据已原样保留；可用下方「删除本机恢复副本」清除后再重新开始。'}
+          </AlertDescription>
+        </Alert>
       )}
 
       {state.kind === 'off' && (
-        <div className="session-resume-manage">
-          <p className="field-help">
+        <div className="flex flex-wrap gap-2">
+          <p className="m-0 w-full text-xs leading-relaxed text-[color:var(--color-faint)]">
             关闭保留后，之前留存的副本仍会留在这台浏览器里。点「检查本机恢复副本」才会读取一次本地副本；
             检查不会开启留存，也不会恢复或改动当前页面内容。
           </p>
-          <button type="button" className="btn btn-ghost" onClick={onCheckStoredData}>
+          <Button type="button" variant="ghost" onClick={onCheckStoredData}>
             检查本机恢复副本
-          </button>
+          </Button>
           {offManagement.kind === 'found' && (
-            <p className="field-help" role="status">
-              检查到这台浏览器仍留有恢复副本（留存已关闭，不会自动恢复）。可用下方「删除本机恢复副本」独立清除。
-            </p>
+            <Alert role="status">
+              <AlertDescription>
+                检查到这台浏览器仍留有恢复副本（留存已关闭，不会自动恢复）。可用下方「删除本机恢复副本」独立清除。
+              </AlertDescription>
+            </Alert>
           )}
           {offManagement.kind === 'not_found' && (
-            <p className="field-help" role="status">
-              未找到本机恢复副本：这台浏览器当前没有留存的恢复数据。
-            </p>
+            <Alert role="status">
+              <AlertDescription>
+                未找到本机恢复副本：这台浏览器当前没有留存的恢复数据。
+              </AlertDescription>
+            </Alert>
           )}
           {offManagement.kind === 'error' && (
-            <p className="field-error" role="alert">
-              {offManagement.message}
-            </p>
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>{offManagement.message}</AlertDescription>
+            </Alert>
           )}
         </div>
       )}
 
       {summary && state.kind === 'pending' && (
-        <div className="session-resume-pending">
-          <p>
+        <div className="grid gap-2 rounded-[6px] border-l-[3px] border-l-[color:var(--color-ok)] bg-secondary p-3">
+          <p className="m-0 max-w-[72ch] text-sm leading-[1.65]">
             有上次的工作进度待恢复（保存于 {summary.savedAt === null ? '未知时间' : formatDateTime(summary.savedAt)}）：
             《{summary.tripTitle}》共 {summary.dayCount} 天
             {summary.hasDraft ? '，含未应用的草稿修改' : ''}
@@ -222,30 +234,29 @@ export default function SessionResumePanel({
             {summary.workspaceNote ? `，${summary.workspaceNote}` : ''}。
             {summary.sourceNote}；恢复时工作区数据会随行程一起整体替换，不会只换其中一项。点「恢复」才会替换当前页面。
           </p>
-          <div className="session-resume-actions">
-            <button type="button" className="btn btn-primary" onClick={onRestore}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={onRestore}>
               恢复上次的工作进度
-            </button>
+            </Button>
             {!discardConfirm ? (
-              <button type="button" className="btn" onClick={() => setDiscardConfirmEpoch(confirmEpoch)}>
+              <Button type="button" variant="outline" onClick={() => setDiscardConfirmEpoch(confirmEpoch)}>
                 放弃恢复并开始留存当前进度
-              </button>
+              </Button>
             ) : (
-              <div className="session-resume-confirm" ref={discardConfirmRef} role="group">
+              <div className="flex flex-wrap items-center gap-2 text-sm" ref={discardConfirmRef} role="group">
                 <span>这会用当前页面内容替换上次留存并继续自动留存，上次的副本将被覆盖。确定？</span>
-                <button
+                <Button
                   type="button"
-                  className="btn"
                   onClick={() => {
                     setDiscardConfirmEpoch(null)
                     onDiscardAndStart()
                   }}
                 >
                   确认放弃恢复
-                </button>
-                <button type="button" className="btn btn-ghost" onClick={() => setDiscardConfirmEpoch(null)}>
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setDiscardConfirmEpoch(null)}>
                   取消
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -253,11 +264,11 @@ export default function SessionResumePanel({
       )}
 
       {canManageData && (
-        <div className="session-resume-manage">
+        <div className="flex flex-wrap gap-2">
           {!deleteConfirm ? (
-            <button
+            <Button
               type="button"
-              className="btn btn-ghost"
+              variant="ghost"
               onClick={() => {
                 const prepared = onPrepareDelete()
                 if (!prepared.ok) return
@@ -266,24 +277,23 @@ export default function SessionResumePanel({
               }}
             >
               删除本机恢复副本
-            </button>
+            </Button>
           ) : (
-            <div className="session-resume-confirm" ref={deleteConfirmRef} role="group">
+            <div className="flex flex-wrap items-center gap-2 text-sm" ref={deleteConfirmRef} role="group">
               <span>只删除本机留存的恢复副本，不影响已保存的行程与备份文件。确定删除？</span>
-              <button
+              <Button
                 type="button"
-                className="btn"
-                data-variant="destructive"
+                variant="destructive"
                 onClick={() => {
                   setDeleteConfirmEpoch(null)
                   onDeleteData(deleteExpectedRaw)
                 }}
               >
                 确认删除副本
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setDeleteConfirmEpoch(null)}>
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setDeleteConfirmEpoch(null)}>
                 取消
-              </button>
+              </Button>
             </div>
           )}
         </div>

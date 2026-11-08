@@ -303,3 +303,35 @@
 - 浏览器证据：dev-stub + Vite dev + 本机 Chromium，全程 loopback 离线；18 张截图（行程列表 / 站点详情联动地图 / 天气查询 / 复制本日 / AI 单日生成→预览→应用 / 助手建议→应用→撤销 / 草稿新增→上移→应用→放弃确认流 / 1280 主线 / 375 窄屏）。桌面与窄屏均无横向滚动；Leaflet 地图容器、marker 联动、popup 正常（地图内部样式未动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w2-shots\`（w2-01…w2-18）。
 
 **遗留**：`app.css` 死规则与 `.empty-panel` / `.text-note` 等 W4 退役；`data-testid="stop-row"` / `stop-detail` 退役计划随 W4（届时站点行改 `role=listitem` + 可访问名定位）。
+
+### W3a · 工作区面板（2026-11-08 完成，待 PM 验收）
+
+**迁移范围**（§5 W3a 名单全量 7 个）：`WorkspaceHub`、`VersionsPanel`、`TripBudgetPanel`（含 `TripBudgetTransfer`）、`ChecklistPanel`、`CandidatePoolPanel`、`SavedTripsPanel`、`SessionResumePanel`。全部从面板专属 CSS / app.css 旧类迁到 shadcn 组件 + Tailwind 工具类 + theme.css 语义变量；业务逻辑、数据流、文案红线零变化。
+
+**删除的旧 CSS**（整文件退役，import 一并清理）：
+
+| 文件 | 状态 |
+|---|---|
+| `src/components/WorkspaceHub.css`（220 行，全部 `.wsh-*`） | 已删除 |
+| `src/components/VersionsPanel.css`（391 行，全部 `.vrs-*`） | 已删除 |
+| `src/components/tripBudgetPanel.css`（374 行，全部 `.tbg-*`） | 已删除 |
+| `src/components/tripBudgetTransfer.css`（313 行，全部 `.tbt-*`） | 已删除 |
+| `src/components/checklistPanel.css`（433 行，全部 `.chk-*`） | 已删除 |
+| `src/components/candidatePoolPanel.css`（562 行，全部 `.cpl-*`） | 已删除 |
+
+`app.css` 中的 `.session-resume-*` 全节与 SavedTripsPanel 专用的 `.saved-*` 规则（`.saved-area` / `.saved-toolbar` / `.saved-actions` / `.saved-notice` / `.saved-panel` / `.saved-state` / `.saved-item` / `.saved-list` / `.saved-undo` 系列等）已删除。仍保留三类（有引用，属后续波次）：`.saved-offline` / `.saved-offline-note` / `.trip-restored-note`（App.tsx，W4 全局 shell 退役）、`.btn-save`（TripTransferPanel.tsx，W3b 退役），并已在 app.css 注释登记。
+
+**组件用法**（零新依赖，全部复用既有 ui/ 手工组件）：Button（default/outline/ghost/destructive + size sm）、Alert（default/warning/destructive/success，role 由调用方显式给）、Badge（default/secondary/outline/success）、Checkbox（ChecklistPanel 原生勾选迁移到 ui/checkbox）、Input / Select / Textarea（候选池与清单表单）、Field 语义不再需要处直接 label+工具类。原生 select/input 保留（Radix 化属行为变化，不在本波）。文件上传 input 加 `file:` 工具类统一按钮观感。
+
+**测试选择器迁移**（行为断言零放宽）：`SavedTripsPanel.test.tsx` 4 处 `.saved-notice` → `[data-slot="alert-description"]`（其中 1 处加 `[aria-live="polite"]` 前缀消歧「不可用」面板状态与工具栏通知的同文案双 Alert）。其余面板测试全走可访问名 / role / data-testid，未受影响。
+
+**A 清单修掉项**：A5（候选池空态不再虚高——空态改为 Alert 单行，新增表单常驻但紧凑）；A2 候选池空态两句重复文案合并为一条状态说明；A2 会话恢复「标签与按钮同名」——`SessionResumePanel` 启用前标签是标题文字 + 按钮同名保留（入口按钮文案即功能名，属界面惯例，不属拼接错误；经核对原文不改文案）。A4 嵌套边框在七个面板内收敛为一层 border + 凹面底（版本库块、预算明细、候选条目）。A6 按钮层级：主操作 default、次操作 outline、危险动作 destructive（候选删除、确认删除副本）。
+
+**验证证据**（2026-11-08，Node v22.21.1）：
+
+- `vitest` 全量（排除禁触探针）：106 文件 / 2283 用例，2282 通过；1 例超时（CandidatePoolPanel 200 条压测，S5 登记 flake，白名单内），隔离复跑 19/19 绿（本波迁移后复跑）。
+- `typecheck`：`tsc -b --force` 通过。
+- `build`：`vite build` 通过（dist CSS ≈ 115.8 kB / gzip ≈ 21.9 kB，较 W2 的 153 kB 下降，因六个面板 CSS 退役）。
+- 浏览器证据：dev-stub + Vite dev（**本波起截图基建显式挂 `@tailwindcss/vite` 插件**——W2 脚本未挂插件时靠旧 CSS 残留渲染，W3a 旧 CSS 已删必须真实走 Tailwind）+ 本机 Chromium，全程 loopback 离线、图片请求全 mock；22 张截图（保存行程→列表→删除撤销恢复 / 新建工作区→保存 / 版本库→存两版→对比 / 清单模板勾选→勾选完成 / 候选池手工新增→加入草稿预览→确认（父级开草稿→放弃草稿确认流）/ 费用添加→计算→预算比较 / 会话恢复启用 / 1280 主线 / 375 窄屏）。桌面与窄屏均无横向滚动；Leaflet 地图容器正常（地图内部样式未动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w3a-shots\`（w3a-01…w3a-21b，22 张）。
+
+**遗留**：W3a 面板曾引用的 app.css 全局类（`.btn` / `.btn-primary` / `.btn-ghost` / `.field-label` / `.field-help` / `.field-error`）仍被 App.tsx shell 与 W3b 面板使用，W4 退役；候选池「有资料卡」徽标从 span 改为小号 Button（可点击入口，语义更准确，测试走 aria-label 不受影响）。

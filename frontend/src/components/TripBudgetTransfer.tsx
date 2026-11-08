@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
 import type { Trip } from '../lib/api'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import {
   BUDGET_RECORD_SOURCE_TEXT,
   applyBudgetImport,
@@ -15,7 +17,6 @@ import {
   type BudgetSessionState,
   type BudgetTripContext,
 } from '../lib/tripBudget'
-import './tripBudgetTransfer.css'
 
 export interface TripBudgetTransferProps {
   /** 当前页面正在显示的行程；子面板只读，不修改。 */
@@ -486,164 +487,181 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
   const importSummary = liveImportPreview ? summarizeBudgetDraft(liveImportPreview.draft) : null
 
   return (
-    <div className="tbt" role="region" aria-labelledby={headingId} data-testid="budget-transfer">
-      <h4 className="tbt-heading" id={headingId}>费用文件备份与导入</h4>
-      <button
+    <div
+      className="mt-2 flex min-w-0 flex-col gap-3 border-t border-dashed border-[color:var(--color-line-strong)] pt-3"
+      role="region"
+      aria-labelledby={headingId}
+      data-testid="budget-transfer"
+    >
+      <h4 className="m-0 font-display text-sm font-bold leading-[1.4] text-[color:var(--color-ink-2)]" id={headingId}>费用文件备份与导入</h4>
+      <Button
         type="button"
         ref={openToggleRef}
-        className="tbt-toggle"
+        variant="outline"
+        className="self-start"
         aria-expanded={open}
         onClick={handleToggle}
       >
         {open ? '收起费用文件备份' : '展开费用文件备份'}
-      </button>
+      </Button>
 
       {open && (
-        <div className="tbt-body">
-          <p className="tbt-lead">
+        <div className="flex min-w-0 flex-col gap-4 rounded-[10px] border border-border bg-background p-4">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
             费用草稿只在本页内存里：刷新页面会丢失。可以先把草稿下载成一份费用备份文件，
             之后再用「选择文件」导入并确认替换来恢复。这与行程 JSON 备份是两个独立文件，互不通用。
           </p>
 
           {/* ── 导出 ── */}
-          <section className="tbt-section" aria-label="导出费用备份">
-            <h5 className="tbt-subheading">导出费用备份</h5>
-            <div className="tbt-actions">
-              <button
+          <section className="flex min-w-0 flex-col gap-2" aria-label="导出费用备份">
+            <h5 className="m-0 font-display text-sm font-bold text-foreground">导出费用备份</h5>
+            <div className="flex flex-wrap gap-2">
+              <Button
                 type="button"
                 ref={exportPreviewButtonRef}
-                className="tbt-btn"
+                variant="outline"
                 onClick={handleExportPreview}
               >
                 预览费用备份
-              </button>
+              </Button>
             </div>
-            <p className="tbt-hint">
+            <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               点「预览」才在页面里生成只读预览；下载要等预览之后单独点击。生成不联网、不写存储、不自动下载。
             </p>
 
             {liveExportPreview && exportSummary && exportSummary.ok && (
-              <div className="tbt-preview" data-testid="budget-export-preview">
-                <h6 className="tbt-preview-title" id={exportTextId}>
+              <div className="flex min-w-0 flex-col gap-2 rounded-[10px] border border-border bg-card p-3" data-testid="budget-export-preview">
+                <h6 className="m-0 font-display text-sm font-bold text-foreground [overflow-wrap:anywhere]" id={exportTextId}>
                   预览：{liveExportPreview.filename}
                 </h6>
-                <p className="tbt-meta">
+                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
                   约 {formatBytes(liveExportPreview.bytes)}（UTF-8 字节） · 费用 {exportSummary.rowCount} 项
                   {exportSummary.knownTotalText !== null
                     ? ` · 已填合法金额合计 ${exportSummary.knownTotalText} 元`
                     : ' · 没有可合计的合法金额'}
                 </p>
                 {liveExportPreview.trip !== null ? (
-                  <p className="tbt-meta" data-testid="budget-export-owner">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-export-owner">
                     备份自述的原行程：{liveExportPreview.trip.title === '' ? '未命名' : liveExportPreview.trip.title}
                     （这是导出时的自述记录，不代表它属于当前行程版本）
                   </p>
                 ) : (
-                  <p className="tbt-meta" data-testid="budget-export-owner">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-export-owner">
                     这份草稿还没有绑定行程版本，备份里不记录行程归属。
                   </p>
                 )}
                 {exportSummary.issueCount > 0 && (
-                  <p className="tbt-warn">
-                    其中 {exportSummary.issueCount} 项金额无效、{exportSummary.emptyCount} 项未填写：
-                    都按原字符串保留在文件里，不会补 0 或丢数据。
-                  </p>
+                  <Alert variant="warning">
+                    <AlertDescription>
+                      其中 {exportSummary.issueCount} 项金额无效、{exportSummary.emptyCount} 项未填写：
+                      都按原字符串保留在文件里，不会补 0 或丢数据。
+                    </AlertDescription>
+                  </Alert>
                 )}
                 {/* 只读纯文本预览：textarea 不解析任何 HTML / JSON 结构 */}
                 <textarea
-                  className="tbt-text"
+                  className="w-full min-h-32 max-h-80 rounded-[6px] border border-input bg-background px-3 py-3 font-mono text-xs leading-[1.7] text-foreground resize-y [white-space:pre-wrap] [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   aria-labelledby={exportTextId}
                   readOnly
                   rows={8}
                   wrap="soft"
                   value={liveExportPreview.json}
                 />
-                <div className="tbt-actions">
-                  <button type="button" className="tbt-btn tbt-btn-primary" onClick={handleExportDownload}>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" onClick={handleExportDownload}>
                     下载费用备份 (.budget.json)
-                  </button>
-                  <button type="button" className="tbt-btn" onClick={handleExportDiscard}>
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleExportDiscard}>
                     放弃导出预览
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
           </section>
 
-          <div className="tbt-live" aria-live="polite" aria-atomic="true">
+          <div aria-live="polite" aria-atomic="true" className="[&:empty]:hidden">
             {exportNotice && (
-              <p className="tbt-notice" data-tone={exportNotice.tone} data-testid="budget-export-notice">
-                {exportNotice.text}
-              </p>
+              <Alert
+                variant={exportNotice.tone === 'error' ? 'warning' : exportNotice.tone === 'ok' ? 'success' : 'warning'}
+                data-testid="budget-export-notice"
+              >
+                <AlertDescription>{exportNotice.text}</AlertDescription>
+              </Alert>
             )}
           </div>
 
           {/* ── 导入 ── */}
-          <section className="tbt-section" aria-label="从费用备份文件导入">
-            <h5 className="tbt-subheading">从费用备份文件导入</h5>
-            <div className="tbt-file">
-              <label className="tbt-label" htmlFor={fileId}>选择费用备份文件（.budget.json）</label>
+          <section className="flex min-w-0 flex-col gap-2" aria-label="从费用备份文件导入">
+            <h5 className="m-0 font-display text-sm font-bold text-foreground">从费用备份文件导入</h5>
+            <div className="grid min-w-0 gap-1">
+              <label className="text-sm font-semibold text-[color:var(--color-ink-2)]" htmlFor={fileId}>选择费用备份文件（.budget.json）</label>
               <input
                 id={fileId}
                 ref={fileInputRef}
-                className="tbt-input"
+                className="h-11 w-full rounded-[6px] border border-input bg-card px-2 py-1.5 text-sm file:mr-3 file:rounded-[4px] file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 type="file"
                 accept=".json,application/json"
                 onChange={handleFileChange}
                 aria-describedby={fileHintId}
                 aria-busy={reading || undefined}
               />
-              <p className="tbt-hint" id={fileHintId}>
+              <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]" id={fileHintId}>
                 选择后先在页面里预览，只有你点「确认替换费用」才会替换当前费用草稿；
                 无效或超出 256 KB 上限的文件会被直接拒绝。读取失败后可以重新选同一个文件再试。
               </p>
             </div>
 
-            {reading && <p className="tbt-status" role="status">正在读取文件…</p>}
+            {reading && <p className="m-0 text-sm text-[color:var(--color-muted)]" role="status">正在读取文件…</p>}
 
             {liveImportPreview && importSummary && importSummary.ok && (
-              <div className="tbt-preview" data-testid="budget-import-preview">
-                <h6 className="tbt-preview-title">导入预览</h6>
-                <p className="tbt-meta">
+              <div className="flex min-w-0 flex-col gap-2 rounded-[10px] border border-border bg-card p-3" data-testid="budget-import-preview">
+                <h6 className="m-0 font-display text-sm font-bold text-foreground">导入预览</h6>
+                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
                   文件约 {formatBytes(liveImportPreview.bytes)} · 费用 {importSummary.rowCount} 项
                   {importSummary.knownTotalText !== null
                     ? ` · 已填合法金额合计 ${importSummary.knownTotalText} 元`
                     : ' · 没有可合计的合法金额'}
                 </p>
                 {liveImportPreview.fileTrip !== null ? (
-                  <p className="tbt-meta" data-testid="budget-import-file-trip">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-file-trip">
                     文件自述的行程：{liveImportPreview.fileTrip.title === '' ? '未命名' : liveImportPreview.fileTrip.title}
                     （只是文件里的记录，不能证明它真的来自这份行程）
                   </p>
                 ) : (
-                  <p className="tbt-meta" data-testid="budget-import-file-trip">
+                  <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-file-trip">
                     文件里没有记录行程归属。
                   </p>
                 )}
-                <p className="tbt-meta" data-testid="budget-import-target">
+                <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-target">
                   应用目标：当前行程「{trip.title}」。导入只替换费用草稿，不恢复行程本身。
                 </p>
                 {liveImportPreview.draft.rows.length === 0 && liveImportPreview.draft.budgetRaw === '' ? (
-                  <p className="tbt-warn" data-testid="budget-import-empty">
-                    这份备份里没有费用项，也没有填总预算。确认替换会把当前费用清空。
-                  </p>
+                  <Alert variant="warning" data-testid="budget-import-empty">
+                    <AlertDescription>
+                      这份备份里没有费用项，也没有填总预算。确认替换会把当前费用清空。
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <>
                     {importSummary.emptyCount > 0 && (
-                      <p className="tbt-warn">
-                        {importSummary.emptyCount} 项金额未填写：按原样保留，不会按 0 计入合计。
-                      </p>
+                      <Alert variant="warning">
+                        <AlertDescription>
+                          {importSummary.emptyCount} 项金额未填写：按原样保留，不会按 0 计入合计。
+                        </AlertDescription>
+                      </Alert>
                     )}
                     {importSummary.issueCount > 0 && (
-                      <p className="tbt-warn">
-                        {importSummary.issueCount} 项金额无效：原字符串保留在草稿里，计算时不计入合计。
-                      </p>
+                      <Alert variant="warning">
+                        <AlertDescription>
+                          {importSummary.issueCount} 项金额无效：原字符串保留在草稿里，计算时不计入合计。
+                        </AlertDescription>
+                      </Alert>
                     )}
                   </>
                 )}
-                <ul className="tbt-rows" data-testid="budget-import-rows">
+                <ul className="m-0 flex max-h-56 list-disc flex-col gap-1 overflow-y-auto pl-[1.1em] text-xs leading-[1.65] text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" data-testid="budget-import-rows">
                   {liveImportPreview.draft.rows.map((row) => (
-                    <li key={row.id} className="tbt-row-line">
+                    <li key={row.id} className="[overflow-wrap:anywhere]">
                       {row.name.trim() === '' ? '未命名' : row.name}（{CATEGORY_LABELS[row.category] ?? '其他'}）
                       ：{row.amountRaw.trim() === '' ? '（未填）' : row.amountRaw} 元
                     </li>
@@ -651,57 +669,64 @@ export default function TripBudgetTransfer({ trip, revision, session, onSessionC
                 </ul>
 
                 {pending ? (
-                  <div className="tbt-confirm">
-                    <p className="tbt-confirm-text" role="alert" data-testid="budget-import-confirm-text">
-                      当前费用有 {session.rows.length} 项
-                      {session.budgetRaw !== '' ? `，总预算 ${session.budgetRaw} 元` : '，总预算未填'}。
-                      确认后这份文件的费用（{pending.candidateDraft.rows.length} 项）会替换当前费用草稿，
-                      替换后可用「撤销上一步」恢复一次。
-                    </p>
-                    <div className="tbt-actions" role="group" aria-label="替换当前费用确认">
-                      <button type="button" className="tbt-btn tbt-btn-primary" onClick={handleConfirmReplace}>
+                  <div className="flex flex-col gap-2 rounded-[10px] border border-[color:var(--color-line-strong)] bg-secondary p-3">
+                    <Alert variant="warning" role="alert" data-testid="budget-import-confirm-text">
+                      <AlertDescription>
+                        当前费用有 {session.rows.length} 项
+                        {session.budgetRaw !== '' ? `，总预算 ${session.budgetRaw} 元` : '，总预算未填'}。
+                        确认后这份文件的费用（{pending.candidateDraft.rows.length} 项）会替换当前费用草稿，
+                        替换后可用「撤销上一步」恢复一次。
+                      </AlertDescription>
+                    </Alert>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="替换当前费用确认">
+                      <Button type="button" onClick={handleConfirmReplace}>
                         确认替换费用
-                      </button>
-                      <button type="button" className="tbt-btn" onClick={handleCancelReplace}>
+                      </Button>
+                      <Button type="button" variant="outline" onClick={handleCancelReplace}>
                         取消替换
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ) : (
-                  <div className="tbt-actions">
-                    <button
+                  <div className="flex flex-wrap gap-2">
+                    <Button
                       type="button"
-                      className="tbt-btn"
+                      variant="outline"
                       onClick={handleStartReplace}
                       disabled={unverifiableTrip}
                     >
                       替换当前费用草稿
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {unverifiableTrip && (
-                  <p className="tbt-warn" data-testid="budget-import-locked">
-                    当前行程内容无法确认归属：可以查看这份文件，不能应用到当前费用。
-                  </p>
+                  <Alert variant="warning" data-testid="budget-import-locked">
+                    <AlertDescription>
+                      当前行程内容无法确认归属：可以查看这份文件，不能应用到当前费用。
+                    </AlertDescription>
+                  </Alert>
                 )}
-                <div className="tbt-actions">
-                  <button type="button" className="tbt-btn" onClick={handleImportDiscard}>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={handleImportDiscard}>
                     放弃导入预览
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
           </section>
 
-          <div className="tbt-live" aria-live="polite" aria-atomic="true">
+          <div aria-live="polite" aria-atomic="true" className="[&:empty]:hidden">
             {importNotice && (
-              <p className="tbt-notice" data-tone={importNotice.tone} data-testid="budget-import-notice">
-                {importNotice.text}
-              </p>
+              <Alert
+                variant={importNotice.tone === 'error' ? 'warning' : importNotice.tone === 'ok' ? 'success' : 'warning'}
+                data-testid="budget-import-notice"
+              >
+                <AlertDescription>{importNotice.text}</AlertDescription>
+              </Alert>
             )}
           </div>
 
-          <p className="tbt-hint">{BUDGET_RECORD_SOURCE_TEXT}</p>
+          <p className="m-0 text-xs leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{BUDGET_RECORD_SOURCE_TEXT}</p>
         </div>
       )}
     </div>

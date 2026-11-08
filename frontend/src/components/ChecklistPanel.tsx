@@ -14,6 +14,13 @@
 import { useId, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+
 import type { Trip } from '../lib/api'
 import type {
   ChecklistCategoryV1,
@@ -56,7 +63,6 @@ import {
 } from '../lib/checklistSuggestions'
 import { createLogicalId } from '../lib/workspace'
 import { canonicalJson } from '../lib/workspaceFingerprint'
-import './checklistPanel.css'
 
 export type ChecklistPanelStatus = 'ready' | 'readonly' | 'unavailable' | 'salvage' | 'corrupt'
 
@@ -653,38 +659,41 @@ export default function ChecklistPanel({
   const disabled = !ready || pending
 
   return (
-    <section className="chk" aria-labelledby={headingId}>
-      <header className="chk-head">
-        <div className="chk-head-main">
-          <p className="chk-eyebrow">出行准备</p>
-          <h2 className="chk-title" id={headingId}>
+    <section
+      className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4"
+      aria-labelledby={headingId}
+    >
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">出行准备</p>
+          <h2 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]" id={headingId}>
             准备清单
           </h2>
-          <p className="chk-note">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
             手工记录要准备的事；打勾只代表你已经准备或核对过，不代查票务状态。
           </p>
-          <p className="chk-count">
+          <p className="m-0 mt-1 text-xs leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere]">
             共 {checklist.items.length} 项 · 已准备 {prepared} · 未准备 {checklist.items.length - prepared}
           </p>
         </div>
         {onClose ? (
-          <button type="button" className="chk-btn" onClick={onClose}>
+          <Button variant="outline" onClick={onClose}>
             收起面板
-          </button>
+          </Button>
         ) : null}
       </header>
 
       {status !== 'ready' ? (
-        <div className="chk-status">
-          <p className="chk-warning" role="status">
-            {STATUS_NOTICES[status]}
-          </p>
+        <div className="grid gap-2">
+          <Alert variant="warning" role="status">
+            <AlertDescription>{STATUS_NOTICES[status]}</AlertDescription>
+          </Alert>
           {status === 'salvage' && onRebuildRequest ? (
-            <div className="chk-status-actions">
-              <button type="button" className="chk-btn chk-btn-small" onClick={onRebuildRequest}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={onRebuildRequest}>
                 重建清单（需确认）
-              </button>
-              <span className="chk-hint">
+              </Button>
+              <span className="text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
                 仅在明确确认后由工作区 adapter 处理；不会自动把空清单写回原字节。
               </span>
             </div>
@@ -693,63 +702,79 @@ export default function ChecklistPanel({
       ) : null}
 
       {error ? (
-        <p className="chk-error" role="alert">
-          {error}
-        </p>
+        <Alert variant="destructive" role="alert">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
       {notice ? (
-        <p className="chk-notice" role="status">
-          {notice}
-        </p>
+        <Alert role="status">
+          <AlertDescription>{notice}</AlertDescription>
+        </Alert>
       ) : null}
 
       {undo ? (
-        <div className="chk-undo" role="group" aria-label="撤销">
-          <span className={undoAvailable ? 'chk-undo-text' : 'chk-undo-text chk-undo-stale'}>
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-border bg-background px-4 py-3"
+          role="group"
+          aria-label="撤销"
+        >
+          <span className={`text-sm leading-[1.65] [overflow-wrap:anywhere] ${undoAvailable ? 'text-[color:var(--color-muted)]' : 'text-[color:var(--color-faint)]'}`}>
             {undoAvailable ? '上一步已保存，可撤销一次。' : '当前清单已变化，撤销提案已失效。'}
           </span>
-          <button
+          <Button
             type="button"
-            className="chk-btn"
+            variant="outline"
             onClick={handleUndo}
             disabled={!undoAvailable || disabled}
           >
             撤销上一步
-          </button>
+          </Button>
         </div>
       ) : null}
 
       {audit.issues.length > 0 ||
       (audit.unrecordedConstraintItems.length > 0 && constraintItems.length > 0) ? (
-        <section className="chk-audit" aria-label="需重新关联的清单项">
-          <h3 className="chk-subtitle">关联核对</h3>
-          <p className="chk-hint">下面的任务不会自动删除；标记后仍保留标题、备注与勾选状态。</p>
+        <section
+          className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-accent)] bg-accent-surface p-4"
+          aria-label="需重新关联的清单项"
+        >
+          <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">关联核对</h3>
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            下面的任务不会自动删除；标记后仍保留标题、备注与勾选状态。
+          </p>
           {audit.issues.length > 0 ? (
-            <ul className="chk-audit-list">
+            <ul className="m-0 grid list-none gap-2 p-0">
               {audit.issues.map((issue) => (
-                <li key={`${issue.itemId}-${issue.reason}-${issue.refId ?? ''}`} className="chk-audit-item">
+                <li
+                  key={`${issue.itemId}-${issue.reason}-${issue.refId ?? ''}`}
+                  className="flex flex-wrap items-start justify-between gap-3 text-sm leading-[1.6] [overflow-wrap:anywhere]"
+                >
                   <span>{issue.message}</span>
                   {issue.reason === 'stop_unlinked' ? (
-                    <span className="chk-tag">已标记需重新关联</span>
+                    <span className="inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                      已标记需重新关联
+                    </span>
                   ) : (
-                    <span className="chk-audit-actions">
-                      <button
+                    <span className="flex flex-wrap gap-1">
+                      <Button
                         type="button"
-                        className="chk-btn chk-btn-small"
+                        variant="outline"
+                        size="sm"
                         onClick={() => handleRelinkNotice(issue)}
                         disabled={disabled}
                       >
                         标记需重新关联
-                      </button>
+                      </Button>
                       {issue.reason === 'constraint_changed' ? (
-                        <button
+                        <Button
                           type="button"
-                          className="chk-btn chk-btn-small"
+                          variant="outline"
+                          size="sm"
                           onClick={() => handleReconfirmConstraint(issue)}
                           disabled={disabled}
                         >
                           按当前预约重新核对
-                        </button>
+                        </Button>
                       ) : null}
                     </span>
                   )}
@@ -758,7 +783,7 @@ export default function ChecklistPanel({
             </ul>
           ) : null}
           {audit.unrecordedConstraintItems.length > 0 && constraintItems.length > 0 ? (
-            <p className="chk-hint">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               旧清单有 {audit.unrecordedConstraintItems.length} 项未记录预约关联；日期 / 地点仍独立保留，
               可在编辑中手动关联预约。
             </p>
@@ -766,13 +791,13 @@ export default function ChecklistPanel({
         </section>
       ) : null}
 
-      <div className="chk-toolbar">
-        <button type="button" className="chk-btn chk-btn-primary" onClick={openAdd} disabled={disabled}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={openAdd} disabled={disabled}>
           新增清单项
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="chk-btn"
+          variant="outline"
           onClick={() => {
             setTemplateOpen((value) => !value)
             setSelectedSuggestions([])
@@ -781,24 +806,30 @@ export default function ChecklistPanel({
           disabled={disabled}
         >
           {templateOpen ? '收起模板' : '用模板'}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="chk-btn"
+          variant="outline"
           onClick={toggleSuggestions}
           disabled={disabled}
           aria-expanded={suggestionsOpen}
         >
           {suggestionsOpen ? '收起建议' : '建议携带物'}
-        </button>
-        <span className="chk-hint">模板与建议都只给参考；勾选或采纳后不会自动变成已准备。</span>
+        </Button>
+        <span className="text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          模板与建议都只给参考；勾选或采纳后不会自动变成已准备。
+        </span>
       </div>
 
       {suggestionsOpen ? (
-        <section className="chk-suggestion-box" aria-label="清单建议" data-testid="checklist-suggestions">
-          <div className="chk-suggestion-head">
-            <h3 className="chk-subtitle">建议携带物（本地推断 · 未核实）</h3>
-            <p className="chk-hint">
+        <section
+          className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-4"
+          aria-label="清单建议"
+          data-testid="checklist-suggestions"
+        >
+          <div className="grid min-w-0 gap-1">
+            <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">建议携带物（本地推断 · 未核实）</h3>
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               目的地：{suggestionDestination === '' ? '未指定' : suggestionDestination}
               {trip ? ` · 行程 ${trip.days.length} 天` : ' · 行程未加载'}
               {' · '}
@@ -807,63 +838,70 @@ export default function ChecklistPanel({
               {suggestedSeason === null ? '' : ` · ${CHECKLIST_SEASON_LABELS[suggestedSeason]}`}
             </p>
           </div>
-          <p className="chk-hint">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             只按目的地关键词、月份与天数做本地推断；不联网、不查询库存或预约。
             采纳只会新增未准备条目，不会自动勾选。
           </p>
           {visibleChecklistSuggestions.length === 0 ? (
-            <p className="chk-hint" role="status">
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]" role="status">
               建议都处理完了；收起后再次打开可重新生成。
             </p>
           ) : (
-            <ul className="chk-suggestion-list" aria-label="清单建议列表">
+            <ul className="m-0 grid list-none gap-2 p-0" aria-label="清单建议列表">
               {visibleChecklistSuggestions.map((suggestion) => (
-                <li className="chk-suggestion-item" key={suggestion.id}>
-                  <div className="chk-suggestion-main">
-                    <p className="chk-suggestion-title">
+                <li
+                  className="flex flex-wrap items-start justify-between gap-3 rounded-[6px] border border-border bg-card p-3"
+                  key={suggestion.id}
+                >
+                  <div className="grid min-w-0 flex-[1_1_220px] gap-1">
+                    <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-[1.5] [overflow-wrap:anywhere]">
                       {suggestion.title}
-                      <span className="chk-cat">{CHECKLIST_CATEGORY_LABELS[suggestion.category]}</span>
+                      <span className="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                        {CHECKLIST_CATEGORY_LABELS[suggestion.category]}
+                      </span>
                     </p>
-                    <p className="chk-hint">{suggestion.reason}</p>
+                    <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{suggestion.reason}</p>
                     {suggestion.duplicateOf.length > 0 ? (
-                      <p className="chk-tag">
+                      <p className="m-0 inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
                         清单里已有「{suggestion.duplicateOf.join('、')}」；不会自动合并
                       </p>
                     ) : null}
                   </div>
-                  <div className="chk-suggestion-actions">
-                    <button
+                  <div className="flex flex-wrap gap-1">
+                    <Button
                       type="button"
-                      className="chk-btn chk-btn-small chk-btn-primary"
+                      size="sm"
                       onClick={() => void handleAdoptSuggestion(suggestion)}
                       disabled={disabled || suggestion.duplicateOf.length > 0}
                     >
                       采纳
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="chk-btn chk-btn-small"
+                      variant="outline"
+                      size="sm"
                       onClick={() => dismissSuggestion(suggestion)}
                       disabled={pending}
                     >
                       丢弃
-                    </button>
+                    </Button>
                   </div>
                 </li>
               ))}
             </ul>
           )}
-          <p className="chk-hint">采纳后条目仍是「未准备」；勾选只代表你自己核对过。</p>
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            采纳后条目仍是「未准备」；勾选只代表你自己核对过。
+          </p>
         </section>
       ) : null}
 
       {templateOpen ? (
-        <section className="chk-template" aria-label="模板建议">
-          <label className="chk-field" htmlFor={`${notesFieldId}-template`}>
+        <section className="grid gap-3 rounded-[6px] border border-border bg-background p-4" aria-label="模板建议">
+          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={`${notesFieldId}-template`}>
             <span>选择模板</span>
-            <select
+            <Select
               id={`${notesFieldId}-template`}
-              className="chk-input"
               value={templateId}
               onChange={(event) => handleTemplateChange(event.target.value)}
               disabled={disabled}
@@ -873,55 +911,60 @@ export default function ChecklistPanel({
                   {item.title}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {template ? (
             <>
-              <p className="chk-hint">{template.description}</p>
-              {templateApplied ? <p className="chk-tag">这个模板已经采纳过；可再次添加缺少的条目。</p> : null}
-              <ul className="chk-suggestions">
+              <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{template.description}</p>
+              {templateApplied ? (
+                <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                  这个模板已经采纳过；可再次添加缺少的条目。
+                </p>
+              ) : null}
+              <ul className="m-0 grid list-none gap-1 p-0">
                 {templateSuggestions.map((suggestion) => (
                   <li key={suggestion.id}>
-                    <label className="chk-check">
-                      <input
-                        type="checkbox"
+                    <label className="inline-flex min-h-6 cursor-pointer items-center gap-2 [overflow-wrap:anywhere]">
+                      <Checkbox
                         checked={selectedSuggestions.includes(suggestion.id)}
                         onChange={() => toggleSuggestion(suggestion.id)}
                         disabled={disabled}
                       />
                       <span>
                         {suggestion.title}
-                        <span className="chk-meta"> · {CHECKLIST_CATEGORY_LABELS[suggestion.category]}</span>
+                        <span className="text-xs text-muted-foreground"> · {CHECKLIST_CATEGORY_LABELS[suggestion.category]}</span>
                       </span>
                     </label>
                   </li>
                 ))}
               </ul>
-              <button
+              <Button
                 type="button"
-                className="chk-btn chk-btn-primary"
                 onClick={handleApplyTemplate}
                 disabled={disabled || selectedSuggestions.length === 0}
               >
                 添加所选（{selectedSuggestions.length}）
-              </button>
+              </Button>
             </>
           ) : (
-            <p className="chk-hint">模板不存在。</p>
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">模板不存在。</p>
           )}
         </section>
       ) : null}
 
       {formOpen ? (
-        <form className="chk-form" onSubmit={handleSubmit}>
-          <h3 className="chk-subtitle">{editingId === null ? '新增清单项' : '编辑清单项'}</h3>
-          {dirty ? <p className="chk-hint">编辑尚未保存；点「保存」前不会写入清单。</p> : null}
-          <div className="chk-grid">
-            <label className="chk-field" htmlFor={categoryFieldId}>
+        <form className="grid gap-3 rounded-[6px] border border-border bg-background p-4" onSubmit={handleSubmit}>
+          <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">{editingId === null ? '新增清单项' : '编辑清单项'}</h3>
+          {dirty ? (
+            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+              编辑尚未保存；点「保存」前不会写入清单。
+            </p>
+          ) : null}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={categoryFieldId}>
               <span>分类</span>
-              <select
+              <Select
                 id={categoryFieldId}
-                className="chk-input"
                 value={draft.category}
                 onChange={(event) => setDraftField('category', event.target.value as ChecklistCategoryV1)}
                 disabled={disabled}
@@ -931,13 +974,12 @@ export default function ChecklistPanel({
                     {CHECKLIST_CATEGORY_LABELS[category]}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
-            <label className="chk-field chk-field-wide" htmlFor={titleFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)] col-span-full" htmlFor={titleFieldId}>
               <span>标题</span>
-              <input
+              <Input
                 id={titleFieldId}
-                className="chk-input"
                 type="text"
                 value={draft.title}
                 maxLength={CHECKLIST_FIELD_LIMITS.title}
@@ -945,22 +987,20 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="chk-field" htmlFor={dateFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={dateFieldId}>
               <span>日期（可选）</span>
-              <input
+              <Input
                 id={dateFieldId}
-                className="chk-input"
                 type="date"
                 value={draft.date}
                 onChange={(event) => setDraftField('date', event.target.value)}
                 disabled={disabled}
               />
             </label>
-            <label className="chk-field" htmlFor={dayFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={dayFieldId}>
               <span>天序号（可选）</span>
-              <input
+              <Input
                 id={dayFieldId}
-                className="chk-input"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -970,11 +1010,10 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="chk-field" htmlFor={stopFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={stopFieldId}>
               <span>关联地点（可选）</span>
-              <select
+              <Select
                 id={stopFieldId}
-                className="chk-input"
                 value={draft.stopId}
                 onChange={(event) => {
                   const stopId = event.target.value
@@ -996,13 +1035,12 @@ export default function ChecklistPanel({
                 {draft.stopId !== '' && !stopMap.has(draft.stopId) ? (
                   <option value={draft.stopId}>原地点已不在当前行程</option>
                 ) : null}
-              </select>
+              </Select>
             </label>
-            <label className="chk-field" htmlFor={constraintFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)]" htmlFor={constraintFieldId}>
               <span>关联预约（可选）</span>
-              <select
+              <Select
                 id={constraintFieldId}
-                className="chk-input"
                 value={draft.constraintId}
                 onChange={(event) => chooseConstraint(event.target.value)}
                 disabled={disabled || (constraintItems.length === 0 && draft.constraintId === '')}
@@ -1020,13 +1058,13 @@ export default function ChecklistPanel({
                       : '已记录预约关联（当前约束未加载）'}
                   </option>
                 ) : null}
-              </select>
+              </Select>
             </label>
-            <label className="chk-field chk-field-wide" htmlFor={notesFieldId}>
+            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted)] col-span-full" htmlFor={notesFieldId}>
               <span>备注（可选）</span>
-              <textarea
+              <Textarea
                 id={notesFieldId}
-                className="chk-input chk-textarea"
+                className="min-h-22"
                 value={draft.notes}
                 maxLength={CHECKLIST_FIELD_LIMITS.notes}
                 onChange={(event) => setDraftField('notes', event.target.value)}
@@ -1034,25 +1072,25 @@ export default function ChecklistPanel({
               />
             </label>
           </div>
-          <p className="chk-hint">
+          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             关联预约会写入真实预约 ID，并带入其日期 / 天 / 地点；不会修改预约，也不代表预约已核实。
           </p>
           {formError ? (
-            <p className="chk-error" role="alert">
-              {formError}
-            </p>
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>{formError}</AlertDescription>
+            </Alert>
           ) : null}
-          <div className="chk-form-actions">
-            <button type="submit" className="chk-btn chk-btn-primary" disabled={disabled}>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={disabled}>
               {editingId === null ? '添加这一项' : '保存修改'}
-            </button>
-            <button type="button" className="chk-btn" onClick={closeForm} disabled={pending}>
+            </Button>
+            <Button type="button" variant="outline" onClick={closeForm} disabled={pending}>
               取消
-            </button>
+            </Button>
             {editingId !== null && (itemMap.get(editingId)?.stopId ?? null) !== null ? (
-              <button
+              <Button
                 type="button"
-                className="chk-btn"
+                variant="outline"
                 onClick={() => {
                   const item = itemMap.get(editingId)
                   if (item) void handleUnlink(item)
@@ -1060,12 +1098,12 @@ export default function ChecklistPanel({
                 disabled={disabled}
               >
                 解除地点关联
-              </button>
+              </Button>
             ) : null}
             {editingId !== null && typeof itemMap.get(editingId)?.constraintId === 'string' ? (
-              <button
+              <Button
                 type="button"
-                className="chk-btn"
+                variant="outline"
                 onClick={() => {
                   const item = itemMap.get(editingId)
                   if (item) void handleUnlinkFromConstraint(item)
@@ -1073,16 +1111,18 @@ export default function ChecklistPanel({
                 disabled={disabled}
               >
                 解除预约关联
-              </button>
+              </Button>
             ) : null}
           </div>
         </form>
       ) : null}
 
       {checklist.items.length === 0 ? (
-        <p className="chk-empty">还没有清单项。可以手工添加，或从模板挑选建议。</p>
+        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          还没有清单项。可以手工添加，或从模板挑选建议。
+        </p>
       ) : (
-        <ul className="chk-list">
+        <ul className="m-0 grid list-none gap-2 p-0">
           {checklist.items.map((item) => {
             const stop = item.stopId === null ? null : (stopMap.get(item.stopId) ?? null)
             const linkedConstraint =
@@ -1106,45 +1146,60 @@ export default function ChecklistPanel({
               meta.push('已记录预约关联（当前约束未加载）')
             }
             return (
-              <li className="chk-item" key={item.id} data-checklist-item={item.id}>
-                <div className="chk-item-head">
-                  <label className="chk-check">
-                    <input
-                      type="checkbox"
+              <li
+                className="grid min-w-0 gap-1 rounded-[6px] border border-border bg-background px-4 py-3"
+                key={item.id}
+                data-checklist-item={item.id}
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                  <label className="inline-flex min-h-6 cursor-pointer items-center gap-2 [overflow-wrap:anywhere]">
+                    <Checkbox
                       checked={item.done}
                       onChange={() => handleToggle(item)}
                       disabled={disabled}
                       aria-label={`${item.title}：${item.done ? CHECKLIST_PREPARED_LABELS.done : CHECKLIST_PREPARED_LABELS.pending}`}
                     />
-                    <span className="chk-done-label">
+                    <span className="text-sm text-[color:var(--color-muted)]">
                       {item.done ? CHECKLIST_PREPARED_LABELS.done : CHECKLIST_PREPARED_LABELS.pending}
                     </span>
                   </label>
-                  <span className="chk-cat">{CHECKLIST_CATEGORY_LABELS[item.category]}</span>
-                  <strong className="chk-item-title">{item.title}</strong>
-                  <div className="chk-item-actions">
-                    <button
+                  <span className="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                    {CHECKLIST_CATEGORY_LABELS[item.category]}
+                  </span>
+                  <strong className="min-w-0 flex-[1_1_200px] text-sm font-semibold [overflow-wrap:anywhere]">{item.title}</strong>
+                  <div className="flex flex-wrap gap-1 ml-auto">
+                    <Button
                       type="button"
-                      className="chk-btn chk-btn-small"
+                      variant="outline"
+                      size="sm"
                       onClick={() => openEdit(item)}
                       disabled={disabled}
                     >
                       编辑
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="chk-btn chk-btn-small"
+                      variant="outline"
+                      size="sm"
                       onClick={() => handleDelete(item)}
                       disabled={disabled}
                       aria-label={`删除 ${item.title}`}
                     >
                       删除
-                    </button>
+                    </Button>
                   </div>
                 </div>
-                {meta.length > 0 ? <p className="chk-meta">{meta.join(' · ')}</p> : null}
-                {needsRelink ? <p className="chk-tag">需重新关联</p> : null}
-                {item.notes !== null ? <p className="chk-notes">{item.notes}</p> : null}
+                {meta.length > 0 ? (
+                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{meta.join(' · ')}</p>
+                ) : null}
+                {needsRelink ? (
+                  <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+                    需重新关联
+                  </p>
+                ) : null}
+                {item.notes !== null ? (
+                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-muted)] [overflow-wrap:anywhere] whitespace-pre-wrap">{item.notes}</p>
+                ) : null}
               </li>
             )
           })}
