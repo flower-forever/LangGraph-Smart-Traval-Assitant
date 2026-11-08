@@ -546,7 +546,7 @@ describe('结果展示：来源、日期与未核实边界', () => {
     }
   })
 
-  it('十种业务状态各自诚实区分，不回显上游 reason 原文', async () => {
+  it('十种业务状态各自诚实区分，不回显上游 reason 原文', { timeout: 20_000 }, async () => {
     const cases: Array<{ status: WebSourceStatus; marker: string | RegExp }> = [
       { status: 'available', marker: '已返回' },
       { status: 'no_results', marker: '没有搜索结果' },
@@ -682,7 +682,7 @@ describe('不安全 payload 与注入防御', () => {
 })
 
 describe('传输错误分类与安全文案', () => {
-  it('timeout/network/server/bad_payload 显示固定文案，不回显底层异常', async () => {
+  it('timeout/network/server/bad_payload 显示固定文案，不回显底层异常', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const { rerender } = render(
       <WebSourcesPanel

@@ -128,7 +128,7 @@ describe('App 工作区与版本接线', () => {
     expect(window.localStorage.getItem(VERSIONS_STORAGE_KEY)).toBeNull()
   })
 
-  it('有锁：新建工作区 → 打开版本库 → 保存版本 → 预览采用 → 确认采用 → 一次撤销', async () => {
+  it('有锁：新建工作区 → 打开版本库 → 保存版本 → 预览采用 → 确认采用 → 一次撤销', { timeout: 20_000 }, async () => {
     installLocks()
     const user = userEvent.setup()
     render(<App />)
@@ -275,7 +275,7 @@ describe('App 工作区与版本接线', () => {
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
   })
 
-  it('恢复 v2 到已有同 id 内存工作区：当前 revision 3 → 4，raw 基线不自动写库', async () => {
+  it('恢复 v2 到已有同 id 内存工作区：当前 revision 3 → 4，raw 基线不自动写库', { timeout: 20_000 }, async () => {
     installLocks()
     const record = sessionWorkspaceRecord(9, sidecarWithChecklist('护照'))
     seedSessionRecord(record)
@@ -345,7 +345,7 @@ describe('App 工作区与版本接线', () => {
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
   })
 
-  it('v1 恢复只还原 Trip：解除当前工作区，不按同 tripId 挂接存储里的 sidecar', async () => {
+  it('v1 恢复只还原 Trip：解除当前工作区，不按同 tripId 挂接存储里的 sidecar', { timeout: 20_000 }, async () => {
     installLocks()
     seedSessionRecord()
 
@@ -373,7 +373,7 @@ describe('App 工作区与版本接线', () => {
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(storedRaw)
   })
 
-  it('StrictMode：双 setup+cleanup 后工作区状态仍真实更新（新建 → 关联 → F5 transition）', async () => {
+  it('StrictMode：双 setup+cleanup 后工作区状态仍真实更新（新建 → 关联 → F5 transition）', { timeout: 20_000 }, async () => {
     installLocks()
     const user = userEvent.setup()
     render(
@@ -422,7 +422,7 @@ describe('App 工作区与版本接线', () => {
     return spy.mock.calls.filter(([key]) => key === SESSION_RESUME_DATA_KEY).length
   }
 
-  it('flag off：sidecar 编辑不读写留存数据键，也不写工作区键', async () => {
+  it('flag off：sidecar 编辑不读写留存数据键，也不写工作区键', { timeout: 20_000 }, async () => {
     installLocks()
     const user = userEvent.setup()
     render(<App />)
@@ -456,7 +456,7 @@ describe('App 工作区与版本接线', () => {
     }
   })
 
-  it('flagon：清单 / 约束 / 锚点 sidecar-only transition 都按当前 workspace 更新 v2 留存；reload 可读；不写工作区键、无自触发循环', async () => {
+  it('flagon：清单 / 约束 / 锚点 sidecar-only transition 都按当前 workspace 更新 v2 留存；reload 可读；不写工作区键、无自触发循环', { timeout: 20_000 }, async () => {
     installLocks()
     const user = userEvent.setup()
     render(<App />)

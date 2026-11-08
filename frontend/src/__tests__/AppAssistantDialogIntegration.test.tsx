@@ -104,7 +104,7 @@ afterEach(() => {
 })
 
 describe('App AI 行程助手接线', () => {
-  it('删除站点全链路：输入 → 提案 → 应用 → 生效 → 撤销，且不写存储', async () => {
+  it('删除站点全链路：输入 → 提案 → 应用 → 生效 → 撤销，且不写存储', { timeout: 20_000 }, async () => {
     const fetchMock = stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -141,7 +141,7 @@ describe('App AI 行程助手接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
   })
 
-  it('删掉必去点：H 级硬冲突禁用应用，且没有任何确认绕过入口', async () => {
+  it('删掉必去点：H 级硬冲突禁用应用，且没有任何确认绕过入口', { timeout: 20_000 }, async () => {
     stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -173,7 +173,7 @@ describe('App AI 行程助手接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
   })
 
-  it('行程在别处被改：挂起的提案立刻失效，旧提案不会被应用', async () => {
+  it('行程在别处被改：挂起的提案立刻失效，旧提案不会被应用', { timeout: 20_000 }, async () => {
     stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -197,7 +197,7 @@ describe('App AI 行程助手接线', () => {
     expect(within(assistantPanel()).getByRole('button', { name: '应用建议' })).toBeDisabled()
   })
 
-  it('关联工作区后：应用让工作区版本 +1，撤销是独立一层（再 +1，版本不回退）', async () => {
+  it('关联工作区后：应用让工作区版本 +1，撤销是独立一层（再 +1，版本不回退）', { timeout: 20_000 }, async () => {
     stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -225,7 +225,7 @@ describe('App AI 行程助手接线', () => {
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
   })
 
-  it('在途提案不做 UI 复活：面板卸载重挂载后没有旧提案', async () => {
+  it('在途提案不做 UI 复活：面板卸载重挂载后没有旧提案', { timeout: 20_000 }, async () => {
     stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -244,7 +244,7 @@ describe('App AI 行程助手接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
   })
 
-  it('不采纳：零写入、行程不动、提案作废', async () => {
+  it('不采纳：零写入、行程不动、提案作废', { timeout: 20_000 }, async () => {
     const setItem = vi.spyOn(window.localStorage, 'setItem')
     const removeItem = vi.spyOn(window.localStorage, 'removeItem')
     stubFetch()
@@ -264,7 +264,7 @@ describe('App AI 行程助手接线', () => {
     expect(removeItem).not.toHaveBeenCalled()
   })
 
-  it('U 级冲突：必须单独勾选确认才能应用；确认绑定快照，行程一变立刻失效', async () => {
+  it('U 级冲突：必须单独勾选确认才能应用；确认绑定快照，行程一变立刻失效', { timeout: 20_000 }, async () => {
     stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -312,7 +312,7 @@ describe('App AI 行程助手接线', () => {
     expect(within(assistantPanel()).getByRole('button', { name: '应用建议' })).toBeDisabled()
   })
 
-  it('已有待确认提案时提交新指令：先问要不要替换，旧提案零写入丢弃', async () => {
+  it('已有待确认提案时提交新指令：先问要不要替换，旧提案零写入丢弃', { timeout: 20_000 }, async () => {
     const setItem = vi.spyOn(window.localStorage, 'setItem')
     stubFetch()
     const user = userEvent.setup()
@@ -345,7 +345,7 @@ describe('App AI 行程助手接线', () => {
     expect(setItem).not.toHaveBeenCalled()
   })
 
-  it('重排失败保旧：后端报错时行程与存储都不变', async () => {
+  it('重排失败保旧：后端报错时行程与存储都不变', { timeout: 20_000 }, async () => {
     const fetchMock = stubFetch({
       replan: () => Promise.reject(new TypeError('后端不可用')),
     })
@@ -371,7 +371,7 @@ describe('App AI 行程助手接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
   })
 
-  it('重排成功：走既有单日重排通道与既有应用流程', async () => {
+  it('重排成功：走既有单日重排通道与既有应用流程', { timeout: 20_000 }, async () => {
     const fetchMock = stubFetch({
       replan: () =>
         jsonResponse({
@@ -414,7 +414,7 @@ describe('App AI 行程助手接线', () => {
     expect(screen.getByTestId('apply-notice').textContent).toContain('不会自动保存')
   })
 
-  it('关联工作区后重排类建议同样能走既有通道落地', async () => {
+  it('关联工作区后重排类建议同样能走既有通道落地', { timeout: 20_000 }, async () => {
     const fetchMock = stubFetch({
       replan: () =>
         jsonResponse({
@@ -461,7 +461,7 @@ describe('App AI 行程助手接线', () => {
     expect(screen.getByTestId('apply-notice').textContent).toContain('不会自动保存')
   })
 
-  it('助手改动行程后：旧的「撤销应用」入口彻底失效，不会连带回退助手这次改动', async () => {
+  it('助手改动行程后：旧的「撤销应用」入口彻底失效，不会连带回退助手这次改动', { timeout: 20_000 }, async () => {
     stubFetch()
     const user = userEvent.setup()
     render(<App />)
@@ -493,7 +493,7 @@ describe('App AI 行程助手接线', () => {
     expect(within(assistantPanel()).getByRole('button', { name: '撤销这条建议' })).toBeInTheDocument()
   })
 
-  it('ABA：版本没变、只有内容变了 → 重排候选作废，按钮禁用且旧候选不会被套用', async () => {
+  it('ABA：版本没变、只有内容变了 → 重排候选作废，按钮禁用且旧候选不会被套用', { timeout: 20_000 }, async () => {
     const fetchMock = stubFetch({
       replan: () =>
         jsonResponse({

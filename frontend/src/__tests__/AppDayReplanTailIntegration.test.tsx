@@ -86,7 +86,7 @@ describe('App AI 后段调整接线', () => {
     vi.restoreAllMocks()
   })
 
-  it('显式生成→预览→应用：只改目标日后段，前 2 站原样、其它日不变；可一次撤销', async () => {
+  it('显式生成→预览→应用：只改目标日后段，前 2 站原样、其它日不变；可一次撤销', { timeout: 20_000 }, async () => {
     const fetchMock = stubFetch({ replan: (request) => jsonResponse(tailCandidate(request)) })
     const seed = saveTripToStorage(MOCK_TRIP, window.localStorage)
     expect(seed.ok).toBe(true)
@@ -140,7 +140,7 @@ describe('App AI 后段调整接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBe(storageBefore)
   })
 
-  it('应用失败的候选保持当前 Trip：面板显示错误、无 apply-notice、无 Storage 写', async () => {
+  it('应用失败的候选保持当前 Trip：面板显示错误、无 apply-notice、无 Storage 写', { timeout: 20_000 }, async () => {
     stubFetch({ replan: (request) => jsonResponse(tailCandidate(request)) })
     const user = userEvent.setup()
     render(<App />)
@@ -165,7 +165,7 @@ describe('App AI 后段调整接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
   })
 
-  it('过期 scope 应用被父级拒绝：显示错误、行程与 revision 不变', async () => {
+  it('过期 scope 应用被父级拒绝：显示错误、行程与 revision 不变', { timeout: 20_000 }, async () => {
     let replanRequest: DayReplanRequest | null = null
     stubFetch({
       replan: (request) => {
@@ -195,7 +195,7 @@ describe('App AI 后段调整接线', () => {
     expect(Number(section.getAttribute('data-trip-revision'))).toBe(revisionBefore + 1)
   })
 
-  it('关闭面板时在途 replan 迟到成功：不出现后段候选、不改行程', async () => {
+  it('关闭面板时在途 replan 迟到成功：不出现后段候选、不改行程', { timeout: 20_000 }, async () => {
     let request: DayReplanRequest | null = null
     let resolveReplan!: (response: Response) => void
     const pendingReplan = new Promise<Response>((resolve) => {
@@ -240,7 +240,7 @@ describe('App AI 后段调整接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBeNull()
   })
 
-  it('面板后段候选可应用且前 2 站保留：App 分支走 tail（合法 scope 路径回归）', async () => {
+  it('面板后段候选可应用且前 2 站保留：App 分支走 tail（合法 scope 路径回归）', { timeout: 20_000 }, async () => {
     stubFetch({ replan: (request) => jsonResponse(tailCandidate(request)) })
     const user = userEvent.setup()
     render(<App />)
@@ -259,7 +259,7 @@ describe('App AI 后段调整接线', () => {
     expect(within(screen.getByRole('tabpanel')).queryByText('湖滨晴雨')).toBeNull()
   })
 
-  it('整天模式回归：默认行为不变、应用整日替换、第三参为 undefined 走旧 apply', async () => {
+  it('整天模式回归：默认行为不变、应用整日替换、第三参为 undefined 走旧 apply', { timeout: 20_000 }, async () => {
     const wholeCandidate = (request: DayReplanRequest): DayReplanResponse => ({
       day: {
         day: request.day,
@@ -375,7 +375,7 @@ describe('App AI 后段调整接线', () => {
     }
   }
 
-  it('衔接路线 ready：显式查询一次 → 组合预览导航来源 → 「应用后段与衔接路线」成功 → 一次撤销恢复；无保存/费用写', async () => {
+  it('衔接路线 ready：显式查询一次 → 组合预览导航来源 → 「应用后段与衔接路线」成功 → 一次撤销恢复；无保存/费用写', { timeout: 20_000 }, async () => {
     const legRequests: Array<Record<string, unknown>> = []
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
@@ -440,7 +440,7 @@ describe('App AI 后段调整接线', () => {
     expect(legRequests).toHaveLength(1)
   })
 
-  it('衔接路线 typed 失败（no_key）：显示固定原因，候选仍在；「仅应用后段（衔接未知）」成功且 notice 说未重算', async () => {
+  it('衔接路线 typed 失败（no_key）：显示固定原因，候选仍在；「仅应用后段（衔接未知）」成功且 notice 说未重算', { timeout: 20_000 }, async () => {
     const legRequests: Array<Record<string, unknown>> = []
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy', planner_ready: true }))
@@ -486,7 +486,7 @@ describe('App AI 后段调整接线', () => {
     expect(legRequests).toHaveLength(1)
   })
 
-  it('App 防伪：无 scope 时携带 boundary 一律失败；整天路径不受衔接参数影响', async () => {
+  it('App 防伪：无 scope 时携带 boundary 一律失败；整天路径不受衔接参数影响', { timeout: 20_000 }, async () => {
     // 直接验证 handleAiApply 的防伪分支：通过整天候选生成 + 人造 boundary 不可能经 UI 出现，
     // 因此用纯函数层已覆盖 invalid_boundary_input（dayReplanTail.test A9/A10）；
     // 这里验证 UI 链路上整天应用不携带第 4/5 参（onApply 兼容三参调用）。

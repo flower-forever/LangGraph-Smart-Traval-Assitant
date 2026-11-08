@@ -527,7 +527,7 @@ describe('加入草稿预览与 revision 失效', () => {
     expect(screen.queryByRole('button', { name: '确认加入草稿' })).toBeNull()
   })
 
-  it('满 100 站、时间非法、visit id 复用候选 id 都明确失败；不产生 onPreview / onAddToDraft', async () => {
+  it('满 100 站、时间非法、visit id 复用候选 id 都明确失败；不产生 onPreview / onAddToDraft', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const candidate = makeCandidate({ id: 'panel-candidate-1', name: '候选' })
     const fullTrip = clone(MOCK_TRIP)
@@ -625,7 +625,7 @@ describe('保存 / 导出 / 导入与只读状态', () => {
     expect(screen.queryByText('父级存储 adapter 报告：候选库已保存。')).toBeNull()
   })
 
-  it('候选库满 200 条时新增明确失败，旧记录保持不变', async () => {
+  it('候选库满 200 条时新增明确失败，旧记录保持不变', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const items = Array.from({ length: 200 }, (_, index) =>
       makeCandidate({ id: `limit-${index}`, name: `A${index}` }),

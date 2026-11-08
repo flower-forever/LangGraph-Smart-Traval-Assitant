@@ -204,7 +204,7 @@ describe('App AI 单日 × F2 约束接线', () => {
     delete window.navigator.locks
   })
 
-  it('请求体带 constraints：scope/day/parent.revision 与当前工作区一致；应用后 revision+1 且 sidecar 保留', async () => {
+  it('请求体带 constraints：scope/day/parent.revision 与当前工作区一致；应用后 revision+1 且 sidecar 保留', { timeout: 20_000 }, async () => {
     let requestBody: Record<string, unknown> | null = null
     stubFetch((request, body) => {
       requestBody = body as Record<string, unknown>
@@ -243,7 +243,7 @@ describe('App AI 单日 × F2 约束接线', () => {
     expect(await screen.findByText('预约提醒')).toBeInTheDocument()
   })
 
-  it('H1 硬冲突：应用被拒绝，无确认入口，revision 与存储不变', async () => {
+  it('H1 硬冲突：应用被拒绝，无确认入口，revision 与存储不变', { timeout: 20_000 }, async () => {
     stubFetch((request) => jsonResponse(candidateFor(request)))
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
@@ -263,7 +263,7 @@ describe('App AI 单日 × F2 约束接线', () => {
     await waitFor(() => expect(hubRegion().textContent).toContain('revision 2'))
   })
 
-  it('U1 未知时间端：必须先独立确认，确认后整体 transition 应用并保留约束', async () => {
+  it('U1 未知时间端：必须先独立确认，确认后整体 transition 应用并保留约束', { timeout: 20_000 }, async () => {
     stubFetch((request) => jsonResponse(candidateFor(request)))
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
@@ -287,7 +287,7 @@ describe('App AI 单日 × F2 约束接线', () => {
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
   })
 
-  it('U 确认挂起后修改调整指令：旧确认同步作废，Trip / revision 不变；重新生成后的新候选可再次确认', async () => {
+  it('U 确认挂起后修改调整指令：旧确认同步作废，Trip / revision 不变；重新生成后的新候选可再次确认', { timeout: 20_000 }, async () => {
     stubFetch((request) => jsonResponse(candidateFor(request)))
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)

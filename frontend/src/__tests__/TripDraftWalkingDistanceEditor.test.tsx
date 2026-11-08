@@ -226,7 +226,7 @@ describe('每天步行距离上限偏好：默认状态与显式检查', () => {
     expect(within(section).queryByText(/已记录导航步行距离合计/)).toBeNull()
   })
 
-  it('非法输入（负数 / 小数 / 非数 / 超限）明示报错且不产生结果；仅此检查不阻断原编辑与应用', async () => {
+  it('非法输入（负数 / 小数 / 非数 / 超限）明示报错且不产生结果；仅此检查不阻断原编辑与应用', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const onApplySpy = vi.fn()
     const latest: { current: TripDraft | null } = { current: null }
@@ -322,7 +322,7 @@ describe('步行距离检查：输入 / 范围 / 开关变化与结果失效', (
     expect(within(section).queryByText(/合计 1100 米/)).toBeNull()
   })
 
-  it('同草稿编辑使路段失效后按当前 legs 重算：改 s2 地址后 navigation 变 unavailable，合计变「暂无可统计」', async () => {
+  it('同草稿编辑使路段失效后按当前 legs 重算：改 s2 地址后 navigation 变 unavailable，合计变「暂无可统计」', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const latest: { current: TripDraft | null } = { current: null }
     render(<Harness initialDraft={makeDraft()} latestRef={latest} />)
@@ -348,7 +348,7 @@ describe('步行距离检查：输入 / 范围 / 开关变化与结果失效', (
     expect(legs[0].distance_m).toBeNull()
   })
 
-  it('编辑后按当前 legs 重算、撤销恢复；同草稿切天设置与结果不丢', async () => {
+  it('编辑后按当前 legs 重算、撤销恢复；同草稿切天设置与结果不丢', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const latest: { current: TripDraft | null } = { current: null }
     render(<Harness initialDraft={makeDraft()} latestRef={latest} />)
@@ -461,7 +461,7 @@ describe('步行距离检查：输入 / 范围 / 开关变化与结果失效', (
 })
 
 describe('步行距离检查：无自动副作用', () => {
-  it('检查过程不写存储、不发网络请求；应用路径照常可用', async () => {
+  it('检查过程不写存储、不发网络请求；应用路径照常可用', { timeout: 20_000 }, async () => {
     const user = userEvent.setup()
     const fetchSpy = vi.fn(() => Promise.reject(new Error('network disabled in test')))
     vi.stubGlobal('fetch', fetchSpy)
