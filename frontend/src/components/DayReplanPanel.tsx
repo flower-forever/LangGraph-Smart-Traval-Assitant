@@ -47,7 +47,12 @@ import type {
   PlanScopeV1,
   WorkspaceRecordV1,
 } from '../lib/workspaceTypes'
-import './dayReplanPanel.css'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 /**
  * 可选 F2 planning context：父级在面板渲染 / 打开时捕获当前内存工作区、
@@ -834,14 +839,19 @@ export default function DayReplanPanel({
 
   if (!day) {
     return (
-      <section className="drp" aria-label="AI 调整单日安排">
-        <div className="drp-head">
-          <h3 className="drp-title">AI 调整单日安排</h3>
-          <button type="button" className="drp-btn" onClick={onClose}>
+      <section
+        className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5"
+        aria-label="AI 调整单日安排"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h3 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">AI 调整单日安排</h3>
+          <Button variant="outline" onClick={onClose}>
             关闭
-          </button>
+          </Button>
         </div>
-        <p className="drp-notice">当前行程里没有这一天的安排，无法发起 AI 调整。原始行程保持不变。</p>
+        <Alert variant="warning" role="note">
+          <AlertDescription>当前行程里没有这一天的安排，无法发起 AI 调整。原始行程保持不变。</AlertDescription>
+        </Alert>
       </section>
     )
   }
@@ -899,34 +909,39 @@ export default function DayReplanPanel({
     boundaryStopUsable(boundaryQueryStops?.tailFirstStop)
 
   return (
-    <section className="drp" aria-label="AI 调整单日安排">
-      <div className="drp-head">
-        <div className="drp-head-main">
-          <p className="drp-eyebrow">只调整这一天，其余天保持原样</p>
-          <h3 className="drp-title">
+    <section
+      className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 max-md:p-4"
+      aria-label="AI 调整单日安排"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">只调整这一天，其余天保持原样</p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
             第 {day.day} 天{day.date ? `（${day.date}）` : ''}：{day.title || '当日安排'}
           </h3>
-          <p className="drp-meta">
+          <p className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
             {trip.title}
-            {pending ? <span className="drp-tag" role="status">正在生成候选…</span> : null}
+            {pending ? <Badge variant="warning" role="status">正在生成候选…</Badge> : null}
           </p>
         </div>
-        <button type="button" className="drp-btn" onClick={onClose} disabled={false}>
+        <Button variant="outline" onClick={onClose} disabled={false}>
           关闭
-        </button>
+        </Button>
       </div>
 
       {plannerUnavailable ? (
-        <p className="drp-notice" role="note">
-          AI 规划当前不可用，无法生成调整候选。本地编辑不受影响，仍可手动调整这一天的安排。
-        </p>
+        <Alert variant="warning" role="note">
+          <AlertDescription>
+            AI 规划当前不可用，无法生成调整候选。本地编辑不受影响，仍可手动调整这一天的安排。
+          </AlertDescription>
+        </Alert>
       ) : null}
 
-      <fieldset className="drp-form" disabled={pending || plannerUnavailable}>
-        <legend className="drp-form-legend">想怎么调整这一天</legend>
-        <div className="drp-field" role="radiogroup" aria-labelledby={rangeGroupId}>
-          <span id={rangeGroupId} className="drp-label">调整范围</span>
-          <label className="drp-radio">
+      <fieldset className="m-0 grid min-w-0 gap-3 rounded-[10px] border border-border p-4 disabled:opacity-75" disabled={pending || plannerUnavailable}>
+        <legend className="px-2 text-sm font-semibold text-[color:var(--color-ink-2)]">想怎么调整这一天</legend>
+        <div className="grid min-w-0 gap-1" role="radiogroup" aria-labelledby={rangeGroupId}>
+          <span id={rangeGroupId} className="text-sm text-[color:var(--color-ink-2)]">调整范围</span>
+          <label className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
             <input
               type="radio"
               name="drp-range"
@@ -934,10 +949,11 @@ export default function DayReplanPanel({
               checked={rangeMode === 'whole'}
               onChange={() => setRangeMode('whole')}
               disabled={pending || plannerUnavailable}
+              className="size-4 accent-[color:var(--color-accent)]"
             />
             整天（默认：整日按候选替换）
           </label>
-          <label className="drp-radio">
+          <label className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
             <input
               type="radio"
               name="drp-range"
@@ -945,18 +961,20 @@ export default function DayReplanPanel({
               checked={rangeMode === 'tail'}
               onChange={() => setRangeMode('tail')}
               disabled={pending || plannerUnavailable || day.stops.length < 2}
+              className="size-4 accent-[color:var(--color-accent)]"
             />
             某站之后（保留该站及之前，替换之后的部分）
           </label>
         </div>
         {rangeMode === 'tail' ? (
-          <div className="drp-field">
-            <label htmlFor={anchorSelectId}>保留到哪一站（锚点）</label>
-            <select
+          <div className="grid min-w-0 gap-1">
+            <label htmlFor={anchorSelectId} className="text-sm text-[color:var(--color-ink-2)]">保留到哪一站（锚点）</label>
+            <Select
               id={anchorSelectId}
               value={anchorId}
               onChange={(event) => setAnchorId(event.target.value)}
               disabled={pending || plannerUnavailable}
+              className="max-w-[200px]"
             >
               <option value="">请选择锚点站</option>
               {day.stops.slice(0, -1).map((stop, index) => (
@@ -964,19 +982,19 @@ export default function DayReplanPanel({
                   {`第 ${index + 1} 站：${stop.name}（保留第 1–${index + 1} 站）`}
                 </option>
               ))}
-            </select>
+            </Select>
             {day.stops.length >= 2 ? (
-              <p className="drp-hint">
+              <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
                 {`选中的锚点站及之前的 ${anchorId && anchorIndexSelected >= 0 ? anchorIndexSelected + 1 : 'N'} 站与站间路线会原样保留；之后的部分由 AI 候选替换，锚点到新后段第一站的衔接路线不会重算。`}
               </p>
             ) : (
-              <p className="drp-hint">{`这一天只有 ${day.stops.length} 个站点，没有可替换的后段；后段模式至少需要 2 个站点。`}</p>
+              <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{`这一天只有 ${day.stops.length} 个站点，没有可替换的后段；后段模式至少需要 2 个站点。`}</p>
             )}
           </div>
         ) : null}
-        <div className="drp-field">
-          <label htmlFor={instructionId}>调整指令（1–500 字）</label>
-          <textarea
+        <div className="grid min-w-0 gap-1">
+          <label htmlFor={instructionId} className="text-sm text-[color:var(--color-ink-2)]">调整指令（1–500 字）</label>
+          <Textarea
             id={instructionId}
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
@@ -986,17 +1004,17 @@ export default function DayReplanPanel({
             aria-describedby={instructionTooLong ? instructionErrorId : undefined}
             aria-invalid={instructionTooLong || instructionEmpty ? true : undefined}
           />
-          <p className="drp-hint" aria-live="polite">
+          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]" aria-live="polite">
             {instruction.length}/500
             {instructionTooLong ? (
-              <span id={instructionErrorId} className="drp-error-text"> 已超过 500 字，请删减后再生成。</span>
+              <span id={instructionErrorId} className="text-[color:var(--color-accent-ink)]"> 已超过 500 字，请删减后再生成。</span>
             ) : null}
           </p>
         </div>
-        <div className="drp-field" role="radiogroup" aria-labelledby={modeGroupId}>
-          <span id={modeGroupId} className="drp-label">出行方式</span>
+        <div className="grid min-w-0 gap-1" role="radiogroup" aria-labelledby={modeGroupId}>
+          <span id={modeGroupId} className="text-sm text-[color:var(--color-ink-2)]">出行方式</span>
           {(['walking', 'driving'] as const).map((value) => (
-            <label key={value} className="drp-radio">
+            <label key={value} className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
               <input
                 type="radio"
                 name="drp-mode"
@@ -1004,21 +1022,22 @@ export default function DayReplanPanel({
                 checked={mode === value}
                 onChange={() => setMode(value)}
                 disabled={pending || plannerUnavailable}
+                className="size-4 accent-[color:var(--color-accent)]"
               />
               {modeLabel(value)}
             </label>
           ))}
           {initialMode === '' ? (
-            <p className="drp-hint">
+            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               {day.legs.length > 0
                 ? '本日现有路线包含多种方式，请选择这一次使用的方式。'
                 : '这一天还没有路段：请选择这一次希望使用的出行方式。'}
             </p>
           ) : null}
         </div>
-        <div className="drp-field">
-          <label htmlFor={travelersId}>同行人数（选填）</label>
-          <input
+        <div className="grid min-w-0 gap-1">
+          <label htmlFor={travelersId} className="text-sm text-[color:var(--color-ink-2)]">同行人数（选填）</label>
+          <Input
             id={travelersId}
             type="text"
             inputMode="numeric"
@@ -1029,50 +1048,51 @@ export default function DayReplanPanel({
             aria-invalid={travelersInvalid || undefined}
             aria-describedby={travelersInvalid ? travelersErrorId : undefined}
             disabled={pending || plannerUnavailable}
+            className="max-w-[200px]"
           />
-          <p className="drp-hint">
+          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             1–{MAX_REPLAN_TRAVELERS} 的整数；留空不会发送人数，也不会沿用规划表单里的旧人数。修改后需要重新生成候选。
           </p>
           {travelersInvalid ? (
-            <p id={travelersErrorId} className="drp-hint drp-error-text" role="alert">
+            <p id={travelersErrorId} className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]" role="alert">
               同行人数需要是 1–{MAX_REPLAN_TRAVELERS} 的整数，或留空不填。
             </p>
           ) : null}
         </div>
-        <div className="drp-actions">
-          <button
-            type="button"
-            className="drp-btn drp-btn-primary"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
             onClick={() => {
               void handleGenerate()
             }}
             disabled={!canGenerate}
           >
             生成调整候选
-          </button>
+          </Button>
         </div>
-        <p className="drp-hint">点击生成才会请求一次 AI 调整；不会自动生成，也不会自动重试。</p>
+        <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">点击生成才会请求一次 AI 调整；不会自动生成，也不会自动重试。</p>
       </fieldset>
 
       {pending ? (
-        <div className="drp-actions">
-          <button type="button" className="drp-btn" onClick={stopWaiting}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" onClick={stopWaiting}>
             停止等待
-          </button>
-          <p className="drp-hint">已提交的请求会继续在服务端处理，停止等待只是不再等它，不保证后端停止计算。</p>
+          </Button>
+          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">已提交的请求会继续在服务端处理，停止等待只是不再等它，不保证后端停止计算。</p>
         </div>
       ) : null}
 
       {error ? (
-        <p className="drp-error" role="alert">
-          {error.message}
-        </p>
+        <Alert variant="warning" role="alert">
+          <AlertDescription>{error.message}</AlertDescription>
+        </Alert>
       ) : null}
 
       {candidateStale ? (
-        <p className="drp-notice" role="status">
-          调整指令、出行方式或同行人数已经变化，下面的候选基于修改前的内容，不能直接应用；可按新内容重新生成。
-        </p>
+        <Alert variant="warning" role="status">
+          <AlertDescription>
+            调整指令、出行方式或同行人数已经变化，下面的候选基于修改前的内容，不能直接应用；可按新内容重新生成。
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       {currentCandidate && candidate?.scope && !candidateStale ? (
@@ -1108,62 +1128,59 @@ export default function DayReplanPanel({
           onApplyBoundary={handleApplyBoundary}
         />
       ) : currentCandidate ? (
-        <div className="drp-preview" aria-label="候选预览">
-          <h4 className="drp-preview-title">候选预览（尚未应用到行程）</h4>
-          <div className="drp-columns">
-            <div className="drp-col">
-              <h5 className="drp-col-title">当前方案</h5>
+        <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] p-4" aria-label="候选预览">
+          <h4 className="m-0 font-display text-md">候选预览（尚未应用到行程）</h4>
+          <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+            <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
+              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">当前方案</h5>
               <StopTable day={day} />
             </div>
-            <div className="drp-col">
-              <h5 className="drp-col-title">AI 候选</h5>
+            <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
+              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">AI 候选</h5>
               <StopTable day={currentCandidate.day} candidate />
             </div>
           </div>
-          <p className="drp-map-status">
+          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
             <strong>地图数据：</strong>
             {MAP_STATUS_TEXT[currentCandidate.map_status]}
           </p>
           <RouteSummary day={currentCandidate.day} />
           {warnings.length > 0 ? (
-            <div className="drp-warnings">
-              <h5 className="drp-col-title">
+            <div className="grid gap-2">
+              <h5 className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">
                 本次返回提醒（{warnings.length} 条）
               </h5>
-              <ul className="drp-warning-list">
+              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
                 {visibleWarnings.map((warning, index) => (
                   <li key={index}>{warning}</li>
                 ))}
               </ul>
               {hiddenWarningCount > 0 ? (
-                <button
-                  type="button"
-                  className="drp-btn drp-btn-link"
+                <Button
+                  variant="link"
                   onClick={() => setShowAllWarnings(true)}
                   aria-expanded={false}
+                  className="self-start px-0"
                 >
                   展开其余 {hiddenWarningCount} 条提醒
-                </button>
+                </Button>
               ) : null}
             </div>
           ) : null}
           {applyError ? (
-            <p className="drp-error" role="alert">
-              {applyError.message}
-            </p>
+            <Alert variant="warning" role="alert">
+              <AlertDescription>{applyError.message}</AlertDescription>
+            </Alert>
           ) : null}
-          <div className="drp-actions">
-            <button
-              type="button"
-              className="drp-btn drp-btn-primary"
+          <div className="flex flex-wrap items-center gap-3 max-md:flex-col max-md:items-stretch [&>button]:max-md:w-full">
+            <Button
               onClick={handleApply}
               disabled={!canApply || candidateStale}
             >
               应用候选
-            </button>
-            <button
-              type="button"
-              className="drp-btn"
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => {
                 setCandidate(null)
                 setCandidateInvalid(null)
@@ -1171,9 +1188,9 @@ export default function DayReplanPanel({
               }}
             >
               放弃候选
-            </button>
+            </Button>
           </div>
-          <p className="drp-hint">应用候选只替换这一天的全部安排，其余天不变；应用前当前行程不会被改动，也不会自动保存。</p>
+          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">应用候选只替换这一天的全部安排，其余天不变；应用前当前行程不会被改动，也不会自动保存。</p>
         </div>
       ) : null}
     </section>
@@ -1182,26 +1199,26 @@ export default function DayReplanPanel({
 
 function StopTable({ day, candidate = false }: { day: TripDay; candidate?: boolean }) {
   if (day.stops.length === 0) {
-    return <p className="drp-hint">这一天没有站点安排。</p>
+    return <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">这一天没有站点安排。</p>
   }
   return (
-    <ol className="drp-stops">
+    <ol className="m-0 grid list-none gap-3 p-0">
       {day.stops.map((stop) => {
         const leg = day.legs.find((item) => item.to_stop_id === stop.id)
         return (
-          <li key={stop.id} className="drp-stop">
+          <li key={stop.id} className="min-w-0 [&>p]:m-0">
             {leg ? (
-              <p className={`drp-leg drp-leg-${leg.route_type}`}>
+              <p className={`py-1 text-xs ${leg.route_type === 'navigation' ? 'text-[color:var(--color-ok)]' : leg.route_type === 'unavailable' ? 'text-[color:var(--color-warn-ink)]' : 'text-muted-foreground'}`}>
                 {ROUTE_TEXT[leg.route_type]} · {modeLabel(leg.mode)} · {formatDistance(leg.distance_m)}
                 {leg.duration_minutes !== null ? ` · 约 ${leg.duration_minutes} 分钟` : ''}
               </p>
             ) : null}
-            <p className="drp-stop-time">
-              <span className="drp-mono">{formatTime(stop.time)}</span> · {formatDuration(stop.duration_minutes)}
+            <p className="text-xs text-muted-foreground">
+              <span className="font-mono tabular-nums text-[color:var(--color-ink-2)]">{formatTime(stop.time)}</span> · {formatDuration(stop.duration_minutes)}
             </p>
-            <p className="drp-stop-name">{stop.name}</p>
+            <p className="text-base [overflow-wrap:anywhere]">{stop.name}</p>
             {candidate && stop.location === null ? (
-              <p className="drp-stop-note">该站点暂无坐标，地图不绘制此点。</p>
+              <p className="mt-1 text-xs text-[color:var(--color-warn-ink)]">该站点暂无坐标，地图不绘制此点。</p>
             ) : null}
           </li>
         )
@@ -1215,7 +1232,7 @@ function RouteSummary({ day }: { day: TripDay }) {
   const unavailable = day.legs.length - navigable.length
   if (day.legs.length === 0) return null
   return (
-    <p className="drp-hint">
+    <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
       路线概况：{day.legs.length} 段中 {navigable.length} 段有路线数据
       {unavailable > 0 ? `，${unavailable} 段待获取` : ''}。时刻与耗时为计划值，不代表实测交通或预约结果。
     </p>
@@ -1291,9 +1308,9 @@ function TailPreview({
   )
   if (!composed.ok) {
     return (
-      <p className="drp-error" role="alert">
-        {composed.message}
-      </p>
+      <Alert variant="warning" role="alert">
+        <AlertDescription>{composed.message}</AlertDescription>
+      </Alert>
     )
   }
   const keptDay: TripDay = {
@@ -1307,99 +1324,100 @@ function TailPreview({
   const boundaryLeg = composed.day.legs[scope.keptCount - 1]
   const hasBoundaryRoute = boundaryLeg !== undefined && boundaryLeg.route_type === 'navigation'
   return (
-    <div className="drp-preview" aria-label="候选预览">
-      <h4 className="drp-preview-title">后段候选预览（尚未应用到行程）</h4>
-      <p className="drp-hint">
+    <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] p-4" aria-label="候选预览">
+      <h4 className="m-0 font-display text-md">后段候选预览（尚未应用到行程）</h4>
+      <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
         {`本日前 ${composed.keptCount} 站原样保留（冻结段），之后 ${composed.tailStopCount} 站来自 AI 候选（新后段）；下面的组合方案只用于预览，不代表已应用。`}
       </p>
-      <div className="drp-columns">
-        <div className="drp-col">
-          <h5 className="drp-col-title">{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
+      <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+        <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
+          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
           <StopTable day={keptDay} />
         </div>
-        <div className="drp-col">
-          <h5 className="drp-col-title">组合方案（冻结段 + AI 新后段）</h5>
+        <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
+          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-ink-2)]">组合方案（冻结段 + AI 新后段）</h5>
           <StopTable day={composed.day} candidate />
         </div>
       </div>
       {composed.notices.map((notice, index) => (
-        <p key={index} className="drp-notice" role="note">
-          {notice}
-        </p>
+        <Alert key={index} variant="warning" role="note">
+          <AlertDescription>{notice}</AlertDescription>
+        </Alert>
       ))}
       {hasBoundaryRoute ? (
-        <p className="drp-notice" role="note">
-          {`衔接路线来源：高德地图（WGS84），按两端记录坐标取得；未重新核对地址或地点身份，也不代表实时交通。距离 ${boundaryLeg.distance_m ?? '未知'} 米、耗时${boundaryLeg.duration_minutes == null ? '未知' : `约 ${boundaryLeg.duration_minutes} 分钟`}。`}
-        </p>
+        <Alert variant="warning" role="note">
+          <AlertDescription>
+            {`衔接路线来源：高德地图（WGS84），按两端记录坐标取得；未重新核对地址或地点身份，也不代表实时交通。距离 ${boundaryLeg.distance_m ?? '未知'} 米、耗时${boundaryLeg.duration_minutes == null ? '未知' : `约 ${boundaryLeg.duration_minutes} 分钟`}。`}
+          </AlertDescription>
+        </Alert>
       ) : null}
-      <p className="drp-map-status">
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
         <strong>组合后地图数据：</strong>
         {MAP_STATUS_TEXT[composed.mapStatus]}
       </p>
-      <p className="drp-map-status">
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
         <strong>原始后段地图数据（AI 返回时）：</strong>
         {MAP_STATUS_TEXT[response.map_status]}
       </p>
       <RouteSummary day={composed.day} />
       {warnings.length > 0 ? (
-        <div className="drp-warnings">
-          <h5 className="drp-col-title">{`本次返回提醒（${warnings.length} 条）`}</h5>
-          <ul className="drp-warning-list">
+        <div className="grid gap-2">
+          <h5 className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">{`本次返回提醒（${warnings.length} 条）`}</h5>
+          <ul className="m-0 grid list-disc gap-1 pl-5 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
             {visibleWarnings.map((warning, index) => (
               <li key={index}>{warning}</li>
             ))}
           </ul>
           {hiddenWarningCount > 0 ? (
-            <button
-              type="button"
-              className="drp-btn drp-btn-link"
+            <Button
+              variant="link"
               onClick={onShowAllWarnings}
               aria-expanded={false}
+              className="self-start px-0"
             >
               {`展开其余 ${hiddenWarningCount} 条提醒`}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
 
       {/* ───────── 衔接路线查询（显式一次，无自动请求/重试） ───────── */}
       {boundaryPending ? (
-        <div className="drp-actions">
-          <button type="button" className="drp-btn" onClick={onStopBoundary}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" onClick={onStopBoundary}>
             停止等待衔接路线
-          </button>
-          <p className="drp-hint">
+          </Button>
+          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             已提交的衔接路线查询会继续在服务端处理；停止等待只是不再等它，不保证后端或上游已停止或不计费。
           </p>
         </div>
       ) : null}
       {boundaryError ? (
-        <p className="drp-error" role="alert">
-          {boundaryError}
-        </p>
+        <Alert variant="warning" role="alert">
+          <AlertDescription>{boundaryError}</AlertDescription>
+        </Alert>
       ) : null}
       {boundaryNotice ? (
-        <p className="drp-notice" role="note">
-          {boundaryNotice}
-        </p>
+        <Alert variant="warning" role="note">
+          <AlertDescription>{boundaryNotice}</AlertDescription>
+        </Alert>
       ) : null}
       {!hasBoundaryRoute && !boundaryPending ? (
-        <div className="drp-actions">
-          <button
-            type="button"
-            className="drp-btn"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="outline"
             onClick={onQueryBoundary}
             disabled={!boundaryQueryReady}
           >
             获取衔接路线
-          </button>
+          </Button>
           {!boundaryQueryReady ? (
-            <p className="drp-hint">
+            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               锚点或新后段首站缺少记录坐标（或站点 id 无法用于衔接查询）：无法按固定端点查询衔接路线；不会按地址重新定位、不会改名或截断、不会把缺失补成
               0。仍可仅应用后段（衔接未知）。
             </p>
           ) : (
-            <p className="drp-hint">
+            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               按锚点与新后段首站记录的 WGS84 坐标向高德地图查询一次衔接路线（walking/driving
               与候选范围一致）；不会重新定位地址。不会自动查询或重试。
             </p>
@@ -1407,43 +1425,40 @@ function TailPreview({
         </div>
       ) : null}
       {hasBoundaryRoute ? (
-        <div className="drp-actions">
-          <button type="button" className="drp-btn" onClick={onDiscardBoundary}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" onClick={onDiscardBoundary}>
             舍弃衔接路线
-          </button>
-          <p className="drp-hint">舍弃后回到「衔接路线未重算」的候选预览，可重新显式获取。</p>
+          </Button>
+          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">舍弃后回到「衔接路线未重算」的候选预览，可重新显式获取。</p>
         </div>
       ) : null}
 
       {applyError ? (
-        <p className="drp-error" role="alert">
-          {applyError.message}
-        </p>
+        <Alert variant="warning" role="alert">
+          <AlertDescription>{applyError.message}</AlertDescription>
+        </Alert>
       ) : null}
-      <div className="drp-actions">
+      <div className="flex flex-wrap items-center gap-3 max-md:flex-col max-md:items-stretch [&>button]:max-md:w-full">
         {hasBoundaryRoute ? (
-          <button
-            type="button"
-            className="drp-btn drp-btn-primary"
+          <Button
             onClick={onApplyBoundary}
             disabled={!canApply || boundaryPending}
           >
             应用后段与衔接路线
-          </button>
+          </Button>
         ) : null}
-        <button
-          type="button"
-          className="drp-btn"
+        <Button
+          variant="outline"
           onClick={onApplyUnknown}
           disabled={!canApply || boundaryPending}
         >
           仅应用后段（衔接未知）
-        </button>
-        <button type="button" className="drp-btn" onClick={onDiscard}>
+        </Button>
+        <Button variant="outline" onClick={onDiscard}>
           放弃候选
-        </button>
+        </Button>
       </div>
-      <p className="drp-hint">
+      <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
         {hasBoundaryRoute
           ? '「应用后段与衔接路线」会把锚点到新后段首站的衔接路线一并应用：前段站点、时刻与站间路线原样保留，其它天不变；衔接路线按两端记录坐标取得，未核对地点身份。'
           : '「仅应用后段（衔接未知）」只替换锚点之后的部分：前段站点、时刻与站间路线原样保留，其它天不变；锚点衔接路线未重算。'}{' '}

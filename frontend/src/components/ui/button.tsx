@@ -30,7 +30,7 @@ const buttonSizes = {
 export type ButtonVariant = keyof typeof buttonVariants
 export type ButtonSize = keyof typeof buttonSizes
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends React.ComponentProps<'button'> {
   variant?: ButtonVariant
   size?: ButtonSize
 }

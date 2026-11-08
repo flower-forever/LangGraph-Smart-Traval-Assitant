@@ -44,7 +44,7 @@ function markerByName(container: HTMLElement, name: string): Element {
 }
 
 function stopRow(container: HTMLElement, name: string): HTMLElement {
-  const row = Array.from(container.querySelectorAll<HTMLElement>('.stop-row'))
+  const row = Array.from(container.querySelectorAll<HTMLElement>('[data-testid=stop-row]'))
     .find((node) => node.textContent?.includes(name))
   if (!row) throw new Error(`找不到站点行：${name}`)
   return row
@@ -580,7 +580,7 @@ describe('App 集成', () => {
     await waitFor(() => expect(screen.getByText('杭州三日漫步路书')).toBeInTheDocument())
     await waitFor(() => expect(container.querySelectorAll('.stop-dot-wrapper')).toHaveLength(2))
 
-    const detailName = () => container.querySelector('.stop-detail h4')?.textContent ?? null
+    const detailName = () => container.querySelector('[data-testid=stop-detail] h4')?.textContent ?? null
     const activeDots = () => container.querySelectorAll('.stop-dot[data-active="true"]').length
 
     // 1) 点 marker 选中；旧实现里 popupopen 会再 toggle 一次，选中被立刻取消
@@ -918,7 +918,7 @@ describe('App 集成', () => {
 
     // 先选中一个站点，验证打开导入行程后不会沿用旧选中
     await user.click(stopRow(container, '断桥残雪'))
-    await waitFor(() => expect(container.querySelector('.stop-detail h4')?.textContent).toBe('断桥残雪'))
+    await waitFor(() => expect(container.querySelector('[data-testid=stop-detail] h4')?.textContent).toBe('断桥残雪'))
 
     await expandTransferPanel(user)
     const fetchCallsBefore = fetchMock.mock.calls.length
@@ -937,7 +937,7 @@ describe('App 集成', () => {
     expect(screen.getByRole('tab', { name: /城墙与雁塔/ })).toHaveAttribute('aria-selected', 'true')
 
     // 旧选中被清空
-    expect(container.querySelector('.stop-detail')).toBeNull()
+    expect(container.querySelector('[data-testid=stop-detail]')).toBeNull()
     expect(container.querySelectorAll('.stop-dot[data-active="true"]')).toHaveLength(0)
 
     // 不冒用「从本浏览器保存的副本恢复 · 保存于 …」的时间戳

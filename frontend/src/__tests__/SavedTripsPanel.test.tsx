@@ -235,14 +235,14 @@ describe('本地保存行程', () => {
 
     // 停在第 1 天并选中站点；恢复后 activeDay 不变，只能靠恢复逻辑主动清空
     await user.click(screen.getByText('断桥残雪'))
-    await waitFor(() => expect(container.querySelector('.stop-detail h4')?.textContent).toBe('断桥残雪'))
+    await waitFor(() => expect(container.querySelector('[data-testid=stop-detail] h4')?.textContent).toBe('断桥残雪'))
 
     await user.click(within(savedToolbar()).getByRole('button', { name: '保存当前行程' }))
     const panel = await openSavedPanel(user)
     await user.click(within(panel).getByRole('button', { name: /恢复保存的行程《杭州三日漫步路书》/ }))
 
     await waitFor(() => {
-      expect(container.querySelectorAll('.stop-detail')).toHaveLength(0)
+      expect(container.querySelectorAll('[data-testid=stop-detail]')).toHaveLength(0)
       expect(container.querySelectorAll('.stop-dot[data-active="true"]')).toHaveLength(0)
     })
     expect(screen.getByRole('tab', { name: /西湖环湖/ })).toHaveAttribute('aria-selected', 'true')
@@ -323,7 +323,7 @@ describe('本地保存行程', () => {
     // 切到第 3 天并选中一个站点，制造「非默认日期 + 有选中」的状态
     await user.click(screen.getByRole('tab', { name: /龙井问茶/ }))
     await user.click(screen.getByText('龙井村'))
-    await waitFor(() => expect(container.querySelector('.stop-detail h4')?.textContent).toBe('龙井村'))
+    await waitFor(() => expect(container.querySelector('[data-testid=stop-detail] h4')?.textContent).toBe('龙井村'))
 
     await user.click(within(savedToolbar()).getByRole('button', { name: '保存当前行程' }))
     const panel = await openSavedPanel(user)
@@ -333,7 +333,7 @@ describe('本地保存行程', () => {
       expect(screen.getByRole('tab', { name: /西湖环湖/ })).toHaveAttribute('aria-selected', 'true')
     })
     await waitFor(() => {
-      expect(container.querySelectorAll('.stop-detail')).toHaveLength(0)
+      expect(container.querySelectorAll('[data-testid=stop-detail]')).toHaveLength(0)
       expect(container.querySelectorAll('.stop-dot[data-active="true"]')).toHaveLength(0)
     })
     expect(screen.getByText(/从本浏览器保存的副本恢复/)).toBeInTheDocument()

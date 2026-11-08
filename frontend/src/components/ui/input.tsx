@@ -2,7 +2,7 @@ import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 /** shadcn/ui Input（new-york 变体，手工落盘）。底色用凹面 paper-3（--secondary），单层描边。 */
-function Input({ className, type = 'text', ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+function Input({ className, type = 'text', ...props }: React.ComponentProps<'input'>) {
   return (
     <input
       type={type}

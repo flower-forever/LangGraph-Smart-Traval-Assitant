@@ -41,7 +41,13 @@ import {
   type TripDraft,
   type UpdateDraftStopPatch,
 } from '../lib/tripDraft'
-import './tripDraftEditor.css'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Select } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 /** 本地检查一次最多先列 4 条；剩余条数如实标注，可展开，不静默吞掉。 */
 const CHECK_PREVIEW_COUNT = 4
@@ -371,8 +377,8 @@ export default function TripDraftEditor({
   const addButtonRef = useRef<HTMLButtonElement | null>(null)
   const discardButtonRef = useRef<HTMLButtonElement | null>(null)
   const confirmRef = useRef<HTMLDivElement | null>(null)
-  const formAlertRef = useRef<HTMLParagraphElement | null>(null)
-  const actionAlertRef = useRef<HTMLParagraphElement | null>(null)
+  const formAlertRef = useRef<HTMLDivElement | null>(null)
+  const actionAlertRef = useRef<HTMLDivElement | null>(null)
   const fieldRefs = useRef<Partial<Record<FormField, HTMLInputElement | HTMLTextAreaElement | null>>>({})
   const editButtonRefs = useRef(new Map<string, HTMLButtonElement>())
 
@@ -822,38 +828,39 @@ export default function TripDraftEditor({
 
     return (
       <form
-        className="tde-form"
+        className="mt-3 grid gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-card p-4"
         onSubmit={handleSave}
         noValidate
         aria-label={title}
       >
-        <h4 className="tde-form-title">{title}</h4>
-        <p className="tde-form-note">
+        <h4 className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]">{title}</h4>
+        <p className="m-0 max-w-[78ch] text-xs leading-relaxed text-muted-foreground">
           表单是独立的输入缓冲：可以先清空再重输，只有保存时才校验。保存只写入内存草稿，不会自动保存。
         </p>
 
         {sessionStale && (
-          <p className="tde-alert tde-alert-error" role="alert">
-            草稿在编辑期间被更新过。当前输入仍保留在这里，但保存会被拒绝，不会写入新草稿；
-            可以复制内容后取消，或放弃这次输入。
-          </p>
+          <Alert variant="warning" role="alert">
+            <AlertDescription>
+              草稿在编辑期间被更新过。当前输入仍保留在这里，但保存会被拒绝，不会写入新草稿；
+              可以复制内容后取消，或放弃这次输入。
+            </AlertDescription>
+          </Alert>
         )}
 
         {current.formError && (
-          <p className="tde-alert tde-alert-error" role="alert" tabIndex={-1} ref={formAlertRef}>
-            {current.formError}
-          </p>
+          <Alert variant="warning" role="alert" tabIndex={-1} ref={formAlertRef as unknown as React.Ref<HTMLDivElement>}>
+            <AlertDescription>{current.formError}</AlertDescription>
+          </Alert>
         )}
 
-        <div className="tde-form-grid">
-          <div className="field tde-field tde-field-name">
-            <label className="field-label" htmlFor={`${formFieldId}-name`}>
-              站点名称 <span className="req" aria-hidden="true">*</span>
-            </label>
-            <input
+        <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1 [&>*]:min-w-0">
+          <Field className="col-span-full">
+            <FieldLabel htmlFor={`${formFieldId}-name`}>
+              站点名称 <span aria-hidden="true" className="ml-0.5 text-[color:var(--color-accent-ink)]">*</span>
+            </FieldLabel>
+            <Input
               id={`${formFieldId}-name`}
               name="name"
-              className="field-input"
               value={current.form.name}
               onChange={(event) => updateField('name', event.target.value)}
               ref={(element) => {
@@ -866,20 +873,19 @@ export default function TripDraftEditor({
               autoComplete="off"
             />
             {errors.name && (
-              <p className="field-error" id={`${formFieldId}-name-error`}>
+              <FieldError id={`${formFieldId}-name-error`}>
                 {errors.name}
-              </p>
+              </FieldError>
             )}
-          </div>
+          </Field>
 
-          <div className="field tde-field tde-field-time">
-            <label className="field-label" htmlFor={`${formFieldId}-time`}>
-              时间 <span className="req" aria-hidden="true">*</span>
-            </label>
-            <input
+          <Field>
+            <FieldLabel htmlFor={`${formFieldId}-time`}>
+              时间 <span aria-hidden="true" className="ml-0.5 text-[color:var(--color-accent-ink)]">*</span>
+            </FieldLabel>
+            <Input
               id={`${formFieldId}-time`}
               name="time"
-              className="field-input tde-time-input"
               value={current.form.time}
               onChange={(event) => updateField('time', event.target.value)}
               ref={(element) => {
@@ -895,24 +901,23 @@ export default function TripDraftEditor({
               autoComplete="off"
             />
             {errors.time ? (
-              <p className="field-error" id={`${formFieldId}-time-error`}>
+              <FieldError id={`${formFieldId}-time-error`}>
                 {errors.time}
-              </p>
+              </FieldError>
             ) : (
-              <p className="field-help" id={`${formFieldId}-time-help`}>
+              <FieldDescription id={`${formFieldId}-time-help`}>
                 24 小时制 HH:MM。新站点默认留空，需要主动填写，不会自动补时刻。
-              </p>
+              </FieldDescription>
             )}
-          </div>
+          </Field>
 
-          <div className="field tde-field tde-field-duration">
-            <label className="field-label" htmlFor={`${formFieldId}-duration`}>
+          <Field>
+            <FieldLabel htmlFor={`${formFieldId}-duration`}>
               停留时长（分钟）
-            </label>
-            <input
+            </FieldLabel>
+            <Input
               id={`${formFieldId}-duration`}
               name="duration"
-              className="field-input tde-duration-input"
               value={current.form.duration}
               onChange={(event) => updateField('duration', event.target.value)}
               ref={(element) => {
@@ -929,24 +934,23 @@ export default function TripDraftEditor({
               autoComplete="off"
             />
             {errors.duration ? (
-              <p className="field-error" id={`${formFieldId}-duration-error`}>
+              <FieldError id={`${formFieldId}-duration-error`}>
                 {errors.duration}
-              </p>
+              </FieldError>
             ) : (
-              <p className="field-help" id={`${formFieldId}-duration-help`}>
+              <FieldDescription id={`${formFieldId}-duration-help`}>
                 留空表示 null，不会自动补一个停留时长。
-              </p>
+              </FieldDescription>
             )}
-          </div>
+          </Field>
 
-          <div className="field tde-field tde-field-address">
-            <label className="field-label" htmlFor={`${formFieldId}-address`}>
+          <Field className="col-span-full">
+            <FieldLabel htmlFor={`${formFieldId}-address`}>
               地址
-            </label>
-            <input
+            </FieldLabel>
+            <Input
               id={`${formFieldId}-address`}
               name="address"
-              className="field-input"
               value={current.form.address}
               onChange={(event) => updateField('address', event.target.value)}
               ref={(element) => {
@@ -958,21 +962,21 @@ export default function TripDraftEditor({
               autoComplete="off"
             />
             {errors.address && (
-              <p className="field-error" id={`${formFieldId}-address-error`}>
+              <FieldError id={`${formFieldId}-address-error`}>
                 {errors.address}
-              </p>
+              </FieldError>
             )}
-          </div>
+          </Field>
 
-          <div className="field tde-field tde-field-description">
-            <label className="field-label" htmlFor={`${formFieldId}-description`}>
+          <Field className="col-span-full">
+            <FieldLabel htmlFor={`${formFieldId}-description`}>
               描述
-            </label>
-            <textarea
+            </FieldLabel>
+            <Textarea
               id={`${formFieldId}-description`}
               name="description"
-              className="field-input tde-description-input"
               rows={3}
+              className="min-h-[84px] resize-y"
               value={current.form.description}
               onChange={(event) => updateField('description', event.target.value)}
               ref={(element) => {
@@ -985,27 +989,27 @@ export default function TripDraftEditor({
               placeholder="可留空"
             />
             {errors.description && (
-              <p className="field-error" id={`${formFieldId}-description-error`}>
+              <FieldError id={`${formFieldId}-description-error`}>
                 {errors.description}
-              </p>
+              </FieldError>
             )}
-          </div>
+          </Field>
         </div>
 
         {isNew && (
-          <p className="tde-form-note tde-form-note-strong">
+          <p className="m-0 max-w-[78ch] text-xs font-semibold leading-relaxed text-[color:var(--color-ink-2)]">
             新站点没有坐标，这里不提供手填经纬度；插入后相关路段会标为待重新获取，不会用直线冒充已更新地图。
           </p>
         )}
 
-        <div className="tde-form-actions">
-          <button type="submit" className="btn btn-primary">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-t-border pt-3">
+          <Button type="submit">
             保存到草稿
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={cancelSession}>
+          </Button>
+          <Button variant="outline" onClick={cancelSession}>
             取消输入
-          </button>
-          <span className="tde-form-hint">
+          </Button>
+          <span className="flex-[1_1_240px] text-xs leading-relaxed text-[color:var(--color-faint)]">
             保存只写内存草稿；改名称 / 地址才会清空该站坐标并使相关路段待重新获取，改时间 / 停留 / 描述不会。
           </span>
         </div>
@@ -1014,30 +1018,36 @@ export default function TripDraftEditor({
   }
 
   return (
-    <section className="tde" role="region" aria-label="本地行程草稿编辑器">
-      <header className="tde-head">
-        <div className="tde-head-main">
-          <p className="tde-eyebrow">本地行程编辑 · 内存草稿</p>
-          <h3 className="tde-title" ref={headingRef} tabIndex={-1} id={`${baseId}-title`}>
+    <section className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5" role="region" aria-label="本地行程草稿编辑器">
+      <header className="flex flex-wrap items-start justify-between gap-3 max-md:flex-col">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">本地行程编辑 · 内存草稿</p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-2 focus-visible:rounded-[6px]" ref={headingRef} tabIndex={-1} id={`${baseId}-title`}>
             {draft.base.title}
           </h3>
-          <p className="tde-meta">
-            <span className="tde-source" data-source={draft.base.source}>
+          <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
+            <Badge variant={draft.base.source === 'example' ? 'warning' : 'secondary'} className="text-[10px] tracking-[0.08em]" data-source={draft.base.source}>
               {sourceLabel}
-            </span>
-            <span className="tde-day-chip">
+            </Badge>
+            <span className="font-mono tabular-nums text-[color:var(--color-ink-2)]">
               {day ? `第 ${day.day} 天` : `第 ${dayNumber} 天（草稿里没有）`}
             </span>
             {day && <span>{day.date ?? '日期未填'}</span>}
-            {day && day.title && <span className="tde-day-title">{day.title}</span>}
+            {day && day.title && <span className="text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{day.title}</span>}
             {day && <span>{day.stops.length} 个站点</span>}
           </p>
-          <p className="tde-boundary">
+          <p className="m-0 mt-2 max-w-[72ch] text-sm leading-relaxed text-[color:var(--color-ink-2)]">
             修改只写入这份内存草稿，不会自动保存到浏览器、也不会发送到后端。点「应用草稿」才会生成新的行程副本，
             之后仍需用现有的保存按钮手动保存。
           </p>
         </div>
-        <p className="tde-dirty" data-dirty={dirty}>
+        <p
+          className={
+            dirty
+              ? 'm-0 shrink-0 self-start rounded-full border border-[color:var(--color-accent)] bg-accent-surface px-3 py-1 text-xs text-[color:var(--color-accent-ink)]'
+              : 'm-0 shrink-0 self-start rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground'
+          }
+        >
           {dirty
             ? `草稿已修改：${changedDays.map((item) => `第 ${item} 天`).join('、')}`
             : '草稿与原始行程一致'}
@@ -1045,114 +1055,123 @@ export default function TripDraftEditor({
       </header>
 
       {draft.base.source === 'example' && (
-        <p className="tde-example-note">
-          这是示例行程（示例参考）：应用后仍保留示例身份，导出的日历会继续带「示例」标记，不会变成真实安排。
-        </p>
+        <Alert variant="warning">
+          <AlertDescription>
+            这是示例行程（示例参考）：应用后仍保留示例身份，导出的日历会继续带「示例」标记，不会变成真实安排。
+          </AlertDescription>
+        </Alert>
       )}
 
-      <div className="tde-toolbar">
-        <button
-          type="button"
-          className="btn btn-save"
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Button
           onClick={openAdd}
           ref={addButtonRef}
           disabled={session !== null || day === null}
         >
           新增站点
-        </button>
-        <button
-          type="button"
-          className="btn"
+        </Button>
+        <Button
+          variant="outline"
           onClick={handleUndo}
           disabled={session !== null || draft.history.length === 0}
         >
           撤销草稿操作
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary"
+        </Button>
+        <Button
           onClick={handleApply}
           disabled={session !== null || !dirty}
         >
           应用草稿
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost"
+        </Button>
+        <Button
+          variant="outline"
           onClick={handleDiscardClick}
           ref={discardButtonRef}
           disabled={session !== null}
         >
           放弃草稿
-        </button>
+        </Button>
       </div>
 
-      <p className="tde-toolbar-note">
+      <p className="m-0 -mt-2 text-xs text-[color:var(--color-faint)]">
         撤销只改内存草稿，不会自动保存；应用也不会改变已保存的原记录，原保存记录要等你再次手动保存才会更新。
       </p>
 
       {session && (
-        <p className="tde-session-lock" role="note">
-          单站输入尚未保存：新增 / 删除 / 上下移动 / 撤销 / 应用 / 放弃在这个编辑器里已暂停，避免结构动作把输入带走。
-          先保存到草稿或取消输入。
-        </p>
+        <Alert variant="default" role="note" className="bg-secondary">
+          <AlertDescription>
+            单站输入尚未保存：新增 / 删除 / 上下移动 / 撤销 / 应用 / 放弃在这个编辑器里已暂停，避免结构动作把输入带走。
+            先保存到草稿或取消输入。
+          </AlertDescription>
+        </Alert>
       )}
 
       {sessionOffDay && session && (
-        <div className="tde-offday" role="status">
-          <p>
+        <div
+          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-[0_6px_6px_0] border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[var(--color-warn-bg)] p-3"
+          role="status"
+        >
+          <p className="m-0 flex-[1_1_240px] text-sm leading-relaxed text-[color:var(--color-warn-ink)]">
             第 {session.dayNumber} 天有一个未保存的单站输入，当前正在查看第 {day.day} 天；输入仍保留，
             回到第 {session.dayNumber} 天即可继续，或在这里放弃这次输入。
           </p>
-          <button type="button" className="btn btn-ghost" onClick={abandonOffDayInput}>
+          <Button variant="outline" onClick={abandonOffDayInput}>
             放弃这次输入
-          </button>
+          </Button>
         </div>
       )}
 
       {discardConfirm && (
         <div
-          className="tde-confirm"
+          className="rounded-[10px] border border-dashed border-[color:var(--color-accent)] bg-accent-surface p-3 focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-2"
           role="group"
           aria-label="确认放弃草稿"
           tabIndex={-1}
           ref={confirmRef}
         >
-          <p>确认放弃本地草稿？未应用的修改会丢失，当前查看的原始行程不会被修改。</p>
-          <div className="tde-confirm-actions">
-            <button type="button" className="btn" onClick={handleConfirmDiscard}>
+          <p className="m-0 mb-2 text-sm text-[color:var(--color-accent-ink)]">确认放弃本地草稿？未应用的修改会丢失，当前查看的原始行程不会被修改。</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={handleConfirmDiscard}>
               确认放弃草稿
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={handleCancelDiscard}>
+            </Button>
+            <Button variant="outline" onClick={handleCancelDiscard}>
               继续编辑
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {actionError && (
-        <p className="tde-alert tde-alert-error" role="alert" tabIndex={-1} ref={actionAlertRef}>
-          {actionError}
-        </p>
+        <Alert variant="warning" role="alert" tabIndex={-1} ref={actionAlertRef as unknown as React.Ref<HTMLDivElement>}>
+          <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
       )}
 
       <div aria-live="polite" aria-atomic="true">
-        {notice && <p className="tde-notice">{notice}</p>}
+        {notice && (
+          <Alert variant="success">
+            <AlertDescription>{notice}</AlertDescription>
+          </Alert>
+        )}
       </div>
 
       {day === null ? (
-        <p className="tde-empty" role="status">
-          这份草稿里没有第 {dayNumber} 天，无法编辑；草稿本身没有被修改，可以撤销、应用或放弃它。
-        </p>
+        <Alert variant="default" role="status" className="bg-secondary">
+          <AlertDescription>
+            这份草稿里没有第 {dayNumber} 天，无法编辑；草稿本身没有被修改，可以撤销、应用或放弃它。
+          </AlertDescription>
+        </Alert>
       ) : (
         <>
           {day.stops.length === 0 && (
-            <p className="tde-empty">
-              第 {day.day} 天目前没有站点。本地编辑不会自动补站点；可以点「新增站点」手动加一个，也可以保持空日。
-            </p>
+            <Alert variant="default" role="status" className="bg-secondary">
+              <AlertDescription>
+                第 {day.day} 天目前没有站点。本地编辑不会自动补站点；可以点「新增站点」手动加一个，也可以保持空日。
+              </AlertDescription>
+            </Alert>
           )}
 
-          <ol className="tde-stops" aria-label={`第 ${day.day} 天站点`}>
+          <ol className="m-0 list-none p-0" aria-label={`第 ${day.day} 天站点`}>
             {day.stops.map((stop, index) => {
               const isEditing =
                 session !== null &&
@@ -1160,34 +1179,37 @@ export default function TripDraftEditor({
                 session.stopId === stop.id &&
                 session.dayNumber === day.day
               return (
-                <li className="tde-stop" key={stop.id} data-editing={isEditing || undefined}>
-                  <div className="tde-stop-head">
-                    <span className="tde-stop-index">第 {index + 1} 站</span>
+                <li
+                  className={`border-t border-t-border py-3 first:border-t-0 ${isEditing ? 'rounded-[10px] border-t-border bg-background pl-3 shadow-[inset_3px_0_0_var(--color-accent)]' : ''}`}
+                  key={stop.id}
+                  data-editing={isEditing || undefined}
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">第 {index + 1} 站</span>
                     {onSelectStop ? (
                       <button
                         type="button"
-                        className="tde-stop-link"
+                        className="m-0 min-h-[28px] min-w-0 cursor-pointer appearance-none border-0 bg-none p-0 text-left font-[inherit] font-semibold text-foreground hover:text-[color:var(--color-accent-ink)] hover:underline hover:underline-offset-[3px] focus-visible:rounded-[6px] focus-visible:outline-2 focus-visible:outline-[color:var(--color-accent-ink)] focus-visible:outline-offset-2 [overflow-wrap:anywhere]"
                         onClick={() => onSelectStop(stop.id)}
                         aria-label={`在地图中查看${describeStop(stop, index)}`}
                       >
                         {stop.name}
                       </button>
                     ) : (
-                      <span className="tde-stop-name">{stop.name}</span>
+                      <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{stop.name}</span>
                     )}
-                    <span className="tde-stop-time">{stop.time || '时间未填'}</span>
-                    <span className="tde-stop-duration">
+                    <span className="font-mono text-sm tabular-nums text-[color:var(--color-ink-2)]">{stop.time || '时间未填'}</span>
+                    <span className="text-xs text-muted-foreground">
                       {stop.duration_minutes === null
                         ? '停留未填'
                         : `停留 ${stop.duration_minutes} 分钟`}
                     </span>
-                    {stop.location === null && <span className="tde-tag">无坐标</span>}
+                    {stop.location === null && <Badge variant="outline" className="text-[10px]">无坐标</Badge>}
                   </div>
-                  <p className="tde-stop-address">{stop.address || '未填写地址'}</p>
-                  <div className="tde-stop-actions">
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
+                  <p className="m-0 mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">{stop.address || '未填写地址'}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <Button
+                      variant="ghost"
                       onClick={() => openEdit(stop)}
                       disabled={session !== null}
                       ref={(element) => {
@@ -1197,34 +1219,31 @@ export default function TripDraftEditor({
                       aria-label={`编辑${describeStop(stop, index)}`}
                     >
                       编辑
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
+                    </Button>
+                    <Button
+                      variant="ghost"
                       onClick={() => handleMove(stop, index, 'up')}
                       disabled={session !== null || index === 0}
                       aria-label={`上移${describeStop(stop, index)}`}
                     >
                       上移
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
+                    </Button>
+                    <Button
+                      variant="ghost"
                       onClick={() => handleMove(stop, index, 'down')}
                       disabled={session !== null || index === day.stops.length - 1}
                       aria-label={`下移${describeStop(stop, index)}`}
                     >
                       下移
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
+                    </Button>
+                    <Button
+                      variant="ghost"
                       onClick={() => handleRemove(stop, index)}
                       disabled={session !== null}
                       aria-label={`删除${describeStop(stop, index)}（可撤销）`}
                     >
                       删除
-                    </button>
+                    </Button>
                   </div>
                   {isEditing && session && renderStopForm(session)}
                 </li>
@@ -1236,66 +1255,69 @@ export default function TripDraftEditor({
         </>
       )}
 
-      <section className="tde-checks" aria-labelledby={`${baseId}-limit-title`}>
-        <div className="tde-section-head">
-          <h4 className="tde-section-title" id={`${baseId}-limit-title`}>
+      <section className="grid min-w-0 gap-2 border-t border-t-border pt-3" aria-labelledby={`${baseId}-limit-title`}>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+          <h4 className="m-0 font-display text-base font-bold tracking-[0.02em]" id={`${baseId}-limit-title`}>
             每天最多站点数（偏好检查）
           </h4>
-          <span className="tde-count">{dailyStopLimitEnabled ? `上限 ${dailyStopLimit} 站` : '未启用'}</span>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">{dailyStopLimitEnabled ? `上限 ${dailyStopLimit} 站` : '未启用'}</span>
         </div>
-        <p className="tde-section-note">
+        <p className="m-0 max-w-[80ch] text-xs leading-relaxed text-muted-foreground">
           这是只属于当前草稿会话的界面设置：不会被保存，也不写入行程或发送到后端。
           超过上限时只给提醒，不会自动删站；旧导入数据里超过 8 站的天照常显示和编辑。
         </p>
-        <div className="tde-limit-controls">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 [&>label]:inline-flex [&>label]:min-h-6 [&>label]:cursor-pointer [&>label]:items-center [&>label]:gap-2 [&>label]:text-sm">
           <label>
             <input
               type="checkbox"
               checked={dailyStopLimitEnabled}
               onChange={(event) => setDailyStopLimitEnabled(event.target.checked)}
+              className="size-4 accent-[color:var(--color-accent)]"
             />{' '}
             启用每天站点数上限检查
           </label>
           <label>
             上限（每天站点数）{' '}
-            <select
+            <Select
               value={dailyStopLimit}
               onChange={(event) => setDailyStopLimit(Number(event.target.value))}
               disabled={!dailyStopLimitEnabled}
               aria-label="每天站点数上限"
+              className="w-auto min-w-0"
             >
               {DAILY_STOP_LIMIT_OPTIONS.map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             检查范围{' '}
-            <select
+            <Select
               value={dailyStopLimitScope}
               onChange={(event) => setDailyStopLimitScope(event.target.value as DailyStopLimitScope)}
               disabled={!dailyStopLimitEnabled}
               aria-label="上限检查范围"
+              className="w-auto min-w-0"
             >
               <option value="all_days">所有天</option>
               <option value="changed_days">仅改动过的天</option>
-            </select>
+            </Select>
           </label>
         </div>
         {dailyStopLimitEnabled && dailyLimitNotices.length === 0 ? (
-          <p className="tde-section-empty">
+          <p className="m-0 text-sm text-[color:var(--color-faint)]">
             {dailyStopLimitScope === 'changed_days' && draftChangedDays(draft).length === 0
               ? '草稿还没有改动过的天，切到「所有天」可检查整个行程。'
               : `当前没有天超过每天 ${dailyStopLimit} 站的上限。`}
           </p>
         ) : null}
         {dailyLimitNotices.length > 0 && (
-          <ul className="tde-check-list" aria-label="每天站点数上限提醒">
+          <ul className="m-0 grid list-none gap-2 p-0" aria-label="每天站点数上限提醒">
             {dailyLimitNotices.map((item) => (
-              <li key={item.day} className="tde-check-item">
-                <span className="tde-check-kind">超过上限</span>
+              <li key={item.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">超过上限</Badge>
                 <span>{item.message}</span>
               </li>
             ))}
@@ -1303,12 +1325,12 @@ export default function TripDraftEditor({
         )}
       </section>
 
-      <section className="tde-checks" aria-labelledby={`${baseId}-endtime-title`}>
-        <div className="tde-section-head">
-          <h4 className="tde-section-title" id={`${baseId}-endtime-title`}>
+      <section className="grid min-w-0 gap-2 border-t border-t-border pt-3" aria-labelledby={`${baseId}-endtime-title`}>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+          <h4 className="m-0 font-display text-base font-bold tracking-[0.02em]" id={`${baseId}-endtime-title`}>
             每天最晚结束时间（偏好检查）
           </h4>
-          <span className="tde-count">
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
             {endTimeEnabled
               ? endTimeRun
                 ? `上限 ${formatEndTimeClock(endTimeRun.limit)}`
@@ -1316,13 +1338,13 @@ export default function TripDraftEditor({
               : '未启用'}
           </span>
         </div>
-        <p className="tde-section-note">
+        <p className="m-0 max-w-[80ch] text-xs leading-relaxed text-muted-foreground">
           这是只属于当前草稿会话的界面设置：不写入行程、不保存、不发给后端，也不会自动修改任何站点；
           草稿要改动或应用由你自己操作。修改输入或范围后旧结果会清除，需要重新点「检查」。
           检查覆盖当天的所有站点，不是只看末站；按填写的开始时刻与停留推算结束下界，
           未计入站间交通耗时，不代表行程不可行、不代表已核实营业或预约。
         </p>
-        <div className="tde-limit-controls">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 [&>label]:inline-flex [&>label]:min-h-6 [&>label]:cursor-pointer [&>label]:items-center [&>label]:gap-2 [&>label]:text-sm">
           <label>
             <input
               type="checkbox"
@@ -1334,12 +1356,13 @@ export default function TripDraftEditor({
                 setEndTimeRun(null)
                 setEndTimeError(null)
               }}
+              className="size-4 accent-[color:var(--color-accent)]"
             />{' '}
             启用每天最晚结束检查
           </label>
           <label>
             最晚结束（HH:MM）{' '}
-            <input
+            <Input
               type="text"
               value={endTimeText}
               onChange={(event) => {
@@ -1354,12 +1377,12 @@ export default function TripDraftEditor({
               autoComplete="off"
               aria-label="最晚结束"
               aria-invalid={endTimeError ? true : undefined}
-              className="tde-time-input"
+              className="w-auto min-w-0"
             />
           </label>
           <label>
             检查范围{' '}
-            <select
+            <Select
               value={endTimeScope}
               onChange={(event) => {
                 setEndTimeScope(event.target.value as DailyEndTimeScope)
@@ -1369,36 +1392,36 @@ export default function TripDraftEditor({
               }}
               disabled={!endTimeEnabled}
               aria-label="最晚结束检查范围"
+              className="w-auto min-w-0"
             >
               <option value="all_days">所有天</option>
               <option value="changed_days">仅改动过的天</option>
-            </select>
+            </Select>
           </label>
-          <button
-            type="button"
-            className="btn"
+          <Button
+            variant="outline"
             onClick={handleEndTimeCheck}
             disabled={!endTimeEnabled}
           >
             检查
-          </button>
+          </Button>
         </div>
         {endTimeError && (
-          <p className="field-error" role="alert">
+          <FieldError role="alert">
             {endTimeError}
-          </p>
+          </FieldError>
         )}
         {endTimeEnabled && !endTimeRun && !endTimeError && (
-          <p className="tde-section-empty">
+          <p className="m-0 text-sm text-[color:var(--color-faint)]">
             设置好上限与范围后点「检查」出结果；结果只按点检查时的设置展示，
             修改输入或范围后会清除，需要重新检查。
           </p>
         )}
         {endTimeDays !== null && (
-          <ul className="tde-check-list" aria-label="最晚结束时间检查结果">
+          <ul className="m-0 grid list-none gap-2 p-0" aria-label="最晚结束时间检查结果">
             {endTimeDays.map((dayResult) => (
-              <li key={dayResult.day} className="tde-check-item">
-                <span className="tde-check-kind">
+              <li key={dayResult.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">
                   {dayResult.status === 'over_limit'
                     ? '超限'
                     : dayResult.status === 'unconfirmed'
@@ -1406,16 +1429,16 @@ export default function TripDraftEditor({
                       : dayResult.status === 'empty_day'
                         ? '空日'
                         : '未发现超限'}
-                </span>
-                <div className="tde-check-body">
+                </Badge>
+                <div className="min-w-0">
                   {dayResult.summary}
                   {dayResult.findings.length > 0 && (
-                    <ul className="tde-check-list">
+                    <ul className="m-0 grid list-none gap-2 p-0">
                       {dayResult.findings.map((finding, index) => (
-                        <li key={`${finding.stopId}-${index}`} className="tde-check-item">
-                          <span className="tde-check-kind">
+                        <li key={`${finding.stopId}-${index}`} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed [overflow-wrap:anywhere]">
+                          <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">
                             {END_TIME_KIND_LABEL[finding.kind] ?? '待确认'}
-                          </span>
+                          </Badge>
                           <span>{finding.message}</span>
                         </li>
                       ))}
@@ -1428,12 +1451,12 @@ export default function TripDraftEditor({
         )}
       </section>
 
-      <section className="tde-checks" aria-labelledby={`${baseId}-walking-title`}>
-        <div className="tde-section-head">
-          <h4 className="tde-section-title" id={`${baseId}-walking-title`}>
+      <section className="grid min-w-0 gap-2 border-t border-t-border pt-3" aria-labelledby={`${baseId}-walking-title`}>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+          <h4 className="m-0 font-display text-base font-bold tracking-[0.02em]" id={`${baseId}-walking-title`}>
             每天步行距离上限（偏好检查）
           </h4>
-          <span className="tde-count">
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
             {walkingDistanceEnabled
               ? walkingDistanceRun
                 ? `上限 ${formatWalkingMeters(walkingDistanceRun.limit)}`
@@ -1441,12 +1464,12 @@ export default function TripDraftEditor({
               : '未启用'}
           </span>
         </div>
-        <p className="tde-section-note">
+        <p className="m-0 max-w-[80ch] text-xs leading-relaxed text-muted-foreground">
           这是只属于当前草稿会话的界面设置：不写入行程、不保存、不发给后端，也不会自动修改任何站点。
           {WALKING_DISTANCE_DISCLAIMER}
           修改输入或范围后旧结果会清除，需要重新点「检查」；仅此检查的输入非法不会阻断原来的编辑与应用。
         </p>
-        <div className="tde-limit-controls">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 [&>label]:inline-flex [&>label]:min-h-6 [&>label]:cursor-pointer [&>label]:items-center [&>label]:gap-2 [&>label]:text-sm">
           <label>
             <input
               type="checkbox"
@@ -1457,12 +1480,13 @@ export default function TripDraftEditor({
                 setWalkingDistanceRun(null)
                 setWalkingDistanceError(null)
               }}
+              className="size-4 accent-[color:var(--color-accent)]"
             />{' '}
             启用每天步行距离检查
           </label>
           <label>
             每天步行距离上限（米，0–{MAX_DAILY_WALKING_DISTANCE_METERS}）{' '}
-            <input
+            <Input
               type="text"
               value={walkingDistanceText}
               onChange={(event) => {
@@ -1478,12 +1502,12 @@ export default function TripDraftEditor({
               autoComplete="off"
               aria-label="每天步行距离上限"
               aria-invalid={walkingDistanceError ? true : undefined}
-              className="tde-time-input"
+              className="w-auto min-w-0"
             />
           </label>
           <label>
             检查范围{' '}
-            <select
+            <Select
               value={walkingDistanceScope}
               onChange={(event) => {
                 setWalkingDistanceScope(event.target.value as DailyWalkingDistanceScope)
@@ -1493,43 +1517,43 @@ export default function TripDraftEditor({
               }}
               disabled={!walkingDistanceEnabled}
               aria-label="步行距离检查范围"
+              className="w-auto min-w-0"
             >
               <option value="all_days">所有天</option>
               <option value="changed_days">仅改动过的天</option>
-            </select>
+            </Select>
           </label>
-          <button
-            type="button"
-            className="btn"
+          <Button
+            variant="outline"
             onClick={handleWalkingDistanceCheck}
             disabled={!walkingDistanceEnabled}
           >
             检查
-          </button>
+          </Button>
         </div>
         {walkingDistanceError && (
-          <p className="field-error" role="alert">
+          <FieldError role="alert">
             {walkingDistanceError}
-          </p>
+          </FieldError>
         )}
         {walkingDistanceEnabled && !walkingDistanceRun && !walkingDistanceError && (
-          <p className="tde-section-empty">
+          <p className="m-0 text-sm text-[color:var(--color-faint)]">
             设置好上限与范围后点「检查」出结果；结果只按点检查时的设置展示，
             修改输入或范围后会清除，需要重新检查。
           </p>
         )}
         {walkingDistanceDays !== null && walkingDistanceDays.length === 0 && (
-          <p className="tde-section-empty">
+          <p className="m-0 text-sm text-[color:var(--color-faint)]">
             {walkingDistanceScope === 'changed_days'
               ? '没有已改动过的天可检查；切到「所有天」可查看整个行程的已记录步行距离。'
               : '草稿里没有天可检查。'}
           </p>
         )}
         {walkingDistanceDays !== null && walkingDistanceDays.length > 0 && (
-          <ul className="tde-check-list" aria-label="每天步行距离检查结果">
+          <ul className="m-0 grid list-none gap-2 p-0" aria-label="每天步行距离检查结果">
             {walkingDistanceDays.map((dayResult) => (
-              <li key={dayResult.day} className="tde-check-item">
-                <span className="tde-check-kind">
+              <li key={dayResult.day} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">
                   {dayResult.status === 'over_limit'
                     ? '已记录超限'
                     : dayResult.status === 'no_data'
@@ -1537,10 +1561,10 @@ export default function TripDraftEditor({
                       : dayResult.status === 'unsafe_sum'
                         ? '合计异常'
                         : '未发现超限'}
-                </span>
-                <div className="tde-check-body">
+                </Badge>
+                <div className="min-w-0">
                   {dayResult.summary}
-                  <p className="tde-walking-detail">
+                  <p className="m-0 mt-1 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
                     纳入 {dayResult.includedLegCount} 段导航步行
                     {dayResult.includedTotalMeters !== null
                       ? `，合计 ${formatWalkingMeters(dayResult.includedTotalMeters)}`
@@ -1555,40 +1579,39 @@ export default function TripDraftEditor({
         )}
       </section>
 
-      <section className="tde-checks" aria-labelledby={`${baseId}-checks-title`}>
-        <div className="tde-section-head">
-          <h4 className="tde-section-title" id={`${baseId}-checks-title`}>
+      <section className="grid min-w-0 gap-2 border-t border-t-border pt-3" aria-labelledby={`${baseId}-checks-title`}>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+          <h4 className="m-0 font-display text-base font-bold tracking-[0.02em]" id={`${baseId}-checks-title`}>
             当前本地检查
           </h4>
-          <span className="tde-count">{checks.length} 条</span>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">{checks.length} 条</span>
         </div>
-        <p className="tde-section-note">
+        <p className="m-0 max-w-[80ch] text-xs leading-relaxed text-muted-foreground">
           按你填写的计划时间与停留计算，只覆盖草稿里改动过的天；不代表真实预约、营业状态或实测交通，
           也不是「最晚结束时间」偏好检查的结果（那在单独的区块里）。
           改时间 / 停留 / 描述不会清除已有坐标和路线；改名称 / 地址才会让该站坐标与相关路段待重新获取。
         </p>
         {checks.length === 0 ? (
-          <p className="tde-section-empty">
+          <p className="m-0 text-sm text-[color:var(--color-faint)]">
             {dirty ? '当前改动没有触发本地检查项。' : '草稿还没有改动，因此没有本地检查结果。'}
           </p>
         ) : (
-          <ul className="tde-check-list">
+          <ul className="m-0 grid list-none gap-2 p-0" data-testid="local-check-list">
             {checkPreview.map((check: DraftLocalCheck, index) => (
-              <li key={`${check.kind}-${index}`} className="tde-check-item">
-                <span className="tde-check-kind">{CHECK_KIND_LABEL[check.kind]}</span>
+              <li key={`${check.kind}-${index}`} className="flex flex-wrap items-start gap-2 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                <Badge variant="secondary" className="mt-0.5 shrink-0 font-mono text-[10px]">{CHECK_KIND_LABEL[check.kind]}</Badge>
                 <span>{check.message}</span>
               </li>
             ))}
             {hiddenCheckCount > 0 && (
-              <li className="tde-more">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
+              <li className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[color:var(--color-faint)]">
+                <Button
+                  variant="ghost"
                   onClick={() => setChecksExpanded((current) => !current)}
                   aria-expanded={checksExpanded}
                 >
                   {checksExpanded ? '收起检查列表' : `展开其余 ${hiddenCheckCount} 条检查`}
-                </button>
+                </Button>
                 <span>
                   {checksExpanded
                     ? `已显示全部 ${checks.length} 条`
@@ -1600,36 +1623,38 @@ export default function TripDraftEditor({
         )}
       </section>
 
-      <section className="tde-warnings" aria-labelledby={`${baseId}-warnings-title`}>
-        <div className="tde-section-head">
-          <h4 className="tde-section-title" id={`${baseId}-warnings-title`}>
+      <section
+        className="grid min-w-0 gap-2 rounded-[0_6px_6px_0] border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[var(--color-warn-bg)] p-3"
+        aria-labelledby={`${baseId}-warnings-title`}
+      >
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+          <h4 className="m-0 font-display text-base font-bold tracking-[0.02em] [&+span]:text-[color:var(--color-warn-ink)]" id={`${baseId}-warnings-title`}>
             编辑前行程提醒（仅供参考）
           </h4>
-          <span className="tde-count">{warnings.length} 条</span>
+          <span className="font-mono text-xs tabular-nums text-[color:var(--color-warn-ink)]">{warnings.length} 条</span>
         </div>
-        <p className="tde-section-note">
+        <p className="m-0 max-w-[80ch] text-xs leading-relaxed text-[color:var(--color-warn-ink)]">
           以下是原始行程已有的提醒，属于编辑前的参考，尚未按草稿重新核对；它和上面的「当前本地检查」不是同一份结果，
           既不能当成仍然成立，也不能当成已经排除。
         </p>
         {warnings.length === 0 ? (
-          <p className="tde-section-empty">原始行程没有提醒。这不代表当前草稿没有本地检查项。</p>
+          <p className="m-0 text-sm text-[color:var(--color-warn-ink)]">原始行程没有提醒。这不代表当前草稿没有本地检查项。</p>
         ) : (
-          <ul className="tde-warning-list">
+          <ul className="m-0 grid list-none gap-2 p-0" data-testid="base-warning-list">
             {warningPreview.map((warning: string, index: number) => (
-              <li key={index}>{warning}</li>
+              <li key={index} className="text-sm leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]">{warning}</li>
             ))}
             {hiddenWarningCount > 0 && (
-              <li className="tde-more">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
+              <li className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[color:var(--color-warn-ink)]">
+                <Button
+                  variant="ghost"
                   onClick={() => setWarningsExpanded((current) => !current)}
                   aria-expanded={warningsExpanded}
                 >
                   {warningsExpanded
                     ? '收起提醒列表'
                     : `展开其余 ${hiddenWarningCount} 条提醒`}
-                </button>
+                </Button>
                 <span>
                   {warningsExpanded
                     ? `已显示全部 ${warnings.length} 条`
@@ -1641,7 +1666,7 @@ export default function TripDraftEditor({
         )}
       </section>
 
-      <p className="tde-calendar-note">
+      <p className="m-0 border-t border-t-border pt-3 text-xs leading-relaxed text-[color:var(--color-faint)]">
         应用后会生成新的行程副本。导出日历的事件会对应新副本，
         之前导入到日历的旧事件不会被更新或删除。
       </p>

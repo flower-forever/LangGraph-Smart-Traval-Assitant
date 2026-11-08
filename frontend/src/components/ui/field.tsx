@@ -4,6 +4,8 @@ import { cn } from '@/lib/utils'
 /**
  * shadcn/ui Field（new-york 变体，手工落盘）。
  * 映射表：.field-label / .field-help → Field + FieldDescription；保留 htmlFor / aria-describedby。
+ * FieldError 不带默认 role：与迁移前的 .field-error（无 role=alert）语义一致；
+ * 需要 live region 的调用方显式传 role="alert"。
  */
 function Field({ className, ...props }: React.ComponentProps<'div'>) {
   return (
@@ -35,10 +37,10 @@ function FieldDescription({ className, ...props }: React.ComponentProps<'p'>) {
   )
 }
 
-function FieldError({ className, ...props }: React.ComponentProps<'p'>) {
+function FieldError({ className, role, ...props }: React.ComponentProps<'p'>) {
   return (
     <p
-      role="alert"
+      role={role}
       data-slot="field-error"
       className={cn('text-xs leading-relaxed text-destructive', className)}
       {...props}

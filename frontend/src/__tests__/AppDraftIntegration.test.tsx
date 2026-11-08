@@ -29,7 +29,7 @@ function stubHappyFetch(example: unknown = MOCK_TRIP) {
 }
 
 function stopRow(container: HTMLElement, name: string): HTMLElement {
-  const row = Array.from(container.querySelectorAll<HTMLElement>('.stop-row'))
+  const row = Array.from(container.querySelectorAll<HTMLElement>('[data-testid=stop-row]'))
     .find((node) => node.textContent?.includes(name))
   if (!row) throw new Error(`找不到站点行：${name}`)
   return row
@@ -84,7 +84,7 @@ describe('App 本地编辑接线', () => {
     await startEditing(user)
 
     // 编辑器就位，显示的是当前行程
-    expect(screen.getByText('杭州三日漫步路书', { selector: '.tde-title' })).toBeInTheDocument()
+    expect(screen.getByText('杭州三日漫步路书', { selector: '[id$="-title"]' })).toBeInTheDocument()
     // 规划表单被 disabled fieldset 暂停
     expect(screen.getByText(/本地编辑进行中：新行程规划、保存、恢复、导出备份和导出日历已暂停/)).toBeInTheDocument()
     const destInput = screen.getByLabelText(/目的地/)

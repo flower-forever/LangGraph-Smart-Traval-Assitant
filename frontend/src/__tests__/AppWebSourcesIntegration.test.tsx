@@ -107,7 +107,7 @@ async function searchOnce(user: ReturnType<typeof userEvent.setup>) {
 }
 
 function stopRowButton(name: string): HTMLElement {
-  const row = Array.from(document.querySelectorAll<HTMLElement>('.stop-row')).find((node) =>
+  const row = Array.from(document.querySelectorAll<HTMLElement>('[data-testid=stop-row]')).find((node) =>
     node.textContent?.includes(name),
   )
   if (!row) throw new Error(`找不到站点行：${name}`)

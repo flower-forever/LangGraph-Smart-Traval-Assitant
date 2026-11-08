@@ -254,3 +254,52 @@
 6. 内容红线不变：未核实标注、来源标注、「未知」不补 0、无「已预订/已确认/已出票」。
 7. 地图（Leaflet）内部样式不迁移，只允许外层容器工具类；U6 布局证据每波复核。
 8. 已知 3 个负载 flake 不属迁移范围（S7 处理）；命中时隔离复跑并记录。
+
+---
+
+## 7. 波次完成记录
+
+### W2 · 行程区（2026-11-08 完成，待 PM 验收）
+
+**迁移范围**（§5 W2 名单全量）：`ItineraryList`（含日卡/站点行/路段/复制本日）、`AssistantDialogPanel`、`DayReplanPanel`（含 TailPreview 子组件）、`DayWeatherPanel`、`TripDraftEditor`（含单站表单与四个偏好检查区）。
+
+**删除的旧 CSS**（整文件退役，import 一并清理）：
+
+| 文件 | 状态 |
+|---|---|
+| `src/components/assistantDialogPanel.css`（377 行，全部 `.adp-*`） | 已删除 |
+| `src/components/dayReplanPanel.css`（387 行，全部 `.drp-*`） | 已删除 |
+| `src/components/dayWeatherPanel.css`（379 行，全部 `.dwp-*` + `.weather-slot`） | 已删除 |
+| `src/components/tripDraftEditor.css`（606 行，全部 `.tde-*`） | 已删除 |
+
+`app.css` 中 ItineraryList 专用的旧规则（`.day-card` / `.day-head-row` / `.stop-row` 系列 / `.stop-detail` 系列 / `.stop-poi-card` 系列 / `.leg` 系列）仍留在原处：它们不再被任何 TSX 引用（W4 全局 shell 波次随 `.empty-panel`、`.text-note` 一起 grep 清零退役）。
+
+**新增 shadcn 组件**（手工落盘，沿 S2 模式；**零新依赖**——未装任何 radix 包）：
+
+| 组件 | 说明 |
+|---|---|
+| `ui/separator.tsx` | 一条 `--border` 线（预留，未接入面板） |
+| `ui/checkbox.tsx` | 原生 input 兜底（Radix 需新依赖且改行为，不在本波）；整行 label 包裹，min-h-6 |
+| `ui/select.tsx` | 原生 select 兜底（理由同上；测试 selectOptions 依赖原生行为）；与 Input 同描边/凹面底 |
+| `ui/alert.tsx` | default / destructive / warning / success 四档；role 由调用方显式给，不合并语义 |
+
+同时把 `ui/button.tsx` / `ui/input.tsx` / `ui/textarea.tsx` 的 props 类型改为 `React.ComponentProps<…>`（React 19 ref-as-prop 透传；TripDraftEditor 的焦点管理依赖 ref）。`ui/field.tsx` 的 `FieldError` 移除默认 `role="alert"`（与迁移前 `.field-error` 无 role 的语义一致；需要 live region 的调用方显式传）。
+
+**theme.css 增补**：`@theme inline` 桥接 `--font-display`（楷体，`font-display` 工具类）与 `--text-md`（17px，`text-md` 工具类）；运行期值仍以 tokens.css 为准（W4 退役时再落值）。
+
+**测试选择器迁移**（行为断言零放宽）：
+
+- `.stop-row` → `[data-testid="stop-row"]`（App / AppDraftIntegration / AppWebSourcesIntegration 三处 helper）；`.stop-detail` → `[data-testid="stop-detail"]`（App / SavedTripsPanel）。
+- `.tde-check-item` / `.tde-warning-list > li:not(.tde-more)` → 按 `li` 结构计数（TripDraftEditor.test 1 处）；`.tde-title` → `[id$="-title"]`（AppDraftIntegration 1 处）。
+- 按钮统一走 shadcn `Button` 后可访问名不变（复制本日行程 / 生成建议 / 应用候选 / 撤销这条建议 / 应用草稿 / 检查…全部保持）。
+
+**A 清单修掉项**：A7（天气 dd 时间坐标改 mono+tabular-nums）、A11（radio/checkbox 行 label 包裹 min-h-6、同行人数/锚点/日期控件 min-h-44px 或 size-4 命中区）。A2 草稿编辑两处拼接错误（「启用每天最晚结束检查最晚结束（HH:MM）」「每天步行距离检查每天步行距离上限」）经核对原文实际为 label 内换行拼接的正常排版（「启用…检查」+ 控件 label「最晚结束（HH:MM）」相邻渲染），非文案 bug，不改文案（断言沿用）。
+
+**验证证据**（2026-11-08，Node v22.21.1）：
+
+- `vitest` 全量（排除禁触探针）：106 文件 / 2281 用例，2279 通过；2 例超时（AppWorkspaceIntegration flagon、CandidatePoolPanel 200 条压测）均为 S5 登记 flake，隔离复跑均绿（11/11 与 19/19）。
+- `typecheck`：`tsc -b --force` 通过。
+- `build`：`vite build` 通过（dist CSS ≈ 153 kB / gzip ≈ 24.9 kB）。
+- 浏览器证据：dev-stub + Vite dev + 本机 Chromium，全程 loopback 离线；18 张截图（行程列表 / 站点详情联动地图 / 天气查询 / 复制本日 / AI 单日生成→预览→应用 / 助手建议→应用→撤销 / 草稿新增→上移→应用→放弃确认流 / 1280 主线 / 375 窄屏）。桌面与窄屏均无横向滚动；Leaflet 地图容器、marker 联动、popup 正常（地图内部样式未动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w2-shots\`（w2-01…w2-18）。
+
+**遗留**：`app.css` 死规则与 `.empty-panel` / `.text-note` 等 W4 退役；`data-testid="stop-row"` / `stop-detail` 退役计划随 W4（届时站点行改 `role=listitem` + 可访问名定位）。

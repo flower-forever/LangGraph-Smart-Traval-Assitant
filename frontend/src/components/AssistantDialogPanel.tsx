@@ -42,7 +42,11 @@ import type {
   WorkspaceFingerprintV1,
   WorkspaceRecordV1,
 } from '../lib/workspaceTypes'
-import './assistantDialogPanel.css'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import { Textarea } from '@/components/ui/textarea'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 /** 未关联工作区时，面板在内存里自用的记录身份（不落盘、不与任何工作区共享）。 */
 const MEMORY_WORKSPACE_ID = 'assistant-dialog-memory'
@@ -459,114 +463,128 @@ export default function AssistantDialogPanel({
   const canSubmit = instruction.trim().length > 0 && !instructionTooLong && liveRecord !== null
 
   return (
-    <section className="adp" aria-label="AI 行程助手">
-      <div className="adp-head">
-        <div className="adp-head-main">
-          <p className="adp-eyebrow">用一句话说想改哪里</p>
-          <h3 className="adp-title">AI 行程助手</h3>
-          <p className="adp-meta">
+    <section
+      className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5"
+      aria-label="AI 行程助手"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">用一句话说想改哪里</p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">AI 行程助手</h3>
+          <p className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
             当前目标：第 {currentDay === null ? ASSISTANT_UNKNOWN_TEXT : currentDay} 天
             {proposal !== null ? (
-              <span className="adp-tag" role="status">
+              <Badge variant="warning" role="status">
                 {STATUS_LABEL[proposal.status]}
-              </span>
+              </Badge>
             ) : null}
           </p>
         </div>
-        <button type="button" className="adp-btn" onClick={onClose}>
+        <Button variant="outline" onClick={onClose}>
           关闭
-        </button>
+        </Button>
       </div>
 
       <form
-        className="adp-form"
+        className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4"
         onSubmit={(event) => {
           event.preventDefault()
           handleSubmit()
         }}
       >
-        <label className="adp-label" htmlFor={instructionId}>
-          想怎么改（1–{MAX_INSTRUCTION_LENGTH} 字）
-        </label>
-        <textarea
-          id={instructionId}
-          className="adp-textarea"
-          value={instruction}
-          rows={3}
-          maxLength={MAX_INSTRUCTION_LENGTH + 100}
-          placeholder="例如：把博物馆挪到第 2 天下午"
-          aria-invalid={instructionTooLong || undefined}
-          onChange={(event) => setInstruction(event.target.value)}
-        />
-        <div className="adp-actions">
-          <button type="submit" className="adp-btn adp-btn-primary" disabled={!canSubmit}>
+        <Field>
+          <FieldLabel htmlFor={instructionId}>
+            想怎么改（1–{MAX_INSTRUCTION_LENGTH} 字）
+          </FieldLabel>
+          <Textarea
+            id={instructionId}
+            value={instruction}
+            rows={3}
+            maxLength={MAX_INSTRUCTION_LENGTH + 100}
+            placeholder="例如：把博物馆挪到第 2 天下午"
+            aria-invalid={instructionTooLong || undefined}
+            onChange={(event) => setInstruction(event.target.value)}
+          />
+        </Field>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="submit" disabled={!canSubmit}>
             生成建议
-          </button>
+          </Button>
         </div>
-        <p className="adp-hint">
+        <FieldDescription>
           生成只是本地计算，不联网也不写盘；行程改动要你点「应用建议」之后才生效。
-        </p>
+        </FieldDescription>
       </form>
 
       {error !== null ? (
-        <p className="adp-error" role="alert">
-          {error}
-        </p>
+        <Alert variant="warning" role="alert">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
       {notice !== null ? (
-        <p className="adp-notice" role="status">
-          {notice}
-        </p>
+        <Alert variant="default" role="status">
+          <AlertDescription>{notice}</AlertDescription>
+        </Alert>
       ) : null}
 
       {replacePending !== null ? (
-        <div className="adp-replace" role="region" aria-label="替换待确认的提案">
-          <p className="adp-notice">
+        <div
+          className="grid min-w-0 gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3"
+          role="region"
+          aria-label="替换待确认的提案"
+        >
+          <p className="m-0 rounded-[6px] border border-border bg-accent-surface p-3 text-sm leading-relaxed">
             已有一条待确认的提案。要用新的指令替换它吗？替换会丢弃旧提案，旧提案不会写入任何地方。
           </p>
-          <div className="adp-actions">
-            <button type="button" className="adp-btn adp-btn-primary" onClick={handleConfirmReplace}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={handleConfirmReplace}>
               替换并生成
-            </button>
-            <button type="button" className="adp-btn" onClick={handleCancelReplace}>
+            </Button>
+            <Button variant="outline" onClick={handleCancelReplace}>
               保留原提案
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
 
       {proposalStale ? (
-        <div className="adp-invalid" role="status">
-          <p>提案已失效，请重新生成：行程在生成之后已经变化，旧提案不会再被应用。</p>
+        <div
+          className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)]"
+          role="status"
+        >
+          <p className="m-0">提案已失效，请重新生成：行程在生成之后已经变化，旧提案不会再被应用。</p>
           {lastInstruction !== null ? (
-            <div className="adp-actions">
-              <button type="button" className="adp-btn" onClick={handleRegenerate}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={handleRegenerate}>
                 重新生成
-              </button>
+              </Button>
             </div>
           ) : null}
         </div>
       ) : null}
 
       {proposal !== null && proposal.status === 'invalid' ? (
-        <div className="adp-invalid" role="status">
-          <p>
+        <div
+          className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)]"
+          role="status"
+        >
+          <p className="m-0">
             {proposal.invalidReason ?? '这条提案已经失效，请重新生成。'}
           </p>
           {lastInstruction !== null ? (
-            <div className="adp-actions">
-              <button type="button" className="adp-btn" onClick={handleRegenerate}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={handleRegenerate}>
                 重新生成
-              </button>
+              </Button>
             </div>
           ) : null}
         </div>
       ) : null}
 
       {proposal !== null ? (
-        <div className="adp-card" aria-label="建议卡片">
-          <p className="adp-card-kind">{INTENT_LABEL[proposal.intent]}</p>
-          <p className="adp-card-reason">{proposal.reason}</p>
+        <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-background p-4" aria-label="建议卡片">
+          <p className="m-0 font-display text-base font-bold text-[color:var(--color-accent-ink)]">{INTENT_LABEL[proposal.intent]}</p>
+          <p className="m-0 text-sm leading-relaxed [overflow-wrap:anywhere]">{proposal.reason}</p>
 
           {(() => {
             // 只读徽标：目标站点有资料卡时提示存在，不读取内容进提案、不写任何键。
@@ -575,22 +593,22 @@ export default function AssistantDialogPanel({
             const card = findPoiCardByName(poiCards, targetName)
             if (card === null) return null
             return (
-              <p className="adp-poi-card-badge" data-testid="assistant-poi-card-badge">
-                <span className="adp-badge">有资料卡</span>
-                <span className="adp-hint">
-                                  「{card.name}」已有资料卡（按名称匹配）；本提案不自动读取其内容，需要时在资料卡面板查看。
-                                </span>
+              <p className="m-0 flex flex-wrap items-baseline gap-2" data-testid="assistant-poi-card-badge">
+                <Badge variant="secondary">有资料卡</Badge>
+                <span className="m-0 text-xs leading-relaxed text-muted-foreground">
+                  「{card.name}」已有资料卡（按名称匹配）；本提案不自动读取其内容，需要时在资料卡面板查看。
+                </span>
               </p>
             )
           })()}
 
-          <div className="adp-columns">
-            <div className="adp-col">
-              <h4 className="adp-col-title">已确定的改动</h4>
+          <div className="grid min-w-0 gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+            <div className="min-w-0 rounded-[6px] border border-border bg-card p-3">
+              <h4 className="m-0 mb-2 text-sm font-bold text-foreground">已确定的改动</h4>
               {proposal.changes.known.length === 0 ? (
-                <p className="adp-hint">没有已确定的改动。</p>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">没有已确定的改动。</p>
               ) : (
-                <ul className="adp-change-list">
+                <ul className="m-0 grid list-disc gap-2 pl-4 text-sm leading-relaxed">
                   {proposal.changes.known.map((change, index) => (
                     <li key={`${change.type}-${change.stopId ?? 'unknown'}-${index}`}>
                       {describeAssistantChange(change)}
@@ -599,16 +617,16 @@ export default function AssistantDialogPanel({
                 </ul>
               )}
             </div>
-            <div className="adp-col">
-              <h4 className="adp-col-title">还不确定的改动</h4>
+            <div className="min-w-0 rounded-[6px] border border-border bg-card p-3">
+              <h4 className="m-0 mb-2 text-sm font-bold text-foreground">还不确定的改动</h4>
               {proposal.changes.unknown.length === 0 ? (
-                <p className="adp-hint">没有不确定的改动。</p>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">没有不确定的改动。</p>
               ) : (
-                <ul className="adp-change-list">
+                <ul className="m-0 grid list-disc gap-2 pl-4 text-sm leading-relaxed">
                   {proposal.changes.unknown.map((change, index) => (
                     <li key={`unknown-${index}`}>
-                      <span className="adp-change-detail">{change.detail}</span>
-                      <span className="adp-unknown">{ASSISTANT_UNKNOWN_TEXT}</span>
+                      <span className="block [overflow-wrap:anywhere]">{change.detail}</span>
+                      <Badge variant="outline" className="ml-2">{ASSISTANT_UNKNOWN_TEXT}</Badge>
                     </li>
                   ))}
                 </ul>
@@ -617,21 +635,21 @@ export default function AssistantDialogPanel({
           </div>
 
           {proposal.conflicts.length > 0 ? (
-            <div className="adp-conflicts">
-              <h4 className="adp-col-title">冲突（{proposal.conflicts.length} 条）</h4>
-              <ul className="adp-conflict-list">
+            <div className="min-w-0 rounded-[6px] border border-border bg-card p-3">
+              <h4 className="m-0 mb-2 text-sm font-bold text-foreground">冲突（{proposal.conflicts.length} 条）</h4>
+              <ul className="m-0 grid list-disc gap-2 pl-4 text-sm leading-relaxed">
                 {proposal.conflicts.map((issue, index) => (
                   <li
                     key={`${issue.code}-${index}`}
-                    className={issue.severity === 'H' ? 'adp-conflict-hard' : 'adp-conflict-unknown'}
+                    className={issue.severity === 'H' ? 'text-foreground' : 'text-muted-foreground'}
                   >
-                    <span className="adp-badge">{issue.severity}</span>
-                    <span className="adp-conflict-text">{issue.message}</span>
+                    <Badge variant={issue.severity === 'H' ? 'default' : 'secondary'}>{issue.severity}</Badge>
+                    <span className="ml-2 [overflow-wrap:anywhere]">{issue.message}</span>
                   </li>
                 ))}
               </ul>
               {hardConflicts.length > 0 ? (
-                <p className="adp-hint adp-hint-strong">
+                <p className="m-0 mt-2 text-xs font-semibold leading-relaxed text-[color:var(--color-accent-ink)]">
                   存在 H 级硬冲突：不能应用，也没有确认绕过入口；请调整指令或先处理约束。
                 </p>
               ) : null}
@@ -639,7 +657,7 @@ export default function AssistantDialogPanel({
           ) : null}
 
           {needsAck && hardConflicts.length === 0 ? (
-            <label className="adp-ack">
+            <label className="flex min-h-6 items-start gap-2 text-sm leading-relaxed">
               <input
                 type="checkbox"
                 checked={ackProposal !== null && !proposalStale}
@@ -656,74 +674,69 @@ export default function AssistantDialogPanel({
             </label>
           ) : null}
 
-          <ul className="adp-notice-list">
+          <ul className="m-0 grid list-disc gap-1 pl-4 text-xs leading-relaxed text-muted-foreground">
             {proposal.notices.map((text) => (
               <li key={text}>{text}</li>
             ))}
           </ul>
 
           {replan.kind === 'pending' ? (
-            <p className="adp-hint" role="status">
+            <p className="m-0 text-xs leading-relaxed text-muted-foreground" role="status">
               正在发起这一天的单日重排…
             </p>
           ) : null}
           {replan.kind === 'error' ? (
-            <p className="adp-error" role="alert">
-              {replan.message}
-            </p>
+            <Alert variant="warning" role="alert">
+              <AlertDescription>{replan.message}</AlertDescription>
+            </Alert>
           ) : null}
           {replan.kind === 'ready' ? (
-            <div className="adp-replan" aria-label="单日重排候选">
-              <h4 className="adp-col-title">第 {replan.response.day.day} 天的重排候选（尚未应用到行程）</h4>
-              <ul className="adp-change-list">
+            <div className="grid min-w-0 gap-2 rounded-[6px] border border-border bg-card p-3" aria-label="单日重排候选">
+              <h4 className="m-0 mb-2 text-sm font-bold text-foreground">第 {replan.response.day.day} 天的重排候选（尚未应用到行程）</h4>
+              <ul className="m-0 grid list-disc gap-2 pl-4 text-sm leading-relaxed">
                 {replan.response.day.stops.map((stop) => (
                   <li key={stop.id}>
                     {(stop.time || ASSISTANT_UNKNOWN_TEXT) + ' · ' + stop.name}
                   </li>
                 ))}
               </ul>
-              <p className="adp-hint">候选里的时刻与地点都还没有核实；应用前请自己核对。</p>
+              <p className="m-0 text-xs leading-relaxed text-muted-foreground">候选里的时刻与地点都还没有核实；应用前请自己核对。</p>
               {replanStale ? (
-                <div className="adp-invalid" role="status">
-                  <p>
+                <div className="grid gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-secondary p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)]" role="status">
+                  <p className="m-0">
                     这条重排候选已经失效：候选生成之后行程在别处改过了（版本没变、只有内容变了也算）。
                     请重新生成建议。
                   </p>
                 </div>
               ) : null}
-              <div className="adp-actions">
-                <button
-                  type="button"
-                  className="adp-btn adp-btn-primary"
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
                   disabled={replanStale}
                   onClick={handleReplanApply}
                 >
                   应用重排候选
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
 
-          <div className="adp-actions">
-            <button
-              type="button"
-              className="adp-btn adp-btn-primary"
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
               onClick={handleApply}
               disabled={!canApply}
             >
               应用建议
-            </button>
-            <button
-              type="button"
-              className="adp-btn"
+            </Button>
+            <Button
+              variant="outline"
               onClick={handleDiscard}
               disabled={proposal.status !== 'pending'}
             >
               不采纳
-            </button>
+            </Button>
           </div>
           {proposal.status === 'applied' ? (
-            <p className="adp-hint">已应用到当前行程（内存里的改动，不会自动保存）。</p>
+            <p className="m-0 text-xs leading-relaxed text-muted-foreground">已应用到当前行程（内存里的改动，不会自动保存）。</p>
           ) : null}
         </div>
       ) : null}
@@ -733,14 +746,18 @@ export default function AssistantDialogPanel({
         生成 / 替换 / 放弃而消失，也不与行程草稿的 undo 栈串联。
       */}
       {undoHandle !== null ? (
-        <div className="adp-undo" role="region" aria-label="撤销已应用的建议">
-          <p className="adp-hint">
+        <div
+          className="grid min-w-0 gap-2 rounded-[6px] border border-border bg-card p-3"
+          role="region"
+          aria-label="撤销已应用的建议"
+        >
+          <p className="m-0 text-xs leading-relaxed text-muted-foreground">
             上一次应用还在，可以撤销一层：撤销同样只改内存里的行程，不会自动保存。
           </p>
-          <div className="adp-actions">
-            <button type="button" className="adp-btn" onClick={handleUndo}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={handleUndo}>
               撤销这条建议
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}

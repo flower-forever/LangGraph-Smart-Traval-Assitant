@@ -33,7 +33,12 @@ import {
   type WeatherField,
 } from '../lib/weather'
 import { fetchDayWeather, type WeatherAdapter } from '../lib/weatherApi'
-import './dayWeatherPanel.css'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export interface DayWeatherPanelProps {
   /** 当前页面正在显示的行程；面板只读，不修改。 */
@@ -284,19 +289,24 @@ export default function DayWeatherPanel({
 
   if (!day) {
     return (
-      <section className="dwp" aria-label="本日天气查询">
-        <div className="dwp-head">
-          <div className="dwp-head-main">
-            <p className="dwp-eyebrow">独立天气查询</p>
-            <h3 className="dwp-title">天气查询</h3>
+      <section
+        className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4"
+        aria-label="本日天气查询"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_260px]">
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">独立天气查询</p>
+            <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">天气查询</h3>
           </div>
-          <button type="button" className="dwp-btn" onClick={handleClose}>
+          <Button variant="outline" onClick={handleClose}>
             收起
-          </button>
+          </Button>
         </div>
-        <p className="dwp-notice" role="note">
-          当前行程里没有可显示的这一天，无法查询天气。行程内容保持不变。
-        </p>
+        <Alert variant="warning" role="note">
+          <AlertDescription>
+            当前行程里没有可显示的这一天，无法查询天气。行程内容保持不变。
+          </AlertDescription>
+        </Alert>
         <Attribution license={null} docsUrl={null} attributionUrl={null} />
       </section>
     )
@@ -305,75 +315,83 @@ export default function DayWeatherPanel({
   const exampleCoordinate = trip.source === 'example'
 
   return (
-    <section className="dwp" aria-label="本日天气查询" aria-busy={pending || undefined} data-testid="weather-panel">
-      <div className="dwp-head">
-        <div className="dwp-head-main">
-          <p className="dwp-eyebrow">独立天气查询 · 不写行程</p>
-          <h3 className="dwp-title">
+    <section
+      className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4"
+      aria-label="本日天气查询"
+      aria-busy={pending || undefined}
+      data-testid="weather-panel"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">独立天气查询 · 不写行程</p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
             第 {day.day} 天{day.date ? ` · ${day.date}` : ''} 天气
           </h3>
-          <p className="dwp-meta-line">
+          <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {trip.title}
             {day.title ? ` · ${day.title}` : ''}
             {pending ? (
-              <span className="dwp-tag" role="status">
+              <Badge variant="warning" role="status">
                 正在查询…
-              </span>
+              </Badge>
             ) : null}
           </p>
         </div>
-        <button type="button" className="dwp-btn" onClick={handleClose}>
+        <Button variant="outline" onClick={handleClose}>
           收起
-        </button>
+        </Button>
       </div>
 
-      <p className="dwp-note">
+      <p className="m-0 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         按行程记录坐标查询：只用本日站点记录里的 WGS84 坐标，不用浏览器定位、不按城市猜，也不去其它天找坐标。
         这些坐标来自行程记录，未做地理编码，也不代表站点精确位置。
-        {exampleCoordinate ? <span className="dwp-badge">示例位置</span> : null}
-        {openedFromFile ? <span className="dwp-badge">导入文件记录</span> : null}
+        {exampleCoordinate ? <Badge variant="outline" className="ml-2">示例位置</Badge> : null}
+        {openedFromFile ? <Badge variant="outline" className="ml-2">导入文件记录</Badge> : null}
       </p>
 
       {stations.length === 0 ? (
         <>
-          <p className="dwp-empty" role="note">
-            本日没有带 WGS84 坐标的站点记录，无法查询天气。可以回到行程里补充坐标，或换一个本日自带坐标的行程；
-            这里不会改用其它天、浏览器位置或按城市推测的坐标。
-          </p>
-          <div className="dwp-actions">
-            <button type="button" className="dwp-btn dwp-btn-primary" disabled>
+          <Alert variant="warning" role="note">
+            <AlertDescription>
+              本日没有带 WGS84 坐标的站点记录，无法查询天气。可以回到行程里补充坐标，或换一个本日自带坐标的行程；
+              这里不会改用其它天、浏览器位置或按城市推测的坐标。
+            </AlertDescription>
+          </Alert>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button disabled>
               查询天气
-            </button>
-            <p className="dwp-hint">本日没有可用坐标，查询已禁用。</p>
+            </Button>
+            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">本日没有可用坐标，查询已禁用。</p>
           </div>
         </>
       ) : (
-        <div className="dwp-form">
-          <div className="dwp-field">
-            <label htmlFor={stationSelectId}>按哪条记录坐标查询</label>
-            <select
+        <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-4 rounded-[10px] border border-border bg-background p-4 max-md:grid-cols-1">
+          <Field>
+            <FieldLabel htmlFor={stationSelectId}>按哪条记录坐标查询</FieldLabel>
+            <Select
               id={stationSelectId}
               value={station?.stopId ?? ''}
               onChange={(event) => setStationId(event.target.value)}
               disabled={pending}
+              className="min-h-11"
             >
               {stations.map((option) => (
                 <option key={option.stopId} value={option.stopId}>
                   {option.name} · {formatCoord(option.lat)}, {formatCoord(option.lon)}
                 </option>
               ))}
-            </select>
+            </Select>
             {station ? (
-              <p className="dwp-hint">
+              <FieldDescription>
                 本次将按「{station.name}」的记录坐标查询：纬度 {formatCoord(station.lat)}，经度{' '}
                 {formatCoord(station.lon)}（WGS84）。
-              </p>
+              </FieldDescription>
             ) : null}
-          </div>
+          </Field>
 
-          <div className="dwp-field">
-            <label htmlFor={dateInputId}>查询日期</label>
-            <input
+          <Field>
+            <FieldLabel htmlFor={dateInputId}>查询日期</FieldLabel>
+            <Input
               id={dateInputId}
               type="date"
               value={date}
@@ -381,33 +399,32 @@ export default function DayWeatherPanel({
               disabled={pending}
               aria-invalid={date !== '' && !dateValid ? true : undefined}
               aria-describedby={!date || !dateValid ? dateHelpId : undefined}
+              className="min-h-11"
             />
-            <p id={dateHelpId} className="dwp-hint">
+            <FieldDescription>
               {!date
                 ? '请选择要查询的日期：没有用今天代替行程里的出行日。'
                 : !dateValid
                   ? '这个日期不是合法的日历日，请重新选择。'
                   : '默认取这一天的 date 字段；也可以改成你关心的其它日期。'}
-            </p>
-          </div>
+            </FieldDescription>
+          </Field>
 
-          <div className="dwp-actions">
-            <button
-              type="button"
-              className="dwp-btn dwp-btn-primary"
+          <div className="col-[1/-1] flex flex-wrap items-center gap-3 pt-1">
+            <Button
               onClick={() => {
                 void handleQuery()
               }}
               disabled={!canQuery}
             >
               查询天气
-            </button>
+            </Button>
             {pending ? (
-              <button type="button" className="dwp-btn" onClick={() => stopWaiting(true)}>
+              <Button variant="outline" onClick={() => stopWaiting(true)}>
                 停止等待
-              </button>
+              </Button>
             ) : null}
-            <p className="dwp-hint dwp-request-hint">
+            <p className="m-0 flex-[1_1_260px] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
               只有点这一次按钮才会请求一次天气；不会自动查询，也不会自动重试。
             </p>
           </div>
@@ -415,15 +432,15 @@ export default function DayWeatherPanel({
       )}
 
       {pending ? (
-        <p className="dwp-pending" role="status">
+        <p className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground" role="status">
           正在等待天气服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
         </p>
       ) : null}
 
       {error ? (
-        <p className="dwp-error" role="alert">
-          {error.message}
-        </p>
+        <Alert variant="warning" role="alert">
+          <AlertDescription>{error.message}</AlertDescription>
+        </Alert>
       ) : null}
 
       {report ? (
@@ -435,7 +452,7 @@ export default function DayWeatherPanel({
         />
       ) : null}
 
-      <p className="dwp-memory-note">{NETWORK_NOTE}</p>
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{NETWORK_NOTE}</p>
 
       <Attribution
         license={report?.source.license ?? null}
@@ -473,45 +490,49 @@ function ReportBlock({
       : `未知（偏移 ${formatUtcOffset(report.provider_utc_offset_seconds)}）`
 
   return (
-    <div className="dwp-result" data-status={report.status} data-testid="weather-result">
+    <div className="grid gap-3 rounded-[10px] border border-border bg-background p-4" data-status={report.status} data-testid="weather-result">
       {report.status === 'available' && report.forecast ? (
         <>
-          <div className="dwp-result-head">
-            <h4 className="dwp-result-title">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h4 className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]">
               {report.forecast.date} 的单日预报
               {report.requested_date === date ? '' : ` · 请求日期 ${report.requested_date ?? '未知'}`}
             </h4>
-            <span className="dwp-tag dwp-tag-ok">已返回</span>
+            <Badge variant="success">已返回</Badge>
           </div>
           <ForecastGrid forecast={report.forecast} />
-          <p className="dwp-note">
+          <p className="m-0 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             以上是 {report.source.provider} 针对该坐标网格点的单日预报。网格点可能偏离请求点，不是「{stationName || '所选站点'}」的精确位置。
           </p>
         </>
       ) : (
-        <div className="dwp-result-head">
-          <h4 className="dwp-result-title">天气结果</h4>
-          <span className="dwp-tag" data-testid="weather-status-tag">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h4 className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]">天气结果</h4>
+          <Badge variant="warning" data-testid="weather-status-tag">
             {statusLabel(report.status)}
-          </span>
+          </Badge>
         </div>
       )}
 
       {report.status === 'available' ? null : report.status === 'out_of_range' ? (
-        <p className="dwp-notice" role="status">
-          所选日期 {report.requested_date ?? date} 不在来源当前覆盖范围内。来源当前实际覆盖{' '}
-          {coverageText}；这一天暂无记录。这里不会用其它日期的天气代替。
-        </p>
+        <Alert variant="default" role="status">
+          <AlertDescription>
+            所选日期 {report.requested_date ?? date} 不在来源当前覆盖范围内。来源当前实际覆盖{' '}
+            {coverageText}；这一天暂无记录。这里不会用其它日期的天气代替。
+          </AlertDescription>
+        </Alert>
       ) : (
-        <p className="dwp-notice" role="status">
-          {STATUS_TEXT[report.status]} 这不代表当前行程或其它日期有问题。
-        </p>
+        <Alert variant="default" role="status">
+          <AlertDescription>
+            {STATUS_TEXT[report.status]} 这不代表当前行程或其它日期有问题。
+          </AlertDescription>
+        </Alert>
       )}
 
-      <dl className="dwp-facts">
-        <div>
-          <dt>来源</dt>
-          <dd>
+      <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1" data-testid="weather-facts">
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">来源</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             {report.source.provider}
             {' · '}
             <a href={report.source.docs_url} target="_blank" rel="noreferrer">
@@ -521,36 +542,36 @@ function ReportBlock({
             {report.source.license}
           </dd>
         </div>
-        <div>
-          <dt>目的地天气时区</dt>
-          <dd>{timezoneText}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">目的地天气时区</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{timezoneText}</dd>
         </div>
-        <div>
-          <dt>查询日期</dt>
-          <dd>{report.requested_date ?? '未知'}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">查询日期</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{report.requested_date ?? '未知'}</dd>
         </div>
-        <div>
-          <dt>查询发起时间</dt>
-          <dd>{formatWeatherTimestamp(report.checked_at)}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">查询发起时间</dt>
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{formatWeatherTimestamp(report.checked_at)}</dd>
         </div>
-        <div>
-          <dt>本次获取时间</dt>
-          <dd>{formatWeatherTimestamp(report.fetched_at)}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">本次获取时间</dt>
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{formatWeatherTimestamp(report.fetched_at)}</dd>
         </div>
-        <div>
-          <dt>来源覆盖</dt>
-          <dd>{coverageText}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">来源覆盖</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">{coverageText}</dd>
         </div>
-        <div>
-          <dt>请求坐标</dt>
-          <dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">请求坐标</dt>
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             {formatCoord(report.coordinate.requested.lat)},{' '}
             {formatCoord(report.coordinate.requested.lon)}（WGS84，按行程记录查询，未核验）
           </dd>
         </div>
-        <div>
-          <dt>采样网格点</dt>
-          <dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">采样网格点</dt>
+          <dd className="m-0 font-mono text-sm tabular-nums leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             {report.coordinate.grid
               ? `${formatCoord(report.coordinate.grid.lat)}, ${formatCoord(
                   report.coordinate.grid.lon,
@@ -582,7 +603,7 @@ function statusLabel(status: WeatherDayReport['status']): string {
 
 function ForecastGrid({ forecast }: { forecast: WeatherDayForecast }) {
   return (
-    <dl className="dwp-grid" data-testid="weather-values">
+    <dl className="m-0 grid grid-cols-3 gap-3 max-md:grid-cols-2" data-testid="weather-values">
       {(Object.keys(FIELD_LABELS) as WeatherField[]).map((field) => {
         const reading = readWeatherField(forecast, field)
         const display =
@@ -592,9 +613,9 @@ function ForecastGrid({ forecast }: { forecast: WeatherDayForecast }) {
               : '未知'
             : formatWeatherMetric(reading)
         return (
-          <div className="dwp-metric" key={field} data-field={field}>
-            <dt>{FIELD_LABELS[field]}</dt>
-            <dd>{display}</dd>
+          <div className="grid min-w-0 gap-0.5 rounded-[6px] border border-border bg-card p-3" key={field} data-field={field}>
+            <dt className="text-xs tracking-[0.06em] text-muted-foreground">{FIELD_LABELS[field]}</dt>
+            <dd className="m-0 font-display text-lg font-bold leading-[1.3] [overflow-wrap:anywhere]">{display}</dd>
           </div>
         )
       })}
@@ -612,16 +633,17 @@ function Attribution({
   attributionUrl: string | null
 }) {
   return (
-    <p className="dwp-attribution" data-testid="weather-attribution">
+    <p className="m-0 border-t border-t-border pt-3 text-xs leading-[1.7] text-muted-foreground" data-testid="weather-attribution">
       <a
         href={attributionUrl ?? OPEN_METEO_ATTRIBUTION_URL}
         target="_blank"
         rel="noreferrer"
+        className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
       >
         Weather data by Open-Meteo.com
       </a>
       {' · '}
-      <a href={docsUrl ?? OPEN_METEO_DOCS_URL} target="_blank" rel="noreferrer">
+      <a href={docsUrl ?? OPEN_METEO_DOCS_URL} target="_blank" rel="noreferrer" className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]">
         数据源说明
       </a>
       {license ? ` · 许可：${license}` : null}

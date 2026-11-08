@@ -698,7 +698,7 @@ describe('TripDraftEditor 检查、可访问性与无自动副作用', () => {
     })
 
     expect(within(checksSection).getByText('5 条')).toBeInTheDocument()
-    expect(checksSection.querySelectorAll('.tde-check-item')).toHaveLength(4)
+    expect(checksSection.querySelectorAll('li')).toHaveLength(5) // 4 条检查 + 1 条展开行
     const expandChecks = within(checksSection).getByRole('button', {
       name: '展开其余 1 条检查',
     })
@@ -706,13 +706,13 @@ describe('TripDraftEditor 检查、可访问性与无自动副作用', () => {
     expect(within(checksSection).getByText(/已显示前 4 条，共 5 条/)).toBeInTheDocument()
 
     await user.click(expandChecks)
-    expect(checksSection.querySelectorAll('.tde-check-item')).toHaveLength(5)
+    expect(checksSection.querySelectorAll('li')).toHaveLength(6) // 展开：5 条检查 + 1 条已显示全部行
     expect(within(checksSection).getByText(/已显示全部 5 条/)).toBeInTheDocument()
     expect(
       within(checksSection).getByRole('button', { name: '收起检查列表' }),
     ).toHaveAttribute('aria-expanded', 'true')
 
-    expect(warningsSection.querySelectorAll('.tde-warning-list > li:not(.tde-more)')).toHaveLength(3)
+    expect(warningsSection.querySelectorAll('li:not(:has(button))')).toHaveLength(3)
     expect(within(warningsSection).queryByText('旧提醒 4')).toBeNull()
     await user.click(
       within(warningsSection).getByRole('button', { name: '展开其余 2 条提醒' }),

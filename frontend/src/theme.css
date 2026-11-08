@@ -89,4 +89,12 @@
 
   /* 字体：正文沿用 tokens.css 的苹方 / 雅黑栈 */
   --font-sans: var(--font-body);
+
+  /* 楷体 display（UI_DESIGN §2.2）：tokens.css 在 :root 未分层定义同名变量，
+   * 运行期以它为准；这里只为生成 font-display 工具类（W2 面板标题用）。 */
+  --font-display: var(--font-display);
+
+  /* 区块标题 17px（UI_DESIGN §2.2 md 档）：tokens.css :root 已有 --text-md，
+   * 这里只为生成 text-md 工具类（font-size 引用运行期变量，行高继承）。 */
+  --text-md: var(--text-md);
 }
