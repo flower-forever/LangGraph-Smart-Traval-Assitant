@@ -118,6 +118,53 @@ describe('checklistSuggestions · 纯本地生成', () => {
     expect(list.some((suggestion) => suggestion.title === '换洗衣物与收纳袋')).toBe(false)
     expect(list.some((suggestion) => suggestion.title === '常用药与创可贴')).toBe(true)
   })
+
+  it('通用必备始终排在最前，不被场景项挤出 ≤10 截断', () => {
+    const input: ChecklistSuggestionInput = {
+      destination: '海岛山地乐园温泉博物馆古城',
+      days: 7,
+      month: 8,
+      existingItems: [],
+    }
+    const list = suggestChecklistItems(input)
+    const universalTitles = [
+      '证件复印件与离线备份',
+      '手机充电器与数据线',
+      '常用药与创可贴',
+      '住宿地址与前台电话（离线保存）',
+    ]
+
+    expect(list).toHaveLength(10)
+    expect(list.slice(0, universalTitles.length).map((suggestion) => suggestion.title)).toEqual(
+      universalTitles,
+    )
+    // 场景项从第 5 条开始，且被截断的只能是场景项
+    expect(list[universalTitles.length]?.id).toBe('sea-shoes')
+    for (const universal of universalTitles) {
+      expect(list.filter((suggestion) => suggestion.title === universal)).toHaveLength(1)
+    }
+    expect(list.some((suggestion) => suggestion.id === 'days-detergent')).toBe(false)
+  })
+
+  it('场景项密集时仍同输入恒同输出，且不修改输入', () => {
+    const input: ChecklistSuggestionInput = {
+      destination: '海岛山地乐园温泉博物馆古城',
+      days: 7,
+      month: 8,
+      existingItems: [{ title: '常用药与创可贴' }],
+    }
+    const snapshot = JSON.parse(JSON.stringify(input))
+    const first = suggestChecklistItems(input)
+    const second = suggestChecklistItems(input)
+    const third = suggestChecklistItems(input)
+
+    expect(first).toEqual(second)
+    expect(second).toEqual(third)
+    expect(input).toEqual(snapshot)
+    expect(first.find((suggestion) => suggestion.title === '常用药与创可贴')?.duplicateOf).toEqual([
+      '常用药与创可贴',
+    ])
+  })
 })
 
 describe('checklistSuggestions · 季节映射', () => {

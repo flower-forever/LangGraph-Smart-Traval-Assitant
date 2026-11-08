@@ -61,8 +61,11 @@ interface RawSuggestion {
   reason: string
 }
 
-/** 最基本的随身 / 证件事项：任何目的地、任何季节都值得核对。 */
-const CORE_SUGGESTIONS: readonly RawSuggestion[] = [
+/**
+ * 通用必备：与目的地、季节、天数都无关，任何行程都值得核对。
+ * 输出时固定排在最前，并优先于场景项保留；场景项再多也不会把它们挤出上限。
+ */
+const UNIVERSAL_SUGGESTIONS: readonly RawSuggestion[] = [
   {
     id: 'doc-copy',
     title: '证件复印件与离线备份',
@@ -75,10 +78,6 @@ const CORE_SUGGESTIONS: readonly RawSuggestion[] = [
     category: 'luggage',
     reason: '每天导航与拍照都靠手机，充电配件按行程天数准备。',
   },
-]
-
-/** 优先级低于目的地 / 天气的通用补充项。 */
-const EXTRA_SUGGESTIONS: readonly RawSuggestion[] = [
   {
     id: 'medicine',
     title: '常用药与创可贴',
@@ -291,7 +290,10 @@ const RAIN_SUGGESTIONS: readonly RawSuggestion[] = [
   },
 ]
 
-/** 建议条数上限；超出按固定顺序截断，保证输出确定。 */
+/**
+ * 建议总条数上限：先放通用必备，剩余名额按固定规则顺序给场景项。
+ * 因此通用必备不会被场景项挤出；场景项再多也只填满剩余名额，输出确定。
+ */
 const MAX_SUGGESTIONS = 10
 
 function normalizeTitle(value: string): string {
@@ -306,7 +308,8 @@ function validMonth(value: number | null): number | null {
 
 /**
  * 纯本地生成清单建议。零网络、零写入；同输入恒同输出。
- * 顺序固定：核心证件 / 充电 → 目的地场景 → 雨具 → 季节 → 天数 → 通用补充。
+ * 顺序固定：通用必备（证件 / 充电 / 常用药 / 住宿信息）→ 目的地场景 → 雨具 →
+ * 季节 → 天数。通用必备最先输出且保留名额，场景项最多填满剩余名额。
  */
 export function suggestChecklistItems(input: ChecklistSuggestionInput): ChecklistSuggestion[] {
   const destination = typeof input.destination === 'string' ? input.destination : ''
@@ -314,20 +317,20 @@ export function suggestChecklistItems(input: ChecklistSuggestionInput): Checklis
   const existing = input.existingItems ?? []
   const month = validMonth(input.month)
   const season = checklistSuggestionSeason(month)
-  const raw: RawSuggestion[] = [...CORE_SUGGESTIONS]
+  const scenario: RawSuggestion[] = []
 
   for (const rule of DESTINATION_RULES) {
-    if (rule.keywords.some((word) => destination.includes(word))) raw.push(...rule.suggestions)
+    if (rule.keywords.some((word) => destination.includes(word))) scenario.push(...rule.suggestions)
   }
 
   const rainySeason = month !== null && RAIN_MONTHS.includes(month)
   const rainyDestination = RAIN_KEYWORDS.some((word) => destination.includes(word))
-  if (rainySeason || rainyDestination) raw.push(...RAIN_SUGGESTIONS)
+  if (rainySeason || rainyDestination) scenario.push(...RAIN_SUGGESTIONS)
 
-  if (season !== null) raw.push(...SEASON_RULES[season])
+  if (season !== null) scenario.push(...SEASON_RULES[season])
 
   if (days >= 4) {
-    raw.push({
+    scenario.push({
       id: 'days-laundry',
       title: '换洗衣物与收纳袋',
       category: 'luggage',
@@ -335,7 +338,7 @@ export function suggestChecklistItems(input: ChecklistSuggestionInput): Checklis
     })
   }
   if (days >= 6) {
-    raw.push({
+    scenario.push({
       id: 'days-detergent',
       title: '旅行装洗衣液或晾衣绳',
       category: 'luggage',
@@ -343,13 +346,12 @@ export function suggestChecklistItems(input: ChecklistSuggestionInput): Checklis
     })
   }
 
-  raw.push(...EXTRA_SUGGESTIONS)
-
   const seen = new Set<string>()
   const result: ChecklistSuggestion[] = []
-  for (const item of raw) {
+  const append = (item: RawSuggestion, enforceCap: boolean): boolean => {
     const key = normalizeTitle(item.title)
-    if (seen.has(key)) continue
+    if (seen.has(key)) return true
+    if (enforceCap && result.length >= MAX_SUGGESTIONS) return false
     seen.add(key)
     const duplicateOf = [
       ...new Set(
@@ -365,7 +367,13 @@ export function suggestChecklistItems(input: ChecklistSuggestionInput): Checklis
       reason: item.reason,
       duplicateOf,
     })
-    if (result.length >= MAX_SUGGESTIONS) break
+    return true
+  }
+
+  // 通用必备先占位；即使条数上限极小也不因场景项让位。
+  for (const item of UNIVERSAL_SUGGESTIONS) append(item, false)
+  for (const item of scenario) {
+    if (!append(item, true)) break
   }
   return result
 }
