@@ -706,12 +706,33 @@ export function parseAssistantIntent(text: string): AssistantParsedIntent {
 
 /* ───────── 行程定位工具 ───────── */
 
+/** 站点命中口径：原文相同 / 归一化后相同 / 名称唯一子串（简称）。 */
+type StopMatchMode = 'exact' | 'normalized' | 'substring'
+
 interface LocatedStop {
   day: number
   stop: TripStop
+  /** 命中口径；界面据此说明「你写的名字对应哪个全名」。 */
+  matchedBy: StopMatchMode
 }
 
-/** 按名字定位站点。优先精确匹配；同名多个 → 无法确定；找不到 → 没有找到。 */
+/** 候选站点列表 → 一句可读的清单（含所在天，便于用户澄清）。 */
+function describeStopList(items: readonly LocatedStop[]): string {
+  return items.map((item) => `第 ${item.day} 天「${item.stop.name}」`).join('、')
+}
+
+/**
+ * 按名字定位站点。
+ *
+ * 口径逐层收紧，**前一层有命中就不再往下猜**：
+ * 1. 原文完全相同；
+ * 2. 归一化（NFKC + 合并空白 + 去首尾空白 + 小写）后相同；
+ * 3. 简称：站点名的归一化文本**包含**目标名，且恰好命中 1 个站点。
+ *
+ * 同一层命中多个 → 一律「无法确定」，把候选逐个列出来请用户澄清，绝不挑第一个。
+ * 三层都没有 → 没有找到（诚实失败，不编造站点）。简称匹配只在前两层都落空时启用，
+ * 因此不会改变任何既有命中结果。
+ */
 function locateStop(
   trip: Trip,
   name: string,
@@ -726,26 +747,49 @@ function locateStop(
   const target = normalizeConstraintTitle(name)
   for (const day of days) {
     for (const stop of day.stops) {
-      if (stop.name === name) exact.push({ day: day.day, stop })
-      else if (normalizeConstraintTitle(stop.name) === target) loose.push({ day: day.day, stop })
+      if (stop.name === name) exact.push({ day: day.day, stop, matchedBy: 'exact' })
+      else if (normalizeConstraintTitle(stop.name) === target) {
+        loose.push({ day: day.day, stop, matchedBy: 'normalized' })
+      }
     }
   }
   const found = exact.length > 0 ? exact : loose
-  if (found.length === 0) {
-    return {
-      ok: false,
-      message: dayHint === null
-        ? `当前行程里没有找到「${name}」。`
-        : `第 ${dayHint} 天没有找到「${name}」。`,
-    }
-  }
+  if (found.length === 1) return { ok: true, found: found[0] }
   if (found.length > 1) {
     return {
       ok: false,
       message: `行程里有 ${found.length} 个同名站点「${name}」，无法确定是哪一个；不替你挑第一个。`,
     }
   }
-  return { ok: true, found: found[0] }
+
+  // 简称匹配：只在上面的精确 / 归一化都没有命中时启用。
+  // 归一化后为空的目标名（例如只有空格）不参与子串匹配，避免「空串命中一切」。
+  if (target.length > 0) {
+    const partial: LocatedStop[] = []
+    for (const day of days) {
+      for (const stop of day.stops) {
+        if (normalizeConstraintTitle(stop.name).includes(target)) {
+          partial.push({ day: day.day, stop, matchedBy: 'substring' })
+        }
+      }
+    }
+    if (partial.length === 1) return { ok: true, found: partial[0] }
+    if (partial.length > 1) {
+      return {
+        ok: false,
+        message: dayHint === null
+          ? `「${name}」在行程里对上了 ${partial.length} 个站点：${describeStopList(partial)}。不替你挑，请说明是哪一个（可以用全名）。`
+          : `第 ${dayHint} 天里「${name}」对上了 ${partial.length} 个站点：${describeStopList(partial)}。不替你挑，请说明是哪一个（可以用全名）。`,
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    message: dayHint === null
+      ? `当前行程里没有找到「${name}」。`
+      : `第 ${dayHint} 天没有找到「${name}」。`,
+  }
 }
 
 /** 按名字定位收藏池候选。 */
@@ -1827,4 +1871,41 @@ export function describeAssistantChange(change: AssistantProposalChange): string
         ? '，未知'
         : ''
   return `${text}（${time}${suffix}）`
+}
+
+/** 名称匹配说明：指令里的写法与实际绑定的站点全名不同时，给出对应关系。 */
+export interface AssistantStopMatchNote {
+  /** 指令里的写法（用户原话里的名字）。 */
+  typed: string
+  /** 实际绑定站点的全名。 */
+  name: string
+  /** 站点所在天；未知为 null。 */
+  day: number | null
+}
+
+/**
+ * 简称匹配的展示说明。
+ *
+ * 只在「指令里的名字」与「实际绑定的全名」归一化后仍不同时给出，
+ * 让用户在应用之前就能看到真实命中的是哪个站点（提案卡显示全名）。
+ * 只有删除 / 挪动走 `locateStop`；加入走收藏池定位，不在这里解释。
+ */
+export function assistantStopMatchNotes(
+  proposal: AssistantProposalCard,
+): AssistantStopMatchNote[] {
+  const typed = proposal.parsed.targetName
+  if (typed === null) return []
+  const normalized = normalizeConstraintTitle(typed)
+  if (normalized.length === 0) return []
+  const notes: AssistantStopMatchNote[] = []
+  const seen = new Set<string>()
+  for (const change of proposal.changes.known) {
+    if (change.type !== 'remove' && change.type !== 'move') continue
+    if (normalizeConstraintTitle(change.name) === normalized) continue
+    const key = `${change.name}\u0000${change.fromDay ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    notes.push({ typed, name: change.name, day: change.fromDay })
+  }
+  return notes
 }

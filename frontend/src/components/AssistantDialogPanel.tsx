@@ -19,6 +19,7 @@ import { useCallback, useId, useMemo, useRef, useState } from 'react'
 
 import {
   applyAssistantProposal,
+  assistantStopMatchNotes,
   buildAssistantProposal,
   confirmAssistantUnverified,
   describeAssistantChange,
@@ -585,6 +586,16 @@ export default function AssistantDialogPanel({
         <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-background p-4" aria-label="建议卡片">
           <p className="m-0 font-display text-base font-bold text-[color:var(--color-accent-ink)]">{INTENT_LABEL[proposal.intent]}</p>
           <p className="m-0 text-sm leading-relaxed [overflow-wrap:anywhere]">{proposal.reason}</p>
+
+          {assistantStopMatchNotes(proposal).map((note) => (
+            <p
+              key={`${note.name}-${note.day ?? 'unknown'}`}
+              className="m-0 text-sm leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]"
+              data-testid="assistant-stop-match"
+            >
+              按「{note.typed}」匹配到{note.day === null ? '' : `第 ${note.day} 天的`}「{note.name}」；这是按名称匹配的结果，请核对后再应用。
+            </p>
+          ))}
 
           {(() => {
             // 只读徽标：目标站点有资料卡时提示存在，不读取内容进提案、不写任何键。

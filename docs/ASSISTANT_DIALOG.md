@@ -109,6 +109,7 @@ interface AssistantParsedIntent {
 
 - 目标名：挪动动词**之前**的文本，去掉「把 / 将 / 请 / 帮我 / 我想…」等前缀。
   找不到目标名 → `unsupported`（不猜是哪一个站）。
+- 目标站点按 §3.5 的三层口径定位（原文 → 归一化 → 简称）。
 - 目标天：指令里的 `第 N 天`；没有就用面板当前正在看的那天（`currentDay`）。
   两者都没有 → 提案卡 `needsDay: true`，**不可应用**，让用户补。
 - 目标时段**只决定插入位置**，不改写站点时刻。位置规则（只用当天已有的计划时刻分桶，
@@ -130,7 +131,7 @@ interface AssistantParsedIntent {
 
 - 目标名：删除动词之后的文本，可带 `第 N 天的` / `下午的` 前缀，前缀里的天会被取走。
 - 指定了天就只在那一天找；没指定就在整条行程里找。
-- 多个同名 → 未知改动；找不到 → 未知改动。
+- 站点按 §3.5 定位：同名多个 → 未知改动；简称多命中 → 未知改动并列出候选；找不到 → 未知改动。
 
 **`time_preference` / `pace_adjust`（时间偏好 / 节奏调整）**
 
@@ -154,6 +155,31 @@ interface AssistantParsedIntent {
 - 越界但合法的天序号（如「第 99 天」，行程只有 3 天）走既有路径：
   `needs_input` + 「当前行程里没有第 99 天」，同样不改动行程。
 - 「第 0 天」在删除指令里同样被拒：**不会**退化成「不限定天」再去整条行程里找同名站点。
+
+### 3.5 站点定位口径：原文 → 归一化 → 简称（三期 S7b）
+
+删除 / 挪动的目标站点名按**三层口径**依次定位，**前一层有命中就不再往下找**：
+
+| 层 | 口径 | 命中多个时 |
+|---|---|---|
+| 1 | 站点名与指令里的名字**原文完全相同** | 未知改动：「同名站点…不替你挑第一个」 |
+| 2 | NFKC + 合并空白 + 去首尾空白 + 小写后相同 | 同上 |
+| 3 | **简称**：站点名的归一化文本**包含**目标名，且恰好命中 1 个站点 | `needs_input`：逐个列出候选（`第 N 天「全名」`）请用户澄清，**绝不猜** |
+
+- 简称匹配只在第 1、2 层都落空时启用，因此**不改变任何既有命中结果**：同名精确命中永远优先，
+  不会因为另一个站点名更长而变成「多命中」。
+- **天的作用范围按指令类型区分**：删除指令里写的天（如「去掉第 1 天的博物馆」）是**查找范围**，
+  只在那一天里找、不跨天兜底；挪动指令里写的天（如「把博物馆挪到第 2 天」）是**目标天**，
+  源站点始终在整条行程里找（`locateStop(trip, name, null)`），所以简称可能命中别的天，
+  提案卡会写明它原本在第几天。
+- 0 命中仍是「当前行程里没有找到」的诚实失败，不编造站点。
+- 绑定后提案卡展示**匹配到的全名**：`changes.known[].name`、理由与改动清单都是站点全名；
+  面板另用 `assistantStopMatchNotes(proposal)` 显示「按『简称』匹配到第 N 天的『全名』」一行供核对。
+- 归一化口径直接复用 `constraints.ts` 的 `normalizeConstraintTitle`，不另造一套。
+- 面板 `AssistantDialogPanel.tsx` 只多渲染一行「按『简称』匹配到第 N 天的『全名』」核对文案，
+  提案计算 / 应用 / 撤销 / 失效逻辑一律不动。
+- 例：行程里有「上海博物馆」，指令写「把博物馆挪到第 2 天下午」→ 唯一子串命中，自动绑定并显示全名；
+  行程里同时有「上海博物馆」「上海自然博物馆」→ 转澄清，列出两个候选，不替用户挑。
 
 ---
 
@@ -211,6 +237,8 @@ interface AssistantProposalChange {
 ### 4.1 已知与未知分列
 
 - `changes.known`：站点唯一确定、目标天确定、时刻确定的改动。
+- 简称匹配命中时，`known[].name` / `detail` / `reason` 一律用**站点全名**（用户写的简称只出现在
+  `parsed.targetName` 与面板的核对文案里），见 §3.5。
 - `changes.unknown`：任一项没确定（站点没定位到 / 同名多个 / 天没定 / 时刻未知）的改动。
   这些改动里 `stopId` / `fromTime` / `toTime` 一律 `null`，由界面显示「未知」。
 - **未知项永远显示「未知」，绝不填 `0`、绝不填 `00:00`、绝不编造费用或坐标。**
@@ -346,6 +374,8 @@ evaluateConstraintsAgainstTrip({
 - 内存改动必须声明不落盘：`ASSISTANT_NO_SAVE_NOTICE`。
 - 候选坐标留在候选库：`ASSISTANT_POOL_LOCATION_NOTICE`。
 - 超出五类：`ASSISTANT_UNSUPPORTED_REASON`（礼貌拒绝，并指出可以在面板里完成）。
+- 简称匹配命中时，提案卡必须写出**实际绑定到的全名**（「按『简称』匹配到第 N 天的『全名』」），
+  不能让用户以为命中的是别处同名站点（§3.5）。
 
 固定文案常量都从 `assistantDialog.ts` 导出，测试会扫一遍禁用词。
 
@@ -405,6 +435,8 @@ isAssistantAckFresh(proposal: AssistantProposalCard, record: WorkspaceRecordV1):
 
 // 展示
 describeAssistantChange(change: AssistantProposalChange): string
+/** 简称匹配说明：按简称匹配到全名时给出一行核对文案（精确命中返回空数组）。 */
+assistantStopMatchNotes(proposal: AssistantProposalCard): AssistantStopMatchNote[]
 ```
 
 `AssistantProposalInput` 必填项（缺一个都不能生成提案）：
@@ -452,6 +484,8 @@ pnpm --config.verify-deps-before-run=false typecheck
 - 未知不补 0：时刻读不出就是 `null`，新增站点坐标 / 停留都是 `null`；
 - 不采纳零写入：丢弃提案不碰行程、不碰存储（`Storage.prototype.setItem` 零调用）；
 - 同名站点不唯一 → 列为未知改动，不替用户挑第一个；
+- 简称匹配：唯一子串命中自动绑定并显示全名；多命中列候选转澄清；0 命中失败语义不变；
+  大小写 / 空白归一化与 `normalizeConstraintTitle` 同口径；精确同名优先于简称；
 - 撤销是一次 transition，revision 继续 +1，不恢复旧 revision；
 - 文案不出现「已预订 / 已确认 / 已出票」。
 
@@ -478,6 +512,22 @@ npx tsc --noEmit --pretty false --strict --noUnusedLocals --noUnusedParameters `
   --moduleResolution bundler --jsx react-jsx --skipLibCheck `
   --verbatimModuleSyntax --lib ES2022,DOM,DOM.Iterable --types vite/client `
   src/lib/assistantDialog.ts src/__tests__/assistantDialog.test.ts
+```
+
+### 11.2 三期 S7b：站点简称匹配（2026-11-08，Temp 副本实跑）
+
+- 定向：`assistantDialog.test.ts` + `AssistantDialogPanel.test.tsx` → **71 passed（2 files）**
+- 全量（排除禁触的 `_indep-probe-0400.test.js`）→ **106 files / 2292 tests passed**
+- `tsc -b --force` → **exit 0 / 无输出**；`vite build` → **exit 0**（唯一的 1.27 MB chunk
+  体积告警与本期无关，是既有告警）
+- 命令（junction `node_modules` 直跑同一套二进制，绕过 pnpm 11.25 的 deps 校验）：
+
+```powershell
+cd frontend
+node node_modules/vitest/vitest.mjs run src/__tests__/assistantDialog.test.ts src/__tests__/AssistantDialogPanel.test.tsx
+node node_modules/vitest/vitest.mjs run --exclude "**/_indep-probe-0400.test.js"
+node node_modules/typescript/bin/tsc -b --force
+node node_modules/vite/bin/vite.js build
 ```
 
 ---

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   applyAssistantProposal,
+  assistantStopMatchNotes,
   buildAssistantProposal,
   confirmAssistantUnverified,
   describeAssistantChange,
@@ -373,7 +374,169 @@ describe('对话式行程编辑 · 提案计算', () => {
   })
 })
 
-/* ───────── 硬门：H 级 / U 级 / 失效 ───────── */
+/* ───────── 站点简称匹配（三期 S7b） ───────── */
+
+/** 站点名是全名（「上海博物馆」），指令里可能只写简称（「博物馆」）。 */
+function substringTrip(): Trip {
+  return {
+    ...baseTrip(),
+    days: [
+      day(1, '2026-04-03', [
+        stop('s-silk', '丝绸店', '09:00', 60),
+        stop('s-shmuseum', '上海博物馆', '14:30', 60),
+      ]),
+      day(2, '2026-04-04', [stop('s-westlake', '西湖', '10:00', 90)]),
+    ],
+  }
+}
+
+/** 两个站点都含「博物馆」。 */
+function ambiguousTrip(): Trip {
+  return {
+    ...baseTrip(),
+    days: [
+      day(1, '2026-04-03', [
+        stop('s-a', '上海博物馆', '10:00', 60),
+        stop('s-f1', '外滩', '16:00', 60),
+      ]),
+      day(2, '2026-04-04', [
+        stop('s-b', '上海自然博物馆', '15:00', 60),
+        stop('s-f2', '豫园', '18:00', 60),
+      ]),
+    ],
+  }
+}
+
+describe('对话式行程编辑 · 站点简称匹配', () => {
+  it('唯一子串命中：自动绑定全名站点，改动里带全名', () => {
+    const record = makeRecord(substringTrip())
+    const proposal = mustBuild(proposalInput('把博物馆挪到第 2 天下午', { record }))
+    expect(proposal.kind).toBe('trip_change')
+    expect(proposal.changes.unknown).toHaveLength(0)
+    expect(proposal.changes.known).toHaveLength(1)
+
+    const change = proposal.changes.known[0]
+    expect(change.type).toBe('move')
+    expect(change.stopId).toBe('s-shmuseum')
+    // 提案卡展示匹配到的全名，而不是用户写的简称。
+    expect(change.name).toBe('上海博物馆')
+    expect(change.detail).toContain('上海博物馆')
+    expect(change.fromDay).toBe(1)
+    expect(change.toDay).toBe(2)
+    expect(assistantStopMatchNotes(proposal)).toEqual([
+      { typed: '博物馆', name: '上海博物馆', day: 1 },
+    ])
+
+    const applied = applyAssistantProposal({ proposal, record, now: 2_000 })
+    if (!applied.ok || applied.outcome !== 'applied') throw new Error('应当应用成功')
+    const day2 = applied.record.trip.days.find((item) => item.day === 2)!
+    expect(day2.stops.map((item) => item.id)).toEqual(['s-westlake', 's-shmuseum'])
+    // 原记录没被就地改动。
+    expect(record.trip.days[0].stops.map((item) => item.id)).toEqual(['s-silk', 's-shmuseum'])
+  })
+
+  it('删除指令同样按简称绑定', () => {
+    const proposal = mustBuild(
+      proposalInput('去掉第 1 天的博物馆', { record: makeRecord(substringTrip()) }),
+    )
+    expect(proposal.kind).toBe('trip_change')
+    expect(proposal.changes.known[0].type).toBe('remove')
+    expect(proposal.changes.known[0].name).toBe('上海博物馆')
+    expect(proposal.changes.known[0].stopId).toBe('s-shmuseum')
+  })
+
+  it('精确同名优先于简称：不会因为另一个更长的站点名变成多命中', () => {
+    const trip: Trip = {
+      ...baseTrip(),
+      days: [
+        day(1, '2026-04-03', [
+          stop('s-exact', '博物馆', '09:00', 60),
+          stop('s-long', '上海博物馆', '15:00', 60),
+        ]),
+        day(2, '2026-04-04', [stop('s-westlake', '西湖', '10:00', 90)]),
+      ],
+    }
+    const proposal = mustBuild(
+      proposalInput('把博物馆挪到第 2 天下午', { record: makeRecord(trip) }),
+    )
+    expect(proposal.kind).toBe('trip_change')
+    expect(proposal.changes.known[0].stopId).toBe('s-exact')
+    // 原文就是全名，不需要核对文案。
+    expect(assistantStopMatchNotes(proposal)).toEqual([])
+  })
+
+  it('多命中：转澄清并列出全部候选，不绑定也不猜', () => {
+    const record = makeRecord(ambiguousTrip())
+    const proposal = mustBuild(proposalInput('把博物馆挪到第 2 天下午', { record }))
+    expect(proposal.kind).toBe('needs_input')
+    expect(proposal.changes.known).toHaveLength(0)
+    expect(proposal.changes.unknown).toHaveLength(1)
+    expect(proposal.candidateTrip).toBeNull()
+    expect(assistantStopMatchNotes(proposal)).toEqual([])
+
+    const change = proposal.changes.unknown[0]
+    expect(change.stopId).toBeNull()
+    expect(change.detail).toContain('上海博物馆')
+    expect(change.detail).toContain('上海自然博物馆')
+    expect(change.detail).toContain('不替你挑')
+    expect(proposal.reason).toContain('上海自然博物馆')
+
+    const applied = applyAssistantProposal({ proposal, record, now: 2_000 })
+    if (applied.ok) throw new Error('多命中不应被应用')
+    expect(applied.reason).toBe('not_ready')
+  })
+
+  it('指定了天就只在那一天里找简称，不跨天兜底', () => {
+    const record = makeRecord(ambiguousTrip())
+    const day1 = mustBuild(proposalInput('去掉第 1 天的博物馆', { record }))
+    expect(day1.kind).toBe('trip_change')
+    expect(day1.changes.known[0].stopId).toBe('s-a')
+
+    const day2 = mustBuild(proposalInput('去掉第 2 天的博物馆', { record }))
+    expect(day2.kind).toBe('trip_change')
+    expect(day2.changes.known[0].stopId).toBe('s-b')
+    expect(assistantStopMatchNotes(day2)).toEqual([
+      { typed: '博物馆', name: '上海自然博物馆', day: 2 },
+    ])
+  })
+
+  it('0 命中：失败语义不变，不编造站点', () => {
+    const proposal = mustBuild(
+      proposalInput('把卢浮宫挪到第 2 天下午', { record: makeRecord(substringTrip()) }),
+    )
+    expect(proposal.kind).toBe('needs_input')
+    expect(proposal.changes.known).toHaveLength(0)
+    expect(proposal.changes.unknown).toHaveLength(1)
+    expect(proposal.changes.unknown[0].detail).toContain('当前行程里没有找到「卢浮宫」')
+    expect(proposal.changes.unknown[0].detail).not.toContain('博物馆')
+    expect(assistantStopMatchNotes(proposal)).toEqual([])
+  })
+
+  it('大小写与空白：归一化口径沿用 normalizeConstraintTitle', () => {
+    const trip: Trip = {
+      ...baseTrip(),
+      days: [
+        day(1, '2026-04-03', [stop('s-sm', 'Shanghai Museum', '10:00', 60)]),
+        day(2, '2026-04-04', [stop('s-westlake', '西湖', '10:00', 90)]),
+      ],
+    }
+    const record = makeRecord(trip)
+
+    // 只有大小写 / 空白不同 → 归一化层命中，不算「简称」，不给核对文案。
+    const sameName = mustBuild(proposalInput('把  shanghai   museum  挪到第 2 天下午', { record }))
+    expect(sameName.changes.known[0].stopId).toBe('s-sm')
+    expect(assistantStopMatchNotes(sameName)).toEqual([])
+
+    // 只有一段（大小写不同）→ 简称层命中，核对文案给全名。
+    const partial = mustBuild(proposalInput('把 MUSEUM 挪到第 2 天下午', { record }))
+    expect(partial.changes.known[0].name).toBe('Shanghai Museum')
+    expect(assistantStopMatchNotes(partial)).toEqual([
+      { typed: 'MUSEUM', name: 'Shanghai Museum', day: 1 },
+    ])
+  })
+})
+
+
 
 describe('对话式行程编辑 · 硬门与失效', () => {
   it('必去点被挪走 → H 级禁 apply，且没有确认绕过入口', () => {

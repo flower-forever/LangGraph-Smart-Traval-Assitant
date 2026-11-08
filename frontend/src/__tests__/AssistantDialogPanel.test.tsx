@@ -351,6 +351,67 @@ describe('AI 行程助手 · 提案卡渲染', () => {
     expect(within(card).getByRole('button', { name: '应用建议' })).toBeDisabled()
   })
 
+  it('简称匹配：唯一命中自动绑定，提案卡显示匹配到的全名', async () => {
+    const user = userEvent.setup()
+    const trip: Trip = {
+      ...baseTrip(),
+      days: [
+        day(1, '2026-04-03', [
+          stop('s-silk', '丝绸店', '09:00', 60),
+          stop('s-shmuseum', '上海博物馆', '14:30', 60),
+        ]),
+        day(2, '2026-04-04', [stop('s-westlake', '西湖', '10:00', 90)]),
+      ],
+    }
+    render(<Harness trip={trip} />)
+    await generate(user, '把博物馆挪到第 2 天下午')
+
+    const card = within(panel()).getByLabelText('建议卡片')
+    // 核对文案：用户写的是简称，实际绑定的是全名。
+    expect(within(card).getByTestId('assistant-stop-match')).toHaveTextContent(
+      '按「博物馆」匹配到第 1 天的「上海博物馆」',
+    )
+    // 改动清单里也是全名。
+    expect(
+      within(card).getAllByText(/把「上海博物馆」从第 1 天挪到第 2 天/).length,
+    ).toBeGreaterThan(0)
+    expect(screen.getByTestId('harness-day2').textContent).toBe('西湖')
+    expect(within(card).getByRole('button', { name: '应用建议' })).toBeEnabled()
+
+    await user.click(within(card).getByRole('button', { name: '应用建议' }))
+    await waitFor(() => expect(screen.getByTestId('harness-day2').textContent).toBe('西湖、上海博物馆'))
+  })
+
+  it('简称匹配多命中：列出候选请用户澄清，不绑定也不猜', async () => {
+    const user = userEvent.setup()
+    const trip: Trip = {
+      ...baseTrip(),
+      days: [
+        day(1, '2026-04-03', [
+          stop('s-a', '上海博物馆', '10:00', 60),
+          stop('s-f1', '外滩', '16:00', 60),
+        ]),
+        day(2, '2026-04-04', [
+          stop('s-b', '上海自然博物馆', '15:00', 60),
+          stop('s-f2', '豫园', '18:00', 60),
+        ]),
+      ],
+    }
+    render(<Harness trip={trip} />)
+    await generate(user, '把博物馆挪到第 2 天下午')
+
+    const card = within(panel()).getByLabelText('建议卡片')
+    expect(within(card).getByText('没有已确定的改动。')).toBeInTheDocument()
+    expect(within(card).getAllByText(/上海博物馆/).length).toBeGreaterThan(0)
+    expect(within(card).getAllByText(/上海自然博物馆/).length).toBeGreaterThan(0)
+    expect(within(card).getAllByText(/不替你挑/).length).toBeGreaterThan(0)
+    // 没有绑定任何站点，也就没有全名核对文案。
+    expect(within(card).queryByTestId('assistant-stop-match')).toBeNull()
+    expect(within(card).getByRole('button', { name: '应用建议' })).toBeDisabled()
+    // 行程没动。
+    expect(screen.getByTestId('harness-day1').textContent).toBe('上海博物馆、外滩')
+  })
+
   it('从收藏池加入站点：候选坐标留在候选库，占位时刻标注未核实', async () => {
     const user = userEvent.setup()
     render(<Harness candidates={[candidate('西湖')]} />)
