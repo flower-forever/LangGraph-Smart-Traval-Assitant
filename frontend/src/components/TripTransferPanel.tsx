@@ -16,7 +16,8 @@ import {
 } from '../lib/tripFile'
 import { TRIP_JSON_SHARE_NOTICE, formatTripExportedAt } from '../lib/tripTransfer'
 import TripMarkdownExport from './TripMarkdownExport'
-import './tripTransfer.css'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export interface TripTransferPanelProps {
   /** 当前正在查看的行程；没有行程时为 null / 省略，此时只能导入 */
@@ -120,6 +121,22 @@ function formatBytes(bytes: number): string {
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
+
+/** W3b：样式从 tripTransfer.css 迁来（shadcn + Tailwind）；.btn-save 一并退役为 shadcn Button。 */
+const FIELD_LABEL = 'text-sm leading-relaxed text-muted-foreground'
+const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const SUBHEADING =
+  'm-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]'
+const SECTION_BOX = 'grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4'
+const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
+  ok: 'bg-[color:var(--color-accent-soft)]/40 text-[color:var(--color-accent-ink)]',
+  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-ink-2)]',
+  error: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-warn-ink)]',
+}
+const NOTICE =
+  'm-0 rounded-[6px] p-3 text-sm leading-relaxed font-medium [overflow-wrap:anywhere]'
+const CODE =
+  'rounded-[4px] bg-secondary px-1.5 py-0.5 font-mono text-xs [overflow-wrap:anywhere]'
 
 /**
  * 行程备份的导入 / 导出入口。
@@ -380,119 +397,148 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
   const previewStopCount = preview ? countStops(preview.trip) : 0
 
   return (
-    <div className="trip-transfer" role="region" aria-labelledby={headingId}>
-      <div className="trip-transfer-head">
-        <h3 className="trip-transfer-title" id={headingId}>行程备份与导入</h3>
-        <p className="trip-transfer-lead">
+    <div className="grid min-w-0 gap-4" role="region" aria-labelledby={headingId}>
+      <div className="grid gap-1.5">
+        <h3
+          className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]"
+          id={headingId}
+        >
+          行程备份与导入
+        </h3>
+        <p className="m-0 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           备份是一份明文 JSON 文件，只在你点击时下载；导入会先预览，默认不写入本地保存，也不会覆盖已保存的行程。
           有当前行程时，下方还提供只用于阅读分享的 Markdown 路书导出。
         </p>
       </div>
 
-      <section className="trip-transfer-section" aria-labelledby={exportHeadingId}>
-        <h4 className="trip-transfer-subheading" id={exportHeadingId}>导出当前行程</h4>
+      <section className={SECTION_BOX} aria-labelledby={exportHeadingId}>
+        <h4 className={SUBHEADING} id={exportHeadingId}>
+          导出当前行程
+        </h4>
 
         {trip ? (
           <>
-            <p className="trip-transfer-meta">
+            <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
               当前行程：<strong>{trip.title}</strong>
               {trip.destination ? ` · ${trip.destination}` : ''}
               {` · 共 ${trip.days.length} 天 / ${stopCount} 个站点`}
             </p>
-            <p className="trip-transfer-filename">
-              文件名：<code>{exportFilename}</code>
+            <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+              文件名：<code className={CODE}>{exportFilename}</code>
             </p>
-            <div className="trip-transfer-actions">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleExport}
-                aria-describedby={exportHintId}
-              >
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={handleExport} aria-describedby={exportHintId}>
                 下载行程备份 (.json)
-              </button>
+              </Button>
             </div>
-            <p className="trip-transfer-hint" id={exportHintId}>
+            <p className={HINT} id={exportHintId}>
               文件由浏览器下载到你自己的电脑，不会上传，不会修改这份行程，也不会自动加入本地保存列表。
             </p>
           </>
         ) : (
-          <p className="trip-transfer-hint">
+          <p className={HINT}>
             当前还没有打开行程，暂时不能导出。可以先从下面的备份文件导入，或在页面里生成行程后再回来。
           </p>
         )}
 
-        <div className="trip-transfer-live" aria-live="polite" aria-atomic="true">
+        <div aria-live="polite" aria-atomic="true">
           {exportNotice && (
-            <p className="trip-transfer-notice" data-tone={exportNotice.tone}>
+            <p className={`${NOTICE} ${NOTICE_TONE_CLASS[exportNotice.tone]}`} data-tone={exportNotice.tone}>
               {exportNotice.text}
             </p>
           )}
         </div>
       </section>
 
-      <section className="trip-transfer-section" aria-labelledby={importHeadingId}>
-        <h4 className="trip-transfer-subheading" id={importHeadingId}>从备份文件导入</h4>
+      <section className={SECTION_BOX} aria-labelledby={importHeadingId}>
+        <h4 className={SUBHEADING} id={importHeadingId}>
+          从备份文件导入
+        </h4>
 
-        <div className="trip-transfer-file">
-          <label className="field-label" htmlFor={fileId}>选择备份文件（.json）</label>
-          <input
+        <div className="grid gap-1.5">
+          <label className={FIELD_LABEL} htmlFor={fileId}>
+            选择备份文件（.json）
+          </label>
+          <Input
             id={fileId}
             ref={fileInputRef}
-            className="trip-transfer-input"
+            className="min-h-11 w-full"
             type="file"
             accept=".json,application/json"
             onChange={handleFileChange}
             aria-describedby={fileHintId}
             aria-busy={reading || undefined}
           />
-          <p className="field-help" id={fileHintId}>
+          <p className={HINT} id={fileHintId}>
             选择后先在页面里预览，只有你点「保存到本地」才会写入当前浏览器；无效或超出体积上限的文件会被直接拒绝。
             读取失败后可以重新选同一个文件再试。
           </p>
         </div>
 
         {reading && (
-          <p className="trip-transfer-status" role="status">正在读取文件…</p>
+          <p
+            className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground"
+            role="status"
+          >
+            正在读取文件…
+          </p>
         )}
 
-        <div className="trip-transfer-live" aria-live="polite" aria-atomic="true">
+        <div aria-live="polite" aria-atomic="true">
           {fileNotice && (
-            <p className="trip-transfer-notice" data-tone={fileNotice.tone}>
+            <p className={`${NOTICE} ${NOTICE_TONE_CLASS[fileNotice.tone]}`} data-tone={fileNotice.tone}>
               {fileNotice.text}
             </p>
           )}
         </div>
 
         {preview && (
-          <div className="trip-transfer-preview">
-            <h5 className="trip-transfer-preview-title" id={previewHeadingId}>
+          <div className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-card p-4">
+            <h5
+              className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+              id={previewHeadingId}
+            >
               预览：{preview.trip.title}
             </h5>
-            <dl className="trip-transfer-facts" aria-labelledby={previewHeadingId}>
+            <dl
+              className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 max-md:grid-cols-1"
+              aria-labelledby={previewHeadingId}
+            >
               <div>
-                <dt>目的地</dt>
-                <dd>{preview.trip.destination || '未填写'}</dd>
+                <dt className="text-xs text-muted-foreground">目的地</dt>
+                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                  {preview.trip.destination || '未填写'}
+                </dd>
               </div>
               <div>
-                <dt>规模</dt>
-                <dd>{`${preview.trip.days.length} 天 · ${previewStopCount} 个站点`}</dd>
+                <dt className="text-xs text-muted-foreground">规模</dt>
+                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                  {`${preview.trip.days.length} 天 · ${previewStopCount} 个站点`}
+                </dd>
               </div>
               <div>
-                <dt>行程来源（文件自述）</dt>
-                <dd>{preview.trip.source === 'example' ? '示例行程' : '生成行程'}</dd>
+                <dt className="text-xs text-muted-foreground">行程来源（文件自述）</dt>
+                <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                  {preview.trip.source === 'example' ? '示例行程' : '生成行程'}
+                </dd>
               </div>
               <div>
-                <dt>行程 ID</dt>
-                <dd className="trip-transfer-code">{preview.trip.id}</dd>
+                <dt className="text-xs text-muted-foreground">行程 ID</dt>
+                <dd className="m-0">
+                  <code className={CODE}>{preview.trip.id}</code>
+                </dd>
               </div>
               <div>
-                <dt>导出时间（文件自述）</dt>
-                <dd>{formatTripExportedAt(preview.exportedAt)}</dd>
+                <dt className="text-xs text-muted-foreground">导出时间（文件自述）</dt>
+                <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)]">
+                  {formatTripExportedAt(preview.exportedAt)}
+                </dd>
               </div>
               <div>
-                <dt>数据体积</dt>
-                <dd>{formatBytes(preview.bytes)}</dd>
+                <dt className="text-xs text-muted-foreground">数据体积</dt>
+                <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)]">
+                  {formatBytes(preview.bytes)}
+                </dd>
               </div>
             </dl>
 
@@ -500,71 +546,62 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
               信任边界：source / exportedAt 都是文件里写的字段，解析器只能校验格式，
               证明不了行程真的来自哪里、也证明不了这个时间真的发生过。
             */}
-            <p className="trip-transfer-hint" data-testid="trip-transfer-provenance-hint">
+            <p className={HINT} data-testid="trip-transfer-provenance-hint">
               上面的「行程来源」和「导出时间」取自文件里的 source 与 exportedAt 字段：它们只代表文件自己是这么写的，
               不能证明这份行程的真实来源，也不能证明这个时间就是实际导出时间。
             </p>
 
-            <p className="trip-transfer-hint">
+            <p className={HINT}>
               预览只是把文件内容显示在页面里，还没有写入本地保存；放弃预览不会留下任何记录。
             </p>
 
-            <div className="trip-transfer-actions">
+            <div className="flex flex-wrap items-center gap-3">
               {onOpen && (
-                <button type="button" className="btn btn-primary" onClick={handleOpen}>
-                  打开这份行程
-                </button>
+                <Button onClick={handleOpen}>打开这份行程</Button>
               )}
-              <button
-                type="button"
-                ref={saveButtonRef}
-                className="btn btn-save"
-                onClick={handleSaveClick}
-              >
+              <Button variant="secondary" ref={saveButtonRef} onClick={handleSaveClick}>
                 保存到本地
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={handleDiscard}>
+              </Button>
+              <Button variant="ghost" onClick={handleDiscard}>
                 放弃预览
-              </button>
+              </Button>
             </div>
 
             {onOpen ? null : (
-              <p className="trip-transfer-hint">
+              <p className={HINT}>
                 当前页面还没接入「打开行程」的处理：这里只做预览，不会替换主视图。
               </p>
             )}
 
             {pending && (
-              <div className="trip-transfer-confirm">
+              <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-warn-ink)]/50 bg-[color:var(--color-warn-bg)] p-3">
                 {/*
                   role="alert" 只包文字：把按钮放进 alert 区域会让读屏把交互控件当成公告内容，
                   焦点进入时也不会有一次可靠的朗读。按钮放在紧邻的 group 里，用 aria-describedby
                   关联这段说明，键盘从「保存到本地」往后 Tab 就能到达。
                 */}
-                <p className="trip-transfer-confirm-text" id={confirmId} role="alert">
+                <p className="m-0 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]" id={confirmId} role="alert">
                   本地已存在同一 ID 的保存记录《{pending.existingTitle}》（保存于{' '}
                   {formatDateTime(pending.existingSavedAt)}）。继续保存会替换这份本地副本，
                   替换后无法撤销，也不会保留旧版本。
                 </p>
                 <div
-                  className="trip-transfer-actions"
+                  className="flex flex-wrap items-center gap-3"
                   role="group"
                   aria-label="替换本地副本确认"
                   aria-describedby={confirmId}
                 >
-                  <button type="button" className="btn btn-primary" onClick={handleConfirmReplace}>
-                    确认替换本地副本
-                  </button>
-                  <button type="button" className="btn btn-ghost" onClick={handleCancelReplace}>
+                  <Button onClick={handleConfirmReplace}>确认替换本地副本</Button>
+                  <Button variant="ghost" onClick={handleCancelReplace}>
                     取消替换
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
 
-            <div className="trip-transfer-live" aria-live="polite" aria-atomic="true">
+            <div aria-live="polite" aria-atomic="true">
               {saveNotice && (
-                <p className="trip-transfer-notice" data-tone={saveNotice.tone}>
+                <p className={`${NOTICE} ${NOTICE_TONE_CLASS[saveNotice.tone]}`} data-tone={saveNotice.tone}>
                   {saveNotice.text}
                 </p>
               )}
@@ -576,9 +613,9 @@ export default function TripTransferPanel({ trip = null, onOpen, storage }: Trip
       {/* 可读路书（.md）导出子入口：与 JSON 备份互相独立，只服务当前行程，没有行程时不挂载 */}
       {trip && <TripMarkdownExport trip={trip} />}
 
-      <div className="trip-transfer-privacy">
-        <p className="trip-transfer-privacy-title">分享前请留意</p>
-        <ul className="trip-transfer-privacy-list">
+      <div className="grid gap-1.5 border-t border-t-border pt-3">
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">分享前请留意</p>
+        <ul className="m-0 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           <li>{TRIP_JSON_SHARE_NOTICE}</li>
           <li>
             备份里可能有你自己写的行程摘要、站点描述和地址，无法保证其中不含敏感信息；

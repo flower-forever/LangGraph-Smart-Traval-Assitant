@@ -23,7 +23,7 @@ import {
   type MapRefreshResponse,
 } from '../lib/mapRefresh'
 import { refreshDayMap, type MapRefreshAdapter } from '../lib/mapRefreshApi'
-import './mapRefreshPanel.css'
+import { Button } from '@/components/ui/button'
 
 export type { MapRefreshAdapter }
 
@@ -121,6 +121,24 @@ function adjacentPairs(stops: TripDay['stops']): Array<{ from: TripDay['stops'][
 function pairKey(fromStopId: string, toStopId: string): string {
   return `${fromStopId}->${toStopId}`
 }
+
+/** W3b：面板级通用类名，从 mapRefreshPanel.css 迁来（shadcn + Tailwind）。 */
+const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
+const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const TAG =
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+const NOTICE =
+  'm-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+const BLOCK = 'grid gap-2 rounded-[10px] border border-border bg-background p-4'
+const SECTION_TITLE =
+  'm-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]'
+const STOP_BOX = 'grid gap-2 rounded-[6px] border border-border bg-card p-3'
+const STOP_NAME = 'text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+const KV_DL = 'm-0 grid gap-x-4 gap-y-1 text-sm'
+const KV_DT = 'shrink-0 text-xs text-muted-foreground'
+const KV_DD = 'm-0 min-w-0 leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+const ERROR_STYLE =
+  'm-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-3 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]'
 
 export default function MapRefreshPanel({
   trip,
@@ -288,16 +306,18 @@ export default function MapRefreshPanel({
 
   if (!day) {
     return (
-      <section className="mrp" aria-label="仅刷新地图">
-        <div className="mrp-head">
-          <div className="mrp-head-main">
-            <h3 className="mrp-title">仅刷新地图</h3>
+      <section className={PANEL} aria-label="仅刷新地图">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_260px]">
+            <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
+              仅刷新地图
+            </h3>
           </div>
-          <button type="button" className="mrp-btn" onClick={onClose}>
+          <Button variant="outline" onClick={onClose}>
             关闭
-          </button>
+          </Button>
         </div>
-        <p className="mrp-notice">当前没有可刷新的这一天，原始行程保持不变。</p>
+        <p className={NOTICE}>当前没有可刷新的这一天，原始行程保持不变。</p>
       </section>
     )
   }
@@ -314,38 +334,44 @@ export default function MapRefreshPanel({
   const notices = preview ? preview.notices : []
 
   return (
-    <section className="mrp" aria-label="仅刷新地图">
-      <div className="mrp-head">
-        <div className="mrp-head-main">
-          <p className="mrp-eyebrow">只更新坐标与路线，其余内容原样保留</p>
-          <h3 className="mrp-title">仅刷新地图</h3>
-          <p className="mrp-meta">
-            <span className="mrp-tag">{dayTitle}</span>
+    <section className={PANEL} aria-label="仅刷新地图">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+            只更新坐标与路线，其余内容原样保留
+          </p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
+            仅刷新地图
+          </h3>
+          <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className={TAG}>{dayTitle}</span>
             <span>{trip.title}</span>
             {pending ? (
-              <span className="mrp-tag" role="status">
+              <span className={TAG} role="status">
                 正在获取地图候选…
               </span>
             ) : null}
           </p>
         </div>
-        <button type="button" className="mrp-btn" onClick={onClose}>
+        <Button variant="outline" onClick={onClose}>
           关闭
-        </button>
+        </Button>
       </div>
 
-      <p className="mrp-intro">
+      <p className="m-0 max-w-[72ch] text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         这次只更新站点坐标和相邻路线。原有的地址、时间、说明都保留不动，其他天也不受影响。
         {openedFromFile ? '导入来源的标记同样不变。' : ''}
       </p>
 
-      <fieldset className="mrp-form" disabled={pending}>
-        <legend className="mrp-form-legend">这一天的出行方式</legend>
-        <p className="mrp-hint" id={modeHintId}>
+      <fieldset className={BLOCK} disabled={pending}>
+        <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">
+          这一天的出行方式
+        </legend>
+        <p className={HINT} id={modeHintId}>
           路线是按出行方式估算的，请先明确选一项，再获取候选。没有选择时不会发起请求。
         </p>
-        <div className="mrp-modes">
-          <label className="mrp-mode">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex min-h-11 items-center gap-2.5">
             <input
               type="radio"
               name={`${baseId}-mode`}
@@ -353,10 +379,11 @@ export default function MapRefreshPanel({
               checked={mode === 'walking'}
               onChange={() => setMode('walking')}
               aria-describedby={mode === '' ? modeErrorId : undefined}
+              className="size-4 accent-[color:var(--color-accent)]"
             />
-            <span>步行</span>
+            <span className="text-sm leading-relaxed">步行</span>
           </label>
-          <label className="mrp-mode">
+          <label className="flex min-h-11 items-center gap-2.5">
             <input
               type="radio"
               name={`${baseId}-mode`}
@@ -364,116 +391,117 @@ export default function MapRefreshPanel({
               checked={mode === 'driving'}
               onChange={() => setMode('driving')}
               aria-describedby={mode === '' ? modeErrorId : undefined}
+              className="size-4 accent-[color:var(--color-accent)]"
             />
-            <span>驾车</span>
+            <span className="text-sm leading-relaxed">驾车</span>
           </label>
         </div>
-        <p className="mrp-hint" id={modeErrorId}>
+        <p className={HINT} id={modeErrorId}>
           行程里一段步行一段驾车时，这里也只选一种：候选会按同一方式重算这一天的相邻路线。
         </p>
-        <p className="mrp-hint">
+        <p className={HINT}>
           站点缺少坐标也可以刷新，这正是它的用途；服务会重新解析站点的位置。
         </p>
       </fieldset>
 
-      <div className="mrp-actions">
-        <button
-          type="button"
-          className="mrp-btn mrp-btn-primary"
-          onClick={handleFetch}
-          disabled={pending || mode === ''}
-        >
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={handleFetch} disabled={pending || mode === ''}>
           {pending ? '正在获取…' : '获取地图候选'}
-        </button>
+        </Button>
         {pending ? (
-          <button type="button" className="mrp-btn" onClick={stopWaiting}>
+          <Button variant="outline" onClick={stopWaiting}>
             停止等待
-          </button>
+          </Button>
         ) : null}
-        <span className="mrp-hint">一次只发一个请求；候选取到后不会自动保存。</span>
+        <span className={HINT}>一次只发一个请求；候选取到后不会自动保存。</span>
       </div>
 
       {error ? (
-        <p className="mrp-error" role="alert">
+        <p className={ERROR_STYLE} role="alert">
           {error.message}
         </p>
       ) : null}
 
       {pending ? (
-        <p className="mrp-status" role="status">
+        <p
+          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          role="status"
+        >
           正在向地图服务请求这一天的坐标与路线。等待可以随时停止，停止后旧行程完全不变。
         </p>
       ) : null}
 
       {live && hardStatus ? (
-        <div className="mrp-block">
-          <p className="mrp-notice" role="status">
+        <div className={BLOCK}>
+          <p className={NOTICE} role="status">
             {HARD_STATUS_TEXT[hardStatus] ?? '这次没有取得可用的地图数据，旧行程保持不变。'}
           </p>
           {live.response.unresolved.length > 0 ? (
-            <details className="mrp-details">
-              <summary>未解析出位置的站点（{live.response.unresolved.length} 个）</summary>
-              <ul className="mrp-list">
+            <details className="rounded-[6px] border border-border p-3">
+              <summary className="cursor-pointer text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+                未解析出位置的站点（{live.response.unresolved.length} 个）
+              </summary>
+              <ul className="m-0 mt-2 grid list-none gap-1.5 p-0">
                 {live.response.unresolved.map((item) => (
-                  <li key={item.id} className="mrp-stop">
-                    <span className="mrp-stop-name">{item.id}</span>
-                    <span className="mrp-hint">{item.reason}</span>
+                  <li key={item.id} className="grid gap-0.5">
+                    <span className={STOP_NAME}>{item.id}</span>
+                    <span className={HINT}>{item.reason}</span>
                   </li>
                 ))}
               </ul>
             </details>
           ) : null}
-          <p className="mrp-hint">这种情况下没有可应用的内容，旧行程保持不变。</p>
+          <p className={HINT}>这种情况下没有可应用的内容，旧行程保持不变。</p>
         </div>
       ) : null}
 
       {previewFailed ? (
-        <p className="mrp-notice" role="alert">
+        <p className={NOTICE} role="alert">
           {PREVIEW_FAILED_TEXT}
         </p>
       ) : null}
 
       {preview ? (
-        <div className="mrp-result">
-          <h4 className="mrp-section-title">这次取得的内容</h4>
-          <dl className="mrp-stats" aria-describedby={statsHintId}>
-            <div className="mrp-stat">
-              <dt>站点坐标</dt>
-              <dd>
+        <div className={BLOCK}>
+          <h4 className={SECTION_TITLE}>这次取得的内容</h4>
+          <dl className="m-0 grid gap-2" aria-describedby={statsHintId}>
+            <div>
+              <dt className="text-xs text-muted-foreground">站点坐标</dt>
+              <dd className={KV_DD}>
                 本次更新 {preview.points.refreshed} 个（新增 {preview.points.added}、改写{' '}
                 {preview.points.updated}），{preview.points.unchanged} 个与现在相同，{preview.points.notReturned}{' '}
                 个未返回、沿用原值。
               </dd>
             </div>
-            <div className="mrp-stat">
-              <dt>相邻路线</dt>
-              <dd>
+            <div>
+              <dt className="text-xs text-muted-foreground">相邻路线</dt>
+              <dd className={KV_DD}>
                 {preview.legs.refreshed} 段用本次新路线，{preview.legs.retained} 段沿用旧路线（本次未重算），
                 {preview.legs.invalidated} 段旧数据已失效、等待重新获取。
               </dd>
             </div>
-            <div className="mrp-stat">
-              <dt>本日提醒</dt>
-              <dd>
+            <div>
+              <dt className="text-xs text-muted-foreground">本日提醒</dt>
+              <dd className={KV_DD}>
                 本次取回 {preview.warningStats.newWarningCount} 条，显示 {preview.warningStats.keptNewWarnings}{' '}
                 条；另有 {preview.omittedWarnings} 条本次未显示。
               </dd>
             </div>
           </dl>
-          <p className="mrp-hint" id={statsHintId}>
+          <p className={HINT} id={statsHintId}>
             「本次取得」说的是从服务取回的数量，不代表行程里有这么多坐标真的变了。
           </p>
 
           {preview.changed ? null : (
-            <p className="mrp-notice" role="status">
+            <p className={NOTICE} role="status">
               这次取得的数据和现在的行程一致，没有可应用的变化：可能本来就有相同的坐标与路线，也可能服务这次没给新数据。旧行程保持不变。
             </p>
           )}
 
           {notices.length > 0 ? (
-            <ul className="mrp-list">
+            <ul className="m-0 grid list-none gap-1 p-0">
               {notices.map((notice, index) => (
-                <li key={`notice-${index}`} className="mrp-hint">
+                <li key={`notice-${index}`} className={HINT}>
                   {notice}
                 </li>
               ))}
@@ -481,54 +509,58 @@ export default function MapRefreshPanel({
           ) : null}
 
           {warnings.length > 0 ? (
-            <div className="mrp-block">
-              <h5 className="mrp-sub-title">本日提醒（{warnings.length} 条）</h5>
-              <ul className="mrp-list">
+            <div className="grid gap-2 rounded-[6px] border-l-[3px] border-l-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]/30 p-3">
+              <h5 className="m-0 text-sm font-bold text-[color:var(--color-ink-2)]">
+                本日提醒（{warnings.length} 条）
+              </h5>
+              <ul className="m-0 grid list-none gap-1 p-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
                 {visibleWarnings.map((warning, index) => (
                   <li key={`warning-${index}`}>{warning}</li>
                 ))}
               </ul>
               {hiddenWarningCount > 0 ? (
-                <button type="button" className="mrp-btn mrp-btn-ghost" onClick={() => setShowAllWarnings(true)}>
-                  再展开 {hiddenWarningCount} 条
-                </button>
+                <div>
+                  <Button variant="ghost" size="sm" onClick={() => setShowAllWarnings(true)}>
+                    再展开 {hiddenWarningCount} 条
+                  </Button>
+                </div>
               ) : null}
             </div>
           ) : null}
 
-          <h4 className="mrp-section-title">站点坐标对照</h4>
-          <ul className="mrp-list">
+          <h4 className={SECTION_TITLE}>站点坐标对照</h4>
+          <ul className="m-0 grid list-none gap-2 p-0">
             {day.stops.map((stop) => {
               const resolved = resolvedById.get(stop.id)
               const unresolved = unresolvedById.get(stop.id)
               return (
-                <li key={stop.id} className="mrp-stop">
-                  <div className="mrp-stop-head">
-                    <span className="mrp-stop-name">{stop.name || '未命名站点'}</span>
-                    <span className="mrp-hint">{formatTime(stop.time)}</span>
+                <li key={stop.id} className={STOP_BOX}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className={STOP_NAME}>{stop.name || '未命名站点'}</span>
+                    <span className={HINT}>{formatTime(stop.time)}</span>
                   </div>
-                  <dl className="mrp-kv">
-                    <div className="mrp-kv-row">
-                      <dt>原坐标</dt>
-                      <dd>{formatLocation(stop.location)}</dd>
+                  <dl className={KV_DL}>
+                    <div className="flex flex-wrap gap-x-2">
+                      <dt className={KV_DT}>原坐标</dt>
+                      <dd className={`font-mono tabular-nums ${KV_DD}`}>{formatLocation(stop.location)}</dd>
                     </div>
-                    <div className="mrp-kv-row">
-                      <dt>候选坐标</dt>
-                      <dd>
+                    <div className="flex flex-wrap gap-x-2">
+                      <dt className={KV_DT}>候选坐标</dt>
+                      <dd className={`font-mono tabular-nums ${KV_DD}`}>
                         {resolved ? formatLocation(resolved.location) : '本次未返回坐标，沿用原值'}
                       </dd>
                     </div>
-                    <div className="mrp-kv-row">
-                      <dt>原地址</dt>
-                      <dd>{stop.address || '未填写'}</dd>
+                    <div className="flex flex-wrap gap-x-2">
+                      <dt className={KV_DT}>原地址</dt>
+                      <dd className={KV_DD}>{stop.address || '未填写'}</dd>
                     </div>
-                    <div className="mrp-kv-row">
-                      <dt>解析地址</dt>
-                      <dd>
+                    <div className="flex flex-wrap gap-x-2">
+                      <dt className={KV_DT}>解析地址</dt>
+                      <dd className={KV_DD}>
                         {resolved && resolved.resolved_address ? (
                           <>
                             {resolved.resolved_address}
-                            <span className="mrp-hint">（仅展示，不回写到原地址，也不代表实地已核验）</span>
+                            <span className={HINT}>（仅展示，不回写到原地址，也不代表实地已核验）</span>
                           </>
                         ) : (
                           '本次没有解析地址'
@@ -536,41 +568,41 @@ export default function MapRefreshPanel({
                       </dd>
                     </div>
                   </dl>
-                  {unresolved ? <p className="mrp-hint">未取得位置：{unresolved.reason}</p> : null}
+                  {unresolved ? <p className={HINT}>未取得位置：{unresolved.reason}</p> : null}
                 </li>
               )
             })}
           </ul>
 
-          <h4 className="mrp-section-title">相邻路线对照</h4>
+          <h4 className={SECTION_TITLE}>相邻路线对照</h4>
           {pairs.length === 0 ? (
-            <p className="mrp-hint">这一天只有一个站点或没有站点，没有相邻路线需要对照。</p>
+            <p className={HINT}>这一天只有一个站点或没有站点，没有相邻路线需要对照。</p>
           ) : (
-            <ul className="mrp-list">
+            <ul className="m-0 grid list-none gap-2 p-0">
               {pairs.map(({ from, to }) => {
                 const key = pairKey(from.id, to.id)
                 const oldLeg = oldLegs.get(key)
                 const newLeg = newLegs.get(key)
                 return (
-                  <li key={key} className="mrp-pair">
-                    <div className="mrp-stop-head">
-                      <span className="mrp-stop-name">
+                  <li key={key} className={STOP_BOX}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className={STOP_NAME}>
                         {from.name || '未命名站点'} → {to.name || '未命名站点'}
                       </span>
-                      <span className="mrp-hint">{oldLeg ? modeLabel(oldLeg.mode) : '方式未记录'}</span>
+                      <span className={HINT}>{oldLeg ? modeLabel(oldLeg.mode) : '方式未记录'}</span>
                     </div>
-                    <dl className="mrp-kv">
-                      <div className="mrp-kv-row">
-                        <dt>旧路线</dt>
-                        <dd>
+                    <dl className={KV_DL}>
+                      <div className="flex flex-wrap gap-x-2">
+                        <dt className={KV_DT}>旧路线</dt>
+                        <dd className={KV_DD}>
                           {oldLeg
                             ? `${ROUTE_TEXT[oldLeg.route_type]}，${formatDistance(oldLeg.distance_m)}，${formatDuration(oldLeg.duration_minutes)}`
                             : '暂无路线数据'}
                         </dd>
                       </div>
-                      <div className="mrp-kv-row">
-                        <dt>候选路线</dt>
-                        <dd>
+                      <div className="flex flex-wrap gap-x-2">
+                        <dt className={KV_DT}>候选路线</dt>
+                        <dd className={KV_DD}>
                           {newLeg
                             ? `${ROUTE_TEXT[newLeg.route_type]}，${formatDistance(newLeg.distance_m)}，${formatDuration(newLeg.duration_minutes)}`
                             : '本次未返回，沿用旧路线（本次未重算）'}
@@ -578,7 +610,7 @@ export default function MapRefreshPanel({
                       </div>
                     </dl>
                     {newLeg && newLeg.route_type === 'unavailable' ? (
-                      <p className="mrp-hint">这一段本次没取到路线，沿旧路线显示，标注为本次未重算。</p>
+                      <p className={HINT}>这一段本次没取到路线，沿旧路线显示，标注为本次未重算。</p>
                     ) : null}
                   </li>
                 )
@@ -586,27 +618,22 @@ export default function MapRefreshPanel({
             </ul>
           )}
 
-          <div className="mrp-actions">
-            <button
-              type="button"
-              className="mrp-btn mrp-btn-primary"
-              onClick={handleApply}
-              disabled={!canApply}
-            >
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={handleApply} disabled={!canApply}>
               应用地图更新
-            </button>
-            {preview.changed ? null : <span className="mrp-hint">没有变化时不提供应用按钮。</span>}
+            </Button>
+            {preview.changed ? null : <span className={HINT}>没有变化时不提供应用按钮。</span>}
           </div>
 
           {applyError ? (
-            <p className="mrp-error" role="alert">
+            <p className={ERROR_STYLE} role="alert">
               {applyError}
             </p>
           ) : null}
         </div>
       ) : null}
 
-      <p className="mrp-foot">
+      <p className="m-0 border-t border-t-border pt-3 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         这里不会自动保存，也不改动行程的来源、预算和别的字段。导航耗时是本次服务估算，不保证出行当天的实际交通；
         「直线估测」不是导航路线。
       </p>

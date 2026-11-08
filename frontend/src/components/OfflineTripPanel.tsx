@@ -10,7 +10,7 @@ import {
   OFFLINE_TRIP_UNVERIFIED_NOTICE,
   tripToOfflineHtml,
 } from '../lib/offlineTripHtml'
-import './OfflineTripPanel.css'
+import { Button } from '@/components/ui/button'
 
 /** createObjectURL 后延迟回收：给浏览器留出发起下载的时间（Firefox 同步回收会取消下载） */
 export const OFFLINE_TRIP_HTML_URL_REVOKE_DELAY_MS = 1000
@@ -264,6 +264,15 @@ function formatBytes(bytes: number): string {
     : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
+/** W3b：notice 与隐私清单通用类名，从 OfflineTripPanel.css 迁来（shadcn + Tailwind）。 */
+const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
+  ok: 'bg-[color:var(--color-accent-soft)]/40 text-[color:var(--color-accent-ink)]',
+  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-ink-2)]',
+  error: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-warn-ink)]',
+}
+const NOTICE =
+  'm-0 rounded-[6px] p-3 text-sm leading-relaxed font-medium [overflow-wrap:anywhere]'
+
 /**
  * 离线随身行程页（单文件 HTML）子入口。
  *
@@ -432,73 +441,83 @@ export default function OfflineTripPanel({ record, epoch }: OfflineTripPanelProp
   }
 
   return (
-    <div className="offline-trip" role="region" aria-labelledby={headingId}>
-      <h4 className="offline-trip-heading" id={headingId}>
+    <div className="grid min-w-0 gap-3" role="region" aria-labelledby={headingId}>
+      <h4
+        className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]"
+        id={headingId}
+      >
         离线随身行程页（单文件 HTML）
       </h4>
-      <p className="offline-trip-lead">
+      <p className="m-0 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         生成一份可双击打开、可打印的单文件行程页：包含当前已应用方案的每日顺序、时间与地址、预约 / 锚点说明、交通摘要、已知费用和准备清单。
       </p>
 
-      <div className="offline-trip-actions">
-        <button
-          type="button"
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="outline"
           ref={generateButtonRef}
-          className="btn"
           onClick={handlePreview}
           aria-describedby={generateId}
         >
           预览离线行程页
-        </button>
+        </Button>
       </div>
-      <p className="offline-trip-hint" id={generateId}>
+      <p
+        className="m-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]"
+        id={generateId}
+      >
         生成只发生在页面里：不联网、不读写本地存储，也不会自动下载。页面是静态 HTML，不含脚本或外部资源；下载要等预览之后单独点击。
       </p>
 
-      <div className="offline-trip-live" aria-live="polite" aria-atomic="true">
+      <div aria-live="polite" aria-atomic="true">
         {notice && (
-          <p className="offline-trip-notice" data-tone={notice.tone} data-testid="offline-trip-notice">
+          <p
+            className={`${NOTICE} ${NOTICE_TONE_CLASS[notice.tone]}`}
+            data-tone={notice.tone}
+            data-testid="offline-trip-notice"
+          >
             {notice.text}
           </p>
         )}
       </div>
 
       {livePreview && (
-        <div className="offline-trip-preview">
-          <h5 className="offline-trip-preview-title" id={previewHeadingId}>
+        <div className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4">
+          <h5
+            className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+            id={previewHeadingId}
+          >
             预览：{livePreview.filename}
           </h5>
-          <p className="offline-trip-meta">
+          <p className="m-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             约 {formatBytes(livePreview.bytes)}（UTF-8 字节） · 生成时间：{livePreview.exportedAtText} · 工作区 revision：{livePreview.workspaceRevision}
           </p>
           <iframe
-            className="offline-trip-frame"
+            className="h-80 w-full rounded-[6px] border border-border bg-background"
             title="离线行程页预览"
             sandbox=""
             srcDoc={livePreview.html}
             referrerPolicy="no-referrer"
           />
-          <p className="offline-trip-hint">
+          <p className="m-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             预览在 sandbox 空的 iframe 中打开：不执行脚本、不加载外部资源。下载的是上面这份预览的同一份字节；工作区内容或运行期上下文一旦变化，预览与下载会立即作废，需要重新生成。
           </p>
-          <div className="offline-trip-actions">
-            <button type="button" className="btn btn-primary" onClick={handleDownload}>
-              下载离线页 (.html)
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={handleDiscard}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={handleDownload}>下载离线页 (.html)</Button>
+            <Button variant="ghost" onClick={handleDiscard}>
               放弃预览
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
-      <div className="offline-trip-privacy">
-        <p className="offline-trip-privacy-title">分享前请留意</p>
-        <ul className="offline-trip-privacy-list">
+      <div className="grid gap-1.5 border-t border-t-border pt-3">
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">分享前请留意</p>
+        <ul className="m-0 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+          {/* A2 合并：DATA_SCOPE_NOTICE 已含「不含候选库、版本库…」一句，原第 4 条与之重复，合并为一条。 */}
           <li>{OFFLINE_TRIP_DATA_SCOPE_NOTICE}</li>
           <li>{OFFLINE_TRIP_UNVERIFIED_NOTICE}</li>
           <li>{OFFLINE_TRIP_SHARE_NOTICE}</li>
-          <li>页面不包含候选库、版本库、会话恢复数据、本地存储原文或密钥。</li>
         </ul>
       </div>
     </div>

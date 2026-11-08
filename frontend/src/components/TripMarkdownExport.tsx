@@ -7,7 +7,8 @@ import {
   type TripMarkdownResult,
 } from '../lib/tripMarkdown'
 import { downloadTripMarkdown } from '../lib/tripMarkdownFile'
-import './tripMarkdownExport.css'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 
 export interface TripMarkdownExportProps {
   trip: Trip
@@ -56,6 +57,15 @@ function failureText(result: Extract<TripMarkdownResult, { ok: false }>): string
   if (result.reason === 'bad_limit') return result.message
   return '当前行程的数据结构不完整或包含异常字段，没有生成 Markdown。行程本身仍可正常查看。'
 }
+
+/** W3b：notice 通用类名，从 tripMarkdownExport.css 迁来（shadcn + Tailwind）。 */
+const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
+  ok: 'bg-[color:var(--color-accent-soft)]/40 text-[color:var(--color-accent-ink)]',
+  warn: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-ink-2)]',
+  error: 'bg-[color:var(--color-warn-bg)] text-[color:var(--color-warn-ink)]',
+}
+const NOTICE =
+  'm-0 rounded-[6px] p-3 text-sm leading-relaxed font-medium [overflow-wrap:anywhere]'
 
 /**
  * 可读路书（.md）导出子入口。
@@ -172,71 +182,83 @@ export default function TripMarkdownExport({ trip }: TripMarkdownExportProps) {
   }
 
   return (
-    <div className="trip-md" role="region" aria-labelledby={headingId}>
-      <h4 className="trip-md-subheading" id={headingId}>导出可读路书（Markdown）</h4>
-      <p className="trip-md-lead">
+    <div className="grid min-w-0 gap-3" role="region" aria-labelledby={headingId}>
+      <h4
+        className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]"
+        id={headingId}
+      >
+        导出可读路书（Markdown）
+      </h4>
+      <p className="m-0 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         生成一份便于阅读和分享的每日路书文本文件（.md）。它只用于阅读：恢复行程请用上面的 JSON 备份。
       </p>
 
-      <div className="trip-md-actions">
-        <button
-          type="button"
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="outline"
           ref={generateButtonRef}
-          className="btn"
           onClick={handlePreview}
           aria-describedby={`${generateId}`}
         >
           预览路书（Markdown）
-        </button>
+        </Button>
       </div>
-      <p className="trip-md-hint" id={generateId}>
+      <p
+        className="m-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]"
+        id={generateId}
+      >
         生成只发生在页面里：不联网、不写本地存储，也不会自动下载文件。下载要等预览之后单独点击。
       </p>
 
       {/* 唯一的状态播报区：有预览时也只在这里渲染一条 notice，不重复播报 */}
-      <div className="trip-md-live" aria-live="polite" aria-atomic="true">
+      <div aria-live="polite" aria-atomic="true">
         {notice && (
-          <p className="trip-md-notice" data-tone={notice.tone} data-testid="trip-md-notice">
+          <p
+            className={`${NOTICE} ${NOTICE_TONE_CLASS[notice.tone]}`}
+            data-tone={notice.tone}
+            data-testid="trip-md-notice"
+          >
             {notice.text}
           </p>
         )}
       </div>
 
       {livePreview && (
-        <div className="trip-md-preview">
-          <h5 className="trip-md-preview-title" id={previewHeadingId}>
+        <div className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4">
+          <h5
+            className="m-0 text-sm font-bold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+            id={previewHeadingId}
+          >
             预览：{livePreview.filename}
           </h5>
-          <p className="trip-md-meta">
+          <p className="m-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             约 {formatBytes(livePreview.bytes)}（UTF-8 字节） · 行程来源：{TRIP_SOURCE_LABELS[trip.source]}
           </p>
           {/* 只读纯文本预览：textarea 不解析任何 HTML / Markdown，用户文本保持原样显示 */}
-          <textarea
+          <Textarea
             id={previewTextId}
-            className="trip-md-text"
+            className="min-h-0 w-full font-mono text-sm leading-relaxed"
             aria-labelledby={previewHeadingId}
             readOnly
             rows={10}
             wrap="soft"
             value={livePreview.markdown}
           />
-          <p className="trip-md-hint">
+          <p className="m-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
             预览是只读纯文本，文件内容就是上面的文字。行程内容一旦变化，这里的预览与下载会立即作废，需要重新生成。
           </p>
-          <div className="trip-md-actions">
-            <button type="button" className="btn btn-primary" onClick={handleDownload}>
-              下载路书 (.md)
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={handleDiscard}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={handleDownload}>下载路书 (.md)</Button>
+            <Button variant="ghost" onClick={handleDiscard}>
               放弃预览
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
-      <div className="trip-md-privacy">
-        <p className="trip-md-privacy-title">分享前请留意</p>
-        <ul className="trip-md-privacy-list">
+      <div className="grid gap-1.5 border-t border-t-border pt-3">
+        <p className="m-0 text-sm font-semibold text-[color:var(--color-ink-2)]">分享前请留意</p>
+        <ul className="m-0 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           <li>{TRIP_MARKDOWN_SHARE_NOTICE}</li>
           <li>
             「行程来源」按记录里的 source 字段自述展示，不能证明文件真的由谁生成；

@@ -33,7 +33,11 @@ import {
 import type { ConstraintItemV1, ConstraintKindV1, ConstraintsV1, PlanScopeV1, WorkspaceRecordV1 } from '../lib/workspaceTypes'
 import type { WorkspaceRuntimeCaptureV1 } from '../lib/workspace'
 import { workspaceRuntimeRefsMatch } from '../lib/workspace'
-import './constraintsPanel.css'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 
 export interface ConstraintsPanelApplyRequest {
   /** 新的完整约束集合；父级负责 validate + 单一 transition。 */
@@ -118,6 +122,17 @@ const KIND_HINT: Record<ConstraintKindV1, string> = {
   reminder: '只提醒，不阻断应用；不会被说成已预订或已确认。',
 }
 
+/** W3b：面板级通用类名，从 constraintsPanel.css 迁来（shadcn + Tailwind）。 */
+const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
+const FIELD_LABEL = 'text-sm leading-relaxed text-muted-foreground'
+const CONTROL = 'min-h-11 w-full'
+const BOX = 'grid gap-2 rounded-[10px] border border-border bg-background p-4'
+const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const ISSUE_H = 'border-l-[3px] border-l-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]'
+const ISSUE_U = 'border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)]'
+const KIND_BADGE =
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+
 function formFromItem(item: ConstraintItemV1): ConstraintFormState {
   return {
     id: item.id,
@@ -196,8 +211,9 @@ function describeItem(item: ConstraintItemV1): string {
   return `${day} · 仅提醒，不阻断 · ${priority}`
 }
 
+/** H = accent 底、U = warn 底；返回 Tailwind 类名（W3b 由 cfp-issue-* 迁来）。 */
 function issueTone(issue: ConstraintIssue): string {
-  return issue.severity === 'H' ? 'cfp-issue cfp-issue-h' : 'cfp-issue cfp-issue-u'
+  return issue.severity === 'H' ? ISSUE_H : ISSUE_U
 }
 
 function verdictText(evaluation: ConstraintsEvaluationResult): string {
@@ -570,29 +586,38 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
       : (trip.days.find((entry) => entry.day === formDayNumber)?.stops ?? [])
 
   return (
-    <section className="cfp" aria-labelledby={`${ids}-heading`}>
-      <header className="cfp-head">
-        <div className="cfp-head-main">
-          <p className="cfp-eyebrow">F2 · 必去与预约</p>
-          <h2 className="cfp-title" id={`${ids}-heading`}>
+    <section className={PANEL} aria-labelledby={`${ids}-heading`}>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+            F2 · 必去与预约
+          </p>
+          <h2
+            className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]"
+            id={`${ids}-heading`}
+          >
             必去点与预约时间约束
           </h2>
-          <p className="cfp-note">
+          <p className="m-0 max-w-[72ch] text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             这里记录的是你填写的必去点与预约时间，不代表已经预订、出票或确认。本地硬门只按填写值与行程记录推算。
           </p>
         </div>
         {onClose ? (
-          <button type="button" className="cfp-btn cfp-btn-ghost" onClick={handleClose}>
+          <Button variant="outline" onClick={handleClose}>
             收起必去与预约
-          </button>
+          </Button>
         ) : null}
       </header>
 
-      <div className="cfp-summary">
-        <p className="cfp-verdict" data-testid="constraints-verdict" aria-live="polite">
+      <div className={BOX}>
+        <p
+          className="m-0 text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+          data-testid="constraints-verdict"
+          aria-live="polite"
+        >
           {verdictText(evaluation)}
         </p>
-        <p className="cfp-meta">
+        <p className="m-0 text-xs leading-relaxed text-muted-foreground">
           {draft.items.length} 条约束 · {capacity.ok ? `${capacity.bytes} 字节` : capacity.message} ·
           工作区 revision {workspaceRevision} · 当前 epoch {sessionEpoch}
           {dirty ? ' · 有未应用的本地改动' : ' · 与当前工作区一致'}
@@ -600,10 +625,15 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
       </div>
 
       {globalIssues.length > 0 ? (
-        <ul className="cfp-issues" aria-label="全局硬门问题">
+        <ul className="m-0 grid list-none gap-1.5 p-0" aria-label="全局硬门问题">
           {globalIssues.map((issue, index) => (
-            <li key={`${issue.code}-${index}`} className={issueTone(issue)}>
-              <span className="cfp-issue-badge">{issue.severity}</span>
+            <li
+              key={`${issue.code}-${index}`}
+              className={`grid gap-1 rounded-[6px] p-2.5 pl-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] ${issueTone(issue)}`}
+            >
+              <span className="inline-flex w-fit items-center rounded-full border border-border bg-card px-2 py-0.5 text-xs font-semibold">
+                {issue.severity}
+              </span>
               {issue.message}
             </li>
           ))}
@@ -611,11 +641,10 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
       ) : null}
 
       {evaluation.ok && evaluation.requiresAck ? (
-        <div className="cfp-ack">
-          <label className="cfp-ack-label" htmlFor={`${ids}-ack`}>
-            <input
+        <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-warn-ink)]/50 bg-[color:var(--color-warn-bg)] p-3">
+          <label className="flex min-h-11 items-center gap-2.5" htmlFor={`${ids}-ack`}>
+            <Checkbox
               id={`${ids}-ack`}
-              type="checkbox"
               checked={ackChecked}
               onChange={(event) => {
                 setAckChecked(event.target.checked)
@@ -623,22 +652,27 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                 setNotice('确认只在本次候选 / 工作区 / epoch 下有效；任何修改都会让它失效。')
               }}
             />
-            我确认仍采用含未核实时间方案（绑定当前工作区与候选，任何修改后失效）
+            <span className="text-sm leading-relaxed text-[color:var(--color-ink-2)]">
+              我确认仍采用含未核实时间方案（绑定当前工作区与候选，任何修改后失效）
+            </span>
           </label>
-          <p className="cfp-hint">
+          <p className={HINT}>
             U 级只表示「时间端未核实」，不是硬冲突；不勾选就不能应用，也不能声称已满足。
           </p>
         </div>
       ) : null}
 
       {evaluation.ok && evaluation.verdict === 'blocked' ? (
-        <p className="cfp-hard-block">
+        <p
+          className="m-0 rounded-[6px] border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)]"
+          aria-label="H 级硬冲突说明"
+        >
           H 级硬冲突不能由用户确认绕过；请先修正约束或行程，再重新检查。
         </p>
       ) : null}
 
       {evaluation.ok && evaluation.notices.length > 0 ? (
-        <ul className="cfp-notices" aria-label="本地硬门说明">
+        <ul className="m-0 grid list-none gap-1 p-0 text-xs leading-relaxed text-muted-foreground" aria-label="本地硬门说明">
           {evaluation.notices.map((entry) => (
             <li key={entry}>{entry}</li>
           ))}
@@ -646,9 +680,11 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
       ) : null}
 
       {draft.items.length === 0 ? (
-        <p className="cfp-empty">还没有约束。可以添加「必去」或「预约窗口」；提醒不会阻断应用。</p>
+        <p className="m-0 text-sm leading-relaxed text-muted-foreground">
+          还没有约束。可以添加「必去」或「预约窗口」；提醒不会阻断应用。
+        </p>
       ) : (
-        <ul className="cfp-list" aria-label="约束列表">
+        <ul className="m-0 grid list-none gap-2 p-0" aria-label="约束列表">
           {draft.items.map((item) => {
             const issues = evaluation.ok
               ? evaluation.issues.filter((issue) => issue.constraintId === item.id)
@@ -656,31 +692,37 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
             return (
               <li
                 key={item.id}
-                className={`cfp-item${selectedId === item.id ? ' cfp-item-selected' : ''}`}
+                className={
+                  selectedId === item.id
+                    ? 'grid gap-1.5 rounded-[10px] border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]/40 p-3'
+                    : 'grid gap-1.5 rounded-[10px] border border-border bg-background p-3'
+                }
               >
-                <div className="cfp-item-head">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <button
                     type="button"
-                    className="cfp-item-select"
+                    className="flex min-w-0 flex-1 items-center gap-2 bg-transparent p-0 text-left"
                     aria-pressed={selectedId === item.id}
                     aria-label={`查看约束 ${item.title}`}
                     onClick={() => handleSelect(item.id)}
                   >
-                    <span className="cfp-kind">{KIND_LABEL[item.kind]}</span>
-                    <span className="cfp-item-title">{item.title}</span>
+                    <span className={KIND_BADGE}>{KIND_LABEL[item.kind]}</span>
+                    <span className="min-w-0 break-words text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                      {item.title}
+                    </span>
                   </button>
-                  <div className="cfp-item-actions">
-                    <button
-                      type="button"
-                      className="cfp-btn cfp-btn-ghost"
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       aria-label={`编辑约束 ${item.title}`}
                       onClick={() => startEdit(item)}
                     >
                       编辑
-                    </button>
-                    <button
-                      type="button"
-                      className="cfp-btn cfp-btn-ghost"
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       aria-label={
                         confirmRemoveId === item.id
                           ? `确认删除约束 ${item.title}`
@@ -689,16 +731,27 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                       onClick={() => handleRemove(item.id)}
                     >
                       {confirmRemoveId === item.id ? '确认删除' : '删除'}
-                    </button>
+                    </Button>
                   </div>
                 </div>
-                <p className="cfp-item-meta">{describeItem(item)}</p>
-                {item.notes ? <p className="cfp-item-notes">备注：{item.notes}</p> : null}
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                  {describeItem(item)}
+                </p>
+                {item.notes ? (
+                  <p className="m-0 text-xs leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+                    备注：{item.notes}
+                  </p>
+                ) : null}
                 {issues.length > 0 ? (
-                  <ul className="cfp-issues" aria-label={`约束 ${item.title} 的问题`}>
+                  <ul className="m-0 grid list-none gap-1.5 p-0" aria-label={`约束 ${item.title} 的问题`}>
                     {issues.map((issue, index) => (
-                      <li key={`${issue.code}-${index}`} className={issueTone(issue)}>
-                        <span className="cfp-issue-badge">{issue.severity}</span>
+                      <li
+                        key={`${issue.code}-${index}`}
+                        className={`grid gap-1 rounded-[6px] p-2.5 pl-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] ${issueTone(issue)}`}
+                      >
+                        <span className="inline-flex w-fit items-center rounded-full border border-border bg-card px-2 py-0.5 text-xs font-semibold">
+                          {issue.severity}
+                        </span>
                         {issue.message}
                       </li>
                     ))}
@@ -712,35 +765,37 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
 
       {form ? (
         <form
-          className="cfp-form"
+          className="grid gap-3"
           onSubmit={(event) => {
             event.preventDefault()
             handleSaveForm()
           }}
         >
-          <fieldset className="cfp-fieldset">
-            <legend className="cfp-legend">
+          <fieldset className={BOX}>
+            <legend className="px-1 font-display text-sm font-bold text-[color:var(--color-ink-2)]">
               {form.id === null ? '添加约束' : `编辑约束「${form.title || '未命名'}」`}
             </legend>
-            <p className="cfp-hint">{KIND_HINT[form.kind]}</p>
+            <p className={HINT}>{KIND_HINT[form.kind]}</p>
 
-            <label className="cfp-field" htmlFor={`${ids}-kind`}>
-              <span>类型</span>
-              <select
+            <label className="grid gap-1.5" htmlFor={`${ids}-kind`}>
+              <span className={FIELD_LABEL}>类型</span>
+              <Select
                 id={`${ids}-kind`}
+                className={CONTROL}
                 value={form.kind}
                 onChange={(event) => handleFormKind(event.target.value as FormKind)}
               >
                 <option value="must_visit">必去（must_visit）</option>
                 <option value="fixed_window">预约窗口（fixed_window）</option>
                 <option value="reminder">提醒（reminder）</option>
-              </select>
+              </Select>
             </label>
 
-            <label className="cfp-field" htmlFor={`${ids}-title-field`}>
-              <span>标题</span>
-              <input
+            <label className="grid gap-1.5" htmlFor={`${ids}-title-field`}>
+              <span className={FIELD_LABEL}>标题</span>
+              <Input
                 id={`${ids}-title-field`}
+                className={CONTROL}
                 type="text"
                 maxLength={120}
                 value={form.title}
@@ -749,10 +804,11 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
               />
             </label>
 
-            <label className="cfp-field" htmlFor={`${ids}-day`}>
-              <span>目标日</span>
-              <select
+            <label className="grid gap-1.5" htmlFor={`${ids}-day`}>
+              <span className={FIELD_LABEL}>目标日</span>
+              <Select
                 id={`${ids}-day`}
+                className={CONTROL}
                 value={form.day}
                 onChange={(event) => handleFormDay(event.target.value)}
               >
@@ -762,13 +818,14 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                     第 {day.day} 天{day.date ? `（${day.date}）` : ''}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
 
-            <label className="cfp-field" htmlFor={`${ids}-stop`}>
-              <span>绑定站点</span>
-              <select
+            <label className="grid gap-1.5" htmlFor={`${ids}-stop`}>
+              <span className={FIELD_LABEL}>绑定站点</span>
+              <Select
                 id={`${ids}-stop`}
+                className={CONTROL}
                 value={form.stopId}
                 onChange={(event) => setForm({ ...form, stopId: event.target.value })}
               >
@@ -778,44 +835,48 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                     {stop.name}（{stop.id}）
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
-            <p className="cfp-hint">
+            <p className={HINT}>
               不绑定站点时，must_visit 用「标题 + 目标日」作为初始目标实体；同名多站会按 U 级处理，不会 silent 选第一个。
             </p>
 
-            <div className="cfp-time-grid">
-              <label className="cfp-field" htmlFor={`${ids}-start-date`}>
-                <span>开始日期</span>
-                <input
+            <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+              <label className="grid gap-1.5" htmlFor={`${ids}-start-date`}>
+                <span className={FIELD_LABEL}>开始日期</span>
+                <Input
                   id={`${ids}-start-date`}
+                  className={CONTROL}
                   type="date"
                   value={form.startDate}
                   onChange={(event) => setForm({ ...form, startDate: event.target.value })}
                 />
               </label>
-              <label className="cfp-field" htmlFor={`${ids}-end-date`}>
-                <span>结束日期</span>
-                <input
+              <label className="grid gap-1.5" htmlFor={`${ids}-end-date`}>
+                <span className={FIELD_LABEL}>结束日期</span>
+                <Input
                   id={`${ids}-end-date`}
+                  className={CONTROL}
                   type="date"
                   value={form.endDate}
                   onChange={(event) => setForm({ ...form, endDate: event.target.value })}
                 />
               </label>
-              <label className="cfp-field" htmlFor={`${ids}-start-time`}>
-                <span>开始时刻</span>
-                <input
+              <label className="grid gap-1.5" htmlFor={`${ids}-start-time`}>
+                <span className={FIELD_LABEL}>开始时刻</span>
+                <Input
                   id={`${ids}-start-time`}
+                  className={CONTROL}
                   type="time"
                   value={form.startTime}
                   onChange={(event) => setForm({ ...form, startTime: event.target.value })}
                 />
               </label>
-              <label className="cfp-field" htmlFor={`${ids}-end-time`}>
-                <span>结束时刻</span>
-                <input
+              <label className="grid gap-1.5" htmlFor={`${ids}-end-time`}>
+                <span className={FIELD_LABEL}>结束时刻</span>
+                <Input
                   id={`${ids}-end-time`}
+                  className={CONTROL}
                   type="time"
                   value={form.endTime}
                   onChange={(event) => setForm({ ...form, endTime: event.target.value })}
@@ -823,10 +884,11 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
               </label>
             </div>
 
-            <label className="cfp-field" htmlFor={`${ids}-duration`}>
-              <span>停留分钟</span>
-              <input
+            <label className="grid gap-1.5" htmlFor={`${ids}-duration`}>
+              <span className={FIELD_LABEL}>停留分钟</span>
+              <Input
                 id={`${ids}-duration`}
+                className={CONTROL}
                 type="text"
                 inputMode="numeric"
                 placeholder="留空 = 未知；0 = 已知零分钟"
@@ -835,10 +897,11 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
               />
             </label>
 
-            <label className="cfp-field" htmlFor={`${ids}-notes`}>
-              <span>备注</span>
-              <textarea
+            <label className="grid gap-1.5" htmlFor={`${ids}-notes`}>
+              <span className={FIELD_LABEL}>备注</span>
+              <Textarea
                 id={`${ids}-notes`}
+                className={CONTROL}
                 maxLength={500}
                 rows={2}
                 placeholder="只保存在本地，不进入后端 prompt"
@@ -847,10 +910,11 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
               />
             </label>
 
-            <label className="cfp-field" htmlFor={`${ids}-priority`}>
-              <span>优先级</span>
-              <select
+            <label className="grid gap-1.5" htmlFor={`${ids}-priority`}>
+              <span className={FIELD_LABEL}>优先级</span>
+              <Select
                 id={`${ids}-priority`}
+                className={CONTROL}
                 value={form.priority}
                 onChange={(event) => setForm({ ...form, priority: event.target.value })}
               >
@@ -858,44 +922,34 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
                 <option value="1">1 · 普通</option>
                 <option value="2">2 · 高</option>
                 <option value="3">3 · 最高</option>
-              </select>
+              </Select>
             </label>
 
-            <div className="cfp-form-actions">
-              <button type="submit" className="cfp-btn cfp-btn-primary">
-                保存约束
-              </button>
-              <button type="button" className="cfp-btn" onClick={cancelForm}>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button type="submit">保存约束</Button>
+              <Button variant="outline" onClick={cancelForm}>
                 取消编辑
-              </button>
+              </Button>
             </div>
           </fieldset>
         </form>
       ) : null}
 
-      <div className="cfp-actions">
-        <button type="button" className="cfp-btn" onClick={startAdd} disabled={form !== null}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="secondary" onClick={startAdd} disabled={form !== null}>
           添加约束
-        </button>
-        <button
-          type="button"
-          className="cfp-btn cfp-btn-ghost"
+        </Button>
+        <Button
+          variant="ghost"
           onClick={handleUndo}
           disabled={historyRef.current.length === 0 || form !== null}
         >
           撤销一次
-        </button>
-        <button
-          type="button"
-          className="cfp-btn cfp-btn-ghost"
-          onClick={handleRevert}
-          disabled={form !== null}
-        >
+        </Button>
+        <Button variant="ghost" onClick={handleRevert} disabled={form !== null}>
           还原为当前约束
-        </button>
-        <button
-          type="button"
-          className="cfp-btn cfp-btn-primary"
+        </Button>
+        <Button
           onClick={handleApply}
           disabled={
             !evaluation.ok ||
@@ -908,25 +962,36 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
           }
         >
           应用约束改动
-        </button>
+        </Button>
       </div>
 
-      <p className="cfp-hint">
+      <p className={HINT}>
         应用按钮只把完整约束与 apply ticket 交给父级；Panel 不直接写 localStorage、不改 Trip。
         没有工作区记录 / scope / apply callback 时只能本地预览；每次 ticket 都会捕获当前 record
         与候选的实际引用 + epoch，不从旧 capture 反填 current。
       </p>
 
       {ticket ? (
-        <p className="cfp-ticket-note" data-testid="constraints-ticket">
+        <p
+          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] bg-secondary pl-3 font-mono text-xs leading-relaxed tabular-nums text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]"
+          data-testid="constraints-ticket"
+        >
           已生成 apply ticket：候选 {ticket.candidate.short} · epoch {ticket.epoch} ·
           {ticket.ack ? ' 含 U 级独立确认' : ' 无需 U 级确认'}。任何编辑 / 切换 / 取消都会使它失效。
         </p>
       ) : null}
 
       <div aria-live="polite">
-        {notice ? <p className="cfp-notice">{notice}</p> : null}
-        {error ? <p className="cfp-error">{error}</p> : null}
+        {notice ? (
+          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-ok)] [overflow-wrap:anywhere]">
+            {notice}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="m-0 text-sm font-semibold leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]">
+            {error}
+          </p>
+        ) : null}
       </div>
     </section>
   )

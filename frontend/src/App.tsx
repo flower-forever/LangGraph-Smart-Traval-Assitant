@@ -87,8 +87,8 @@ import {
   confirmSessionWorkspaceRestore,
   prepareSessionWorkspaceRestore,
 } from './lib/workspaceSessionRestore'
-import './components/backendStatus.css'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
+import { Button } from '@/components/ui/button'
 import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
 import {
   MAX_REPLAN_WARNINGS,
@@ -3100,36 +3100,53 @@ export default function App() {
           <span className="brand-sub">智能出行助手 · 逐日路线与中文讲解</span>
         </div>
         <div className="header-spacer" />
-        <div className="backend-status">
-          <div className="backend-state" data-state={backendVisual}>
-            <span className="dot" aria-hidden="true" />
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2 text-sm text-[color:var(--color-ink-2)]"
+            data-testid="backend-state"
+            data-state={backendVisual}
+          >
+            <span
+              className={`size-2 shrink-0 rounded-full ${
+                backendVisual === 'degraded'
+                  ? 'bg-[color:var(--color-warn-ink)]'
+                  : backendVisual === 'unknown'
+                    ? 'border border-[color:var(--color-line-strong)] bg-transparent'
+                    : 'bg-[color:var(--color-ok)]'
+              }`}
+              aria-hidden="true"
+            />
             {/* role=status 自带 polite 播报：重新检测的开始 / 结束都会念出来 */}
             <span role="status" aria-live="polite">
               {backendStatusLabel}
               {backend.probing && backend.checked && (
-                <span className="backend-probing">{' · '}正在重新检测…</span>
+                <span className="text-[color:var(--color-faint)]">{' · '}正在重新检测…</span>
               )}
             </span>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost backend-reprobe"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={runProbe}
             aria-busy={backend.probing || undefined}
             aria-describedby={backendHint ? BACKEND_HINT_ID : undefined}
             title="重新探测后端健康状态，不会刷新页面"
           >
             重新检测
-          </button>
+          </Button>
         </div>
       </header>
 
       {backendHint && (
-        <p className="backend-hint" id={BACKEND_HINT_ID}>{backendHint}</p>
+        <p className="m-0 border-b border-b-[color:var(--color-line-strong)] bg-secondary px-4 py-2 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]" id={BACKEND_HINT_ID}>
+          {backendHint}
+        </p>
       )}
 
       {amapNote && (
-        <p className="backend-hint backend-hint-amap">{amapNote}</p>
+        <p className="m-0 border-b border-b-[color:var(--color-line-strong)] bg-secondary px-4 py-2 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+          {amapNote}
+        </p>
       )}
 
       <div className="topbar-progress" data-active={planLoading || phase === 'loading'} aria-hidden="true" />
@@ -3830,7 +3847,7 @@ export default function App() {
               面板展开本身不发请求，只有点「查询附近资料」才请求一次。
             */}
             {!editingDraft && !aiOpen && !mapOpen && currentDay && (
-              <div className="poi-sources-slot" data-testid="poi-sources-slot">
+              <div className="mb-6" data-testid="poi-sources-slot">
                 {poiSourcesOpen ? (
                   <DayPoiSourcesPanel
                     trip={trip}

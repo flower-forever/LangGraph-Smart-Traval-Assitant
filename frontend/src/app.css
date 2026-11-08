@@ -96,24 +96,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .header-spacer { flex: 1; }
 
-.backend-state {
-  font-size: var(--text-xs);
-  color: var(--color-muted);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.backend-state .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-line-strong);
-  flex: none;
-}
-
-.backend-state[data-state="ok"] .dot { background: var(--color-ok); }
-.backend-state[data-state="down"] .dot { background: var(--color-accent); }
+/* W3b：.backend-state 胶囊已迁 Tailwind（App.tsx，data-testid=backend-state）；
+ * 相关的 .backend-status/.backend-hint/.backend-probing/.backend-reprobe 规则
+ * 原在已删除的 backendStatus.css 里，这里只剩基础节，随 W4 全局 shell 一起收口。 */
 
 .app-main {
   flex: 1;
@@ -1068,9 +1053,9 @@ textarea.field-input {
 }
 
 /* ---------- 本地保存行程 ----------
- * W3a 已把 SavedTripsPanel 迁到 shadcn/Tailwind；下列类仍被引用的：
+ * W3a 已把 SavedTripsPanel 迁到 shadcn/Tailwind；W3b 已把 TripTransferPanel 迁完
+ * （.btn-save 随之退役为 shadcn Button，无 CSS 本体）。下列类仍被引用的：
  *   .saved-offline / .saved-offline-note / .trip-restored-note（App.tsx，W4 全局 shell 退役）
- *   .btn-save（TripTransferPanel.tsx，W3b 退役）
  * 其余 saved-* 规则已随面板迁移删除。
  */
 
@@ -1093,208 +1078,16 @@ textarea.field-input {
   font-size: var(--text-xs);
 }
 
-/* ---------- 导出日历 ---------- */
+/* ---------- 导出日历 ----------
+ * W3b：整节退役（IcsExportPanel 已迁 shadcn/Tailwind；.ics-* 类在 src 中零引用）。
+ * 本节同段的 .plan-cancel-status / .plan-cancel-note（App.tsx）与 640px 媒体查询里的
+ * .plan-actions 留 W4 全局 shell 退役。
+ */
 
-/* ---------- 导出日历 ---------- */
-.ics-area { margin: 0 0 var(--space-6); }
-
-.ics-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.ics-toggle { min-height: 44px; }
-
-.ics-scope-note {
-  font-size: var(--text-xs);
-  color: var(--color-faint);
-}
-
-.ics-panel {
-  margin-top: var(--space-3);
-  padding: var(--space-4);
-  border: var(--rule-strong);
-  border-radius: var(--radius-lg);
-  background: var(--color-paper-2);
-}
-
-.ics-panel-head { margin-bottom: var(--space-3); }
-
-.ics-panel-title {
-  margin: 0 0 var(--space-1);
-  font-family: var(--font-display);
-  font-size: var(--text-md);
-  letter-spacing: 0.03em;
-}
-
-.ics-panel-note {
-  margin: 0;
+.plan-cancel-status {
   max-width: 72ch;
   font-size: var(--text-xs);
   color: var(--color-muted);
-}
-
-.ics-example-note {
-  margin: var(--space-2) 0;
-  padding: var(--space-2) var(--space-3);
-  border-left: 3px solid var(--color-accent);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--color-accent-soft);
-  font-size: var(--text-sm);
-  color: var(--color-ink);
-}
-
-.ics-summary {
-  margin: var(--space-2) 0;
-  font-size: var(--text-sm);
-  color: var(--color-ink-2);
-}
-
-.ics-date-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: var(--space-3) 0;
-  padding: var(--space-3);
-  border: 1px dashed var(--color-line-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-paper);
-}
-
-.ics-date-field .field-input { max-width: 260px; }
-
-.ics-provisional {
-  margin: var(--space-3) 0;
-  padding: var(--space-3);
-  border: var(--rule);
-  border-radius: var(--radius-md);
-  background: var(--color-paper-3);
-}
-
-.ics-provisional-title {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--color-muted);
-}
-
-.ics-provisional-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-ink-2);
-}
-
-.ics-notices { margin: var(--space-3) 0; }
-
-.ics-subheading {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--color-ink-2);
-}
-
-.ics-notices ul {
-  margin: 0;
-  padding-left: 1.2em;
-  display: grid;
-  gap: var(--space-1);
-  font-size: var(--text-xs);
-  line-height: 1.6;
-  color: var(--color-muted);
-}
-
-.ics-skips {
-  margin: var(--space-3) 0;
-  font-size: var(--text-xs);
-  color: var(--color-muted);
-}
-
-.ics-skips summary {
-  cursor: pointer;
-  min-height: 32px;
-}
-
-.ics-skips summary:focus-visible {
-  outline: 2px solid var(--color-accent-ink);
-  outline-offset: 2px;
-}
-
-.ics-skips ul {
-  margin: var(--space-2) 0 0;
-  padding-left: 1.2em;
-  display: grid;
-  gap: var(--space-1);
-}
-
-.ics-download {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: var(--rule);
-}
-
-.ics-filename {
-  margin: 0;
-  font-size: var(--text-xs);
-  color: var(--color-muted);
-  overflow-wrap: anywhere;
-}
-
-.ics-filename code {
-  font-family: var(--font-mono);
-  color: var(--color-ink-2);
-}
-
-.ics-empty {
-  margin: 0;
-  font-size: var(--text-xs);
-  color: var(--color-faint);
-}
-
-.ics-notice-live { min-height: 0; }
-
-.ics-notice {
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border: var(--rule);
-  border-radius: var(--radius-sm);
-  background: var(--color-paper);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  color: var(--color-ink-2);
-}
-
-.ics-notice[data-tone="ok"] { border-left: 3px solid var(--color-ok); }
-
-.ics-notice[data-tone="warn"] {
-  border-left: 3px solid var(--color-warn-ink);
-  background: var(--color-warn-bg);
-  color: var(--color-warn-ink);
-}
-
-.ics-notice[data-tone="error"] {
-  border-left: 3px solid var(--color-accent);
-  background: var(--color-accent-soft);
-  color: var(--color-ink);
-}
-
-.plan-cancel-status {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-3);
-  border-left: 3px solid var(--color-warn-ink);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--color-warn-bg);
-  color: var(--color-warn-ink);
-  font-size: var(--text-sm);
 }
 
 .plan-cancel-note {
@@ -1305,12 +1098,6 @@ textarea.field-input {
 }
 
 @media (max-width: 640px) {
-  .ics-toolbar { align-items: stretch; }
-  .ics-toolbar .btn { width: 100%; }
-  .ics-panel { padding: var(--space-3); }
-  .ics-download { align-items: stretch; }
-  .ics-download .btn { width: 100%; }
-  .ics-date-field .field-input { max-width: none; }
   .plan-actions { flex-wrap: wrap; }
   .plan-actions .btn { flex: 1 1 auto; }
 }

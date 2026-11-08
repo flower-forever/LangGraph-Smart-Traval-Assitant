@@ -34,7 +34,9 @@ import {
 import { searchWebSources } from '../lib/webSourcesApi'
 import { serializeOwnerSnapshot } from '../lib/webSourcesOwner'
 import type { PoiCardPrefill } from '../lib/poiCardPrefill'
-import './webSourcesPanel.css'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 
 export interface WebSourcesPanelProps {
   /** 当前页面正在显示的行程；面板只读，不修改。 */
@@ -265,6 +267,17 @@ function sentQueryOf(raw: string): string {
   return normalizeWebSearchQuery(raw) ?? ''
 }
 
+/** W3b：面板级通用类名，从 webSourcesPanel.css 迁来（shadcn + Tailwind）。 */
+const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
+const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const TAG =
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+const TAG_UNVERIFIED =
+  'inline-flex shrink-0 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground'
+const RESULT_BOX = 'grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4'
+const ERROR_STYLE =
+  'm-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-3 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]'
+
 export default function WebSourcesPanel({
   trip,
   day,
@@ -453,17 +466,21 @@ export default function WebSourcesPanel({
 
   if (!day) {
     return (
-      <section className="wsp" aria-label="网页资料" data-testid="web-sources-panel">
-        <div className="wsp-head">
-          <div className="wsp-head-main">
-            <p className="wsp-eyebrow">独立资料查询</p>
-            <h3 className="wsp-title">网页资料</h3>
+      <section className={PANEL} aria-label="网页资料" data-testid="web-sources-panel">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_260px]">
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+              独立资料查询
+            </p>
+            <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
+              网页资料
+            </h3>
           </div>
-          <button type="button" className="wsp-btn" onClick={handleClose}>
+          <Button variant="outline" onClick={handleClose}>
             收起
-          </button>
+          </Button>
         </div>
-        <p className="wsp-notice" role="note">
+        <p className="m-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]" role="note">
           当前行程里没有可显示的这一天，无法搜索网页资料。行程内容保持不变。
         </p>
       </section>
@@ -479,59 +496,65 @@ export default function WebSourcesPanel({
 
   return (
     <section
-      className="wsp"
+      className={PANEL}
       aria-label="网页资料"
       aria-busy={pending || undefined}
       data-testid="web-sources-panel"
     >
-      <div className="wsp-head">
-        <div className="wsp-head-main">
-          <p className="wsp-eyebrow">独立资料查询 · Tavily 搜索摘要 · 不写行程</p>
-          <h3 className="wsp-title">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+            独立资料查询 · Tavily 搜索摘要 · 不写行程
+          </p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
             第 {day.day} 天{day.date ? ` · ${day.date}` : ''} 网页资料
           </h3>
-          <p className="wsp-meta-line">
+          <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {trip.title}
             {day.title ? ` · ${day.title}` : ''}
           </p>
         </div>
-        <button type="button" className="wsp-btn" onClick={handleClose}>
+        <Button variant="outline" onClick={handleClose}>
           收起
-        </button>
+        </Button>
       </div>
 
-      <p className="wsp-note">
+      <p className="m-0 max-w-[72ch] text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         {sourceNote}
         查询只使用下面输入框里的内容：不会自动拼接行程或站点，也不会在切天、选站时自动搜索。
       </p>
 
       {snapshotBroken ? (
-        <p className="wsp-error" role="alert" data-testid="web-sources-snapshot-broken">
+        <p className={ERROR_STYLE} role="alert" data-testid="web-sources-snapshot-broken">
           {SNAPSHOT_BROKEN_TEXT}
         </p>
       ) : null}
 
-      <div className="wsp-form">
-        <div className="wsp-field">
-          <label htmlFor={queryInputId}>网页搜索内容</label>
-          <input
+      <div className="grid gap-4 rounded-[10px] border border-border bg-background p-4">
+        <div className="grid gap-1.5">
+          <label className="text-sm leading-relaxed text-muted-foreground" htmlFor={queryInputId}>
+            网页搜索内容
+          </label>
+          <Input
             id={queryInputId}
+            className="min-h-11 w-full"
             type="text"
             value={rawQuery}
             onChange={(event) => setRawQuery(event.target.value)}
             autoComplete="off"
             spellCheck={false}
           />
-          {localState.kind === 'unavailable' ? (
-            <p className="wsp-hint">{QUERY_UNAVAILABLE_HINT}</p>
-          ) : null}
+          {localState.kind === 'unavailable' ? <p className={HINT}>{QUERY_UNAVAILABLE_HINT}</p> : null}
         </div>
 
         {stopOptions.length > 0 ? (
-          <div className="wsp-field">
-            <label htmlFor={stopSelectId}>站点上下文（可选）</label>
-            <select
+          <div className="grid gap-1.5">
+            <label className="text-sm leading-relaxed text-muted-foreground" htmlFor={stopSelectId}>
+              站点上下文（可选）
+            </label>
+            <Select
               id={stopSelectId}
+              className="min-h-11 w-full"
               value={selectedStopId ?? ''}
               onChange={(event) => setSelectedStopId(event.target.value || null)}
             >
@@ -540,56 +563,57 @@ export default function WebSourcesPanel({
                   {option.name}
                 </option>
               ))}
-            </select>
-            <p className="wsp-hint">站点只作为阅读上下文：不参与查询内容，也不修改地图选中。</p>
+            </Select>
+            <p className={HINT}>站点只作为阅读上下文：不参与查询内容，也不修改地图选中。</p>
           </div>
         ) : (
-          <p className="wsp-hint">本日没有站点记录；这不影响搜索，查询内容以上面输入框为准。</p>
+          <p className={HINT}>本日没有站点记录；这不影响搜索，查询内容以上面输入框为准。</p>
         )}
 
-        <div className="wsp-actions">
-          <button
-            type="button"
-            className="wsp-btn wsp-btn-primary"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
             onClick={() => {
               void handleSearch()
             }}
             disabled={pending || !queryReady}
           >
             搜索网页资料
-          </button>
+          </Button>
           {pending ? (
-            <button type="button" className="wsp-btn" onClick={stopWaiting}>
+            <Button variant="outline" onClick={stopWaiting}>
               停止等待
-            </button>
+            </Button>
           ) : null}
-          <p className="wsp-hint wsp-request-hint">
-            只有点这一次按钮才会请求一次；不会自动查询，也不会自动重试。
-          </p>
+          <p className={HINT}>只有点这一次按钮才会请求一次；不会自动查询，也不会自动重试。</p>
         </div>
       </div>
 
       {pending ? (
-        <p className="wsp-pending" role="status">
+        <p
+          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          role="status"
+        >
           正在等待网页资料服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
         </p>
       ) : null}
 
       {error ? (
-        <p className="wsp-error" role="alert" data-testid="web-sources-error">
+        <p className={ERROR_STYLE} role="alert" data-testid="web-sources-error">
           {error.message}
         </p>
       ) : null}
 
-      {report ? (
-        <ReportBlock report={report} onCollectPoiCard={onCollectPoiCard} />
-      ) : null}
+      {report ? <ReportBlock report={report} onCollectPoiCard={onCollectPoiCard} /> : null}
 
-      <p className="wsp-memory-note">{MEMORY_NOTE}</p>
+      <p className={HINT}>{MEMORY_NOTE}</p>
 
-      <p className="wsp-attribution" data-testid="web-sources-attribution">
+      <p
+        className="m-0 border-t border-t-border pt-3 text-xs leading-[1.7] text-muted-foreground [overflow-wrap:anywhere]"
+        data-testid="web-sources-attribution"
+      >
         数据来源：Tavily Search API（搜索摘要）·{' '}
         <a
+          className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
           href={report?.source.docs_url ?? 'https://docs.tavily.com/api-reference/endpoint/search'}
           target="_blank"
           rel="noopener noreferrer"
@@ -612,21 +636,27 @@ function ReportBlock({
   const checkedAt = formatUtcTimestamp(report.checked_at, '时间未知')
   const fetchedAt = formatUtcTimestamp(report.fetched_at, '未知（未成功获取）')
   return (
-    <div className="wsp-result" data-status={report.status} data-testid="web-sources-result">
-      <div className="wsp-result-head">
-        <h4 className="wsp-result-title">网页搜索摘要</h4>
-        <span className="wsp-tag" data-testid="web-sources-status-tag">
+    <div className={RESULT_BOX} data-status={report.status} data-testid="web-sources-result">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]">
+          网页搜索摘要
+        </h4>
+        <span className={TAG} data-testid="web-sources-status-tag">
           {STATUS_LABEL[report.status]}
         </span>
       </div>
 
-      <p className="wsp-unverified" data-testid="web-sources-unverified" role="note">
+      <p
+        className="m-0 rounded-[6px] border border-dashed border-[color:var(--color-accent)]/50 bg-[color:var(--color-accent-soft)]/40 p-3 text-sm leading-relaxed text-[color:var(--color-accent-ink)] [overflow-wrap:anywhere]"
+        data-testid="web-sources-unverified"
+        role="note"
+      >
         {UNVERIFIED_TEXT}
       </p>
 
       {report.status === 'available' ? (
         <>
-          <ol className="wsp-results">
+          <ol className="m-0 grid list-none gap-3 p-0">
             {report.results.map((result, index) => (
               <ResultItem
                 key={`${result.url}-${index}`}
@@ -636,36 +666,48 @@ function ReportBlock({
             ))}
           </ol>
           {report.notes.length > 0 ? (
-            <p className="wsp-hint" data-testid="web-sources-notes">
+            <p className={HINT} data-testid="web-sources-notes">
               来源处理说明：{report.notes.join('；')}
             </p>
           ) : null}
         </>
       ) : (
-        <p className="wsp-notice" role="status" data-testid="web-sources-empty">
+        <p
+          className="m-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+          role="status"
+          data-testid="web-sources-empty"
+        >
           {businessFailureText(report)}
         </p>
       )}
 
-      <dl className="wsp-facts">
+      <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1">
         <div>
-          <dt>查询发起时间</dt>
-          <dd>{checkedAt}</dd>
+          <dt className="text-xs text-muted-foreground">查询发起时间</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {checkedAt}
+          </dd>
         </div>
         <div>
-          <dt>本次获取时间</dt>
-          <dd>{fetchedAt}</dd>
+          <dt className="text-xs text-muted-foreground">本次获取时间</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {fetchedAt}
+          </dd>
         </div>
         <div>
-          <dt>实发查询</dt>
-          <dd>{report.requested_query ?? '（invalid_request：未发送）'}</dd>
+          <dt className="text-xs text-muted-foreground">实发查询</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {report.requested_query ?? '（invalid_request：未发送）'}
+          </dd>
         </div>
         <div>
-          <dt>上游返回条目</dt>
-          <dd>{report.results_seen} 条</dd>
+          <dt className="text-xs text-muted-foreground">上游返回条目</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {report.results_seen} 条
+          </dd>
         </div>
       </dl>
-      <p className="wsp-hint">{TIME_NOTE}</p>
+      <p className={HINT}>{TIME_NOTE}</p>
     </div>
   )
 }
@@ -678,32 +720,39 @@ function ResultItem({
   onCollectPoiCard?: (prefill: PoiCardPrefill) => void
 }) {
   return (
-    <li className="wsp-result-item">
-      <p className="wsp-result-item-title">
+    <li className="grid min-w-0 gap-1.5 rounded-[6px] border border-border bg-card p-3">
+      <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
         {result.title ?? '（来源未提供标题）'}
-        <span className="wsp-tag wsp-tag-unverified">未核实</span>
+        <span className={TAG_UNVERIFIED}>未核实</span>
       </p>
-      <p className="wsp-result-item-link">
-        <a href={result.url} target="_blank" rel="noopener noreferrer">
+      <p className="m-0 min-w-0 break-all text-sm leading-relaxed [overflow-wrap:anywhere]">
+        <a
+          className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
+          href={result.url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           {result.url}
         </a>
       </p>
       {result.snippet !== null ? (
-        <p className="wsp-result-item-snippet">
+        <p className="m-0 whitespace-pre-wrap text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
           {result.snippet}
           {result.snippet_truncated ? '（摘录超长，已截断显示）' : ''}
         </p>
       ) : (
-        <p className="wsp-result-item-snippet">（来源未提供摘录）</p>
+        <p className="m-0 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+          （来源未提供摘录）
+        </p>
       )}
-      <p className="wsp-result-item-date">
+      <p className="m-0 text-xs leading-relaxed text-muted-foreground">
         网页发布日期：{result.publication_date ?? '未知（来源未提供）'}
       </p>
       {onCollectPoiCard ? (
-        <div className="wsp-result-item-actions">
-          <button
-            type="button"
-            className="wsp-btn"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
             data-testid="web-sources-collect"
             aria-label={`收进资料卡：${result.title ?? result.url}`}
             onClick={() => {
@@ -711,8 +760,8 @@ function ResultItem({
             }}
           >
             收进资料卡
-          </button>
-          <span className="wsp-hint">打开预填表单，确认保存才写入；不采纳零写入。</span>
+          </Button>
+          <span className={HINT}>打开预填表单，确认保存才写入；不采纳零写入。</span>
         </div>
       ) : null}
     </li>

@@ -95,7 +95,7 @@ function replanUrls(fetchMock: ReturnType<typeof vi.fn>): string[] {
 
 /** 后端状态胶囊的可见文本（结论分散在多个 span 里，用容器文本断言更可靠） */
 function backendText(): string {
-  return document.querySelector('.backend-state')?.textContent ?? ''
+  return document.querySelector('[data-testid="backend-state"]')?.textContent ?? ''
 }
 
 async function openAiPanel(user: ReturnType<typeof userEvent.setup>, dayTab?: RegExp) {

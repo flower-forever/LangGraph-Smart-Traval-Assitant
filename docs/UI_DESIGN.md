@@ -335,3 +335,40 @@
 - 浏览器证据：dev-stub + Vite dev（**本波起截图基建显式挂 `@tailwindcss/vite` 插件**——W2 脚本未挂插件时靠旧 CSS 残留渲染，W3a 旧 CSS 已删必须真实走 Tailwind）+ 本机 Chromium，全程 loopback 离线、图片请求全 mock；22 张截图（保存行程→列表→删除撤销恢复 / 新建工作区→保存 / 版本库→存两版→对比 / 清单模板勾选→勾选完成 / 候选池手工新增→加入草稿预览→确认（父级开草稿→放弃草稿确认流）/ 费用添加→计算→预算比较 / 会话恢复启用 / 1280 主线 / 375 窄屏）。桌面与窄屏均无横向滚动；Leaflet 地图容器正常（地图内部样式未动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w3a-shots\`（w3a-01…w3a-21b，22 张）。
 
 **遗留**：W3a 面板曾引用的 app.css 全局类（`.btn` / `.btn-primary` / `.btn-ghost` / `.field-label` / `.field-help` / `.field-error`）仍被 App.tsx shell 与 W3b 面板使用，W4 退役；候选池「有资料卡」徽标从 span 改为小号 Button（可点击入口，语义更准确，测试走 aria-label 不受影响）。
+
+### W3b · 其余侧栏与状态（2026-11-08 完成，待 PM 验收）
+
+**迁移范围**（§5 W3b 名单全量 10 项）：`AnchorsPanel`、`ConstraintsPanel`、`WebSourcesPanel`、`DayPoiSourcesPanel`、`MapRefreshPanel`、`OfflineTripPanel`、`TripMarkdownExport`、`TripTransferPanel`、`IcsExportPanel`、`backendStatus`（App.tsx header 胶囊 + hint/amap 提示行 + PlanForm `.plan-unavailable` 块）。全部迁到 shadcn 组件 + Tailwind 工具类 + theme.css 语义变量；业务逻辑、数据流、文案红线零变化（无「已预订/已确认/已出票」，未知显示「未知」，未核实标注保留）。
+
+**删除的旧 CSS**（整文件退役，import 一并清理）：
+
+| 文件 | 状态 |
+|---|---|
+| `src/components/AnchorsPanel.css`（355 行，全部 `.anchors-*`） | 已删除 |
+| `src/components/constraintsPanel.css`（399 行，全部 `.cfp-*`） | 已删除 |
+| `src/components/webSourcesPanel.css`（404 行，全部 `.wsp-*`） | 已删除 |
+| `src/components/dayPoiSourcesPanel.css`（425 行，全部 `.dps-*`，含容器接线类 `.poi-sources-slot` → App.tsx 容器改 `mb-6`） | 已删除 |
+| `src/components/mapRefreshPanel.css`（402 行，全部 `.mrp-*`） | 已删除 |
+| `src/components/OfflineTripPanel.css`（155 行，全部 `.offline-trip-*`） | 已删除 |
+| `src/components/tripMarkdownExport.css`（156 行，全部 `.trip-md-*`） | 已删除 |
+| `src/components/tripTransfer.css`（287 行，全部 `.trip-transfer-*`） | 已删除 |
+| `src/components/backendStatus.css`（97 行，`.backend-status/.backend-state/.dot/.backend-hint` 等） | 已删除 |
+
+`app.css` 中 IcsExportPanel 专用的 `.ics-*` 全节（L1096–1316，含 640px 媒体查询）已整节删除；`.backend-state` 基础节已删除。W3a 登记保留项 `.btn-save` 本波处理：TripTransferPanel「保存到本地」按钮改 shadcn Button（variant secondary），类名消失（app.css 本无 `.btn-save` 规则本体，仅注释登记）。`.btn*/.field*/.req` 仍被 PlanForm 与 App.tsx shell 使用，留 W4 退役（登记不变）；`.saved-offline` / `.trip-restored-note`（App.tsx）留 W4。
+
+**组件用法**（零新依赖，复用既有 ui/ 组件）：Button（default/secondary/outline/ghost）、Badge（default/secondary/outline/warning/success 状态 tag）、Alert（warning/destructive，role 显式给）、Input / Select / Textarea（含文件上传 input 的 `file:` 工具类）、Checkbox（锚点勾选）、Field/FieldLabel/FieldDescription（约束与 ICS 表单）。地图刷新的步行/驾车仍为原生 radio（配 accent 色）；约束 severity 徽标、issue 左边框、选中项高亮改 Tailwind 类（原 `.cfp-issue-h/-u` className 字符串函数改造为返回工具类）；后端胶囊圆点三态（正常 ok 绿 / 降级 warn / 未知 line-strong 边框）改 Tailwind，原 `.backend-state` class 改为 `data-testid="backend-state"`（测试选择器同步等价替换）。
+
+**测试选择器迁移**（行为断言零放宽）：`AppDayReplanIntegration.test.tsx` 唯一 1 处 `document.querySelector('.backend-state')` → `[data-testid="backend-state"]`。其余面板测试全走可访问名 / role / data-testid，未受影响。
+
+**A 清单修掉项**：A2 备份/离线导出重复提示合并——OfflineTripPanel privacy 列表 4 条并为 3 条（原第 4 条「页面不包含候选库、版本库…」与前 3 条常量中数据范围句合并；lib 常量文本未动）。TripTransferPanel 本波仅做样式迁移，privacy 文案与 li 结构零改动。A4 嵌套边框收敛：结果块/预览块/对照表统一一层 border + 凹面底（bg-background 内嵌于 bg-card）。A6 按钮层级：主操作 default、次操作 secondary/outline、放弃/取消 ghost。
+
+**瞬态 UI 说明（约束应用 ticket）**：`ConstraintsPanel` 的 apply notice / ticket 生成后，父级 `App.tsx` 因 workspaceRevision 推进而以 `key={constraints:${workspaceId}:${workspaceRevision}}` 整体重挂载面板——notice 与 ticket 在同一 commit 内生成又清零，属零帧瞬态，浏览器截图无法稳定捕获。功能正常（测试走直接渲染路径已覆盖 ticket 断言）；截图以「应用约束改动」点击后 meta 行「工作区 revision 2」+ 面板重挂载为已应用证据，未改业务代码迁就截图。
+
+**验证证据**（2026-11-08，Node v22.21.1）：
+
+- `vitest` 全量（排除禁触探针 `--exclude '**/_indep-probe-0400.test.js'`）：106 文件 / 2292 用例全部通过，0 失败 0 跳过。flake 白名单成员（AppWorkspaceIntegration / AppAssistantDialogIntegration / AppDayReplanTailIntegration / CandidatePoolPanel 压测 / DayReplanConstraintsIntegration / TripDraftWalkingDistanceEditor / WebSourcesPanel）本波全绿，无需启用白名单。
+- `typecheck`：`tsc -b --force` 通过（check-source-paths OK，198 文件）。
+- `build`：`vite build` 通过（dist CSS ≈ 71.79 kB / JS ≈ 1320.61 kB，较 W3a 的 115.8 kB 再降 ≈ 44 kB，因九个面板 CSS 退役）。
+- 浏览器证据：dev-stub + Vite dev（挂 `@tailwindcss/vite`，复用 W3a 修复版脚本改 W3b 场景）+ 本机 Chromium，全程 loopback 离线、图片请求全 mock；22 张截图（后端状态三态含重新检测 → 行程备份导出 → Markdown 预览 → ICS 展开+下载 → 离线页预览+下载 → 锚点展开→编辑器（填名+起点勾选）→预览提案 → 约束展开→保存→应用（revision 证据）→ 网页搜索表单→结果 → POI 查询展开→候选 → 地图刷新选步行→预览 → 375 窄屏 → 1280 收尾）。桌面与窄屏均无横向滚动；Leaflet 地图容器正常（地图内部样式零改动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w3b-shots\`（w3b-01…w3b-23，22 张）。
+
+**遗留**：`.btn*/.field*/.req`（PlanForm + App shell）、`.saved-offline` / `.saved-offline-note` / `.trip-restored-note`、`.plan-cancel-status/.plan-cancel-note`、`.mode-option/.mode-toggle`、`.edit-entry` 入口卡（本波面板的「查资料/查网页资料」入口按钮仍在 App.tsx entry 卡内）、`.wsh-*` 死类（App.tsx 约 L3326-3329 仍引用 `wsh-tools` / `wsh-tools-head` / `wsh-eyebrow`，样式本体已随 W3a 删除 WorkspaceHub.css 而消失，W4 改 Tailwind 等价或删除死类名）——全部 W4 退役。约束面板「查看约束 X」选中项高亮与 ICS 自定义时区哨兵流程等交互行为均保持原样。

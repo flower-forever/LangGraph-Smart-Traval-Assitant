@@ -36,7 +36,8 @@ import {
 } from '../lib/poiSources'
 import { fetchPoiSourcesNearby, type PoiSourcesAdapter } from '../lib/poiSourcesApi'
 import type { PoiCardPrefill } from '../lib/poiCardPrefill'
-import './dayPoiSourcesPanel.css'
+import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
 
 export interface DayPoiSourcesPanelProps {
   /** 当前页面正在显示的行程；面板只读，不修改。 */
@@ -197,6 +198,17 @@ export function collectPrefillFromPoiCandidate(
       '预填自 OpenStreetMap 公开标签，来自协作地图，未核实；标签原文不等于实时营业状态或票价。请核对后保存，不采纳则零写入。',
   }
 }
+
+/** W3b：面板级通用类名，从 dayPoiSourcesPanel.css 迁来（shadcn + Tailwind）。 */
+const PANEL = 'grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4'
+const HINT = 'm-0 text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const TAG =
+  'inline-flex shrink-0 items-center rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[color:var(--color-accent-ink)]'
+const TAG_UNCONFIRMED =
+  'inline-flex shrink-0 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground'
+const NOTICE =
+  'm-0 border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]'
+const RESULT_BOX = 'grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4'
 
 export default function DayPoiSourcesPanel({
   trip,
@@ -395,17 +407,21 @@ export default function DayPoiSourcesPanel({
 
   if (!day) {
     return (
-      <section className="dps" aria-label="本日公开资料候选">
-        <div className="dps-head">
-          <div className="dps-head-main">
-            <p className="dps-eyebrow">独立资料查询</p>
-            <h3 className="dps-title">附近公开资料</h3>
+      <section className={PANEL} aria-label="本日公开资料候选">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_260px]">
+            <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+              独立资料查询
+            </p>
+            <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
+              附近公开资料
+            </h3>
           </div>
-          <button type="button" className="dps-btn" onClick={handleClose}>
+          <Button variant="outline" onClick={handleClose}>
             收起
-          </button>
+          </Button>
         </div>
-        <p className="dps-notice" role="note">
+        <p className={NOTICE} role="note">
           当前行程里没有可显示的这一天，无法查询附近资料。行程内容保持不变。
         </p>
       </section>
@@ -420,55 +436,58 @@ export default function DayPoiSourcesPanel({
 
   return (
     <section
-      className="dps"
+      className={PANEL}
       aria-label="本日公开资料候选"
       aria-busy={pending || undefined}
       data-testid="poi-sources-panel"
     >
-      <div className="dps-head">
-        <div className="dps-head-main">
-          <p className="dps-eyebrow">独立资料查询 · 不写行程</p>
-          <h3 className="dps-title">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_260px]">
+          <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-ink)]">
+            独立资料查询 · 不写行程
+          </p>
+          <h3 className="m-0 mb-2 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">
             第 {day.day} 天{day.date ? ` · ${day.date}` : ''} 附近公开资料
           </h3>
-          <p className="dps-meta-line">
+          <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {trip.title}
             {day.title ? ` · ${day.title}` : ''}
             {pending ? (
-              <span className="dps-tag" role="status">
+              <span className={TAG} role="status">
                 正在查询…
               </span>
             ) : null}
           </p>
         </div>
-        <button type="button" className="dps-btn" onClick={handleClose}>
+        <Button variant="outline" onClick={handleClose}>
           收起
-        </button>
+        </Button>
       </div>
 
-      <p className="dps-note">
+      <p className="m-0 max-w-[72ch] text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         {SCOPE_NOTE}
         {fromFileBadge ? '当前行程来自导入文件：坐标来自文件里的记录。' : null}
       </p>
 
       {stations.length === 0 ? (
         <>
-          <p className="dps-empty" role="note">
+          <p className={NOTICE} role="note">
             本日没有带 WGS84 坐标的站点记录，无法查询附近资料。这里不会改用其它天、浏览器位置或按城市推测的坐标。
           </p>
-          <div className="dps-actions">
-            <button type="button" className="dps-btn dps-btn-primary" disabled>
-              查询附近资料
-            </button>
-            <p className="dps-hint">本日没有可用坐标，查询已禁用。</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button disabled>查询附近资料</Button>
+            <p className={HINT}>本日没有可用坐标，查询已禁用。</p>
           </div>
         </>
       ) : (
-        <div className="dps-form">
-          <div className="dps-field">
-            <label htmlFor={stationSelectId}>按哪条记录坐标查询</label>
-            <select
+        <div className="grid gap-4 rounded-[10px] border border-border bg-background p-4">
+          <div className="grid gap-1.5">
+            <label className="text-sm leading-relaxed text-muted-foreground" htmlFor={stationSelectId}>
+              按哪条记录坐标查询
+            </label>
+            <Select
               id={stationSelectId}
+              className="min-h-11 w-full"
               value={station?.stopId ?? ''}
               onChange={(event) => setStationId(event.target.value)}
               disabled={pending}
@@ -478,46 +497,48 @@ export default function DayPoiSourcesPanel({
                   {option.name} · {formatPoiCoordinate(option.lat)}, {formatPoiCoordinate(option.lon)}
                 </option>
               ))}
-            </select>
+            </Select>
             {station ? (
-              <p className="dps-hint">
+              <p className={HINT}>
                 本次将按「{station.name}」的记录坐标查询：纬度 {formatPoiCoordinate(station.lat)}，经度{' '}
                 {formatPoiCoordinate(station.lon)}（WGS84）。
               </p>
             ) : null}
           </div>
 
-          <div className="dps-actions">
-            <button
-              type="button"
-              className="dps-btn dps-btn-primary"
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
               onClick={() => {
                 void handleQuery()
               }}
               disabled={pending}
             >
               查询附近资料
-            </button>
+            </Button>
             {pending ? (
-              <button type="button" className="dps-btn" onClick={() => stopWaiting(true)}>
+              <Button variant="outline" onClick={() => stopWaiting(true)}>
                 停止等待
-              </button>
+              </Button>
             ) : null}
-            <p className="dps-hint dps-request-hint">
-              只有点这一次按钮才会请求一次附近资料；不会自动查询，也不会自动重试。
-            </p>
+            <p className={HINT}>只有点这一次按钮才会请求一次附近资料；不会自动查询，也不会自动重试。</p>
           </div>
         </div>
       )}
 
       {pending ? (
-        <p className="dps-pending" role="status">
+        <p
+          className="m-0 border-l-[3px] border-l-[color:var(--color-accent)] pl-3 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          role="status"
+        >
           正在等待公开资料服务响应。可以停止等待：这只结束本页的等待，不保证后端或上游停止处理。
         </p>
       ) : null}
 
       {error ? (
-        <p className="dps-error" role="alert">
+        <p
+          className="m-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-3 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]"
+          role="alert"
+        >
           {error.message}
         </p>
       ) : null}
@@ -531,7 +552,7 @@ export default function DayPoiSourcesPanel({
         />
       ) : null}
 
-      <p className="dps-memory-note">{MEMORY_NOTE}</p>
+      <p className={HINT}>{MEMORY_NOTE}</p>
 
       <Attribution report={report} />
     </section>
@@ -550,19 +571,19 @@ function ReportBlock({
   onCollectPoiCard?: (prefill: PoiCardPrefill) => void
 }) {
   return (
-    <div className="dps-result" data-status={report.status} data-testid="poi-sources-result">
-      <div className="dps-result-head">
-        <h4 className="dps-result-title">
+    <div className={RESULT_BOX} data-status={report.status} data-testid="poi-sources-result">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="m-0 font-display text-md font-bold leading-normal [overflow-wrap:anywhere]">
           {report.status === 'available' ? '附近公开资料候选' : '公开资料结果'}
           {stationName ? ` · 按「${stationName}」记录坐标` : ''}
         </h4>
-        <span className="dps-tag" data-testid="poi-sources-status-tag">
+        <span className={TAG} data-testid="poi-sources-status-tag">
           {poiStatusText(report.status)}
         </span>
       </div>
 
       {stale ? (
-        <p className="dps-notice" role="status" data-testid="poi-sources-stale">
+        <p className={NOTICE} role="status" data-testid="poi-sources-stale">
           {STALE_NOTICE}
         </p>
       ) : null}
@@ -570,11 +591,11 @@ function ReportBlock({
       {report.status === 'available' ? (
         <>
           {report.cached ? (
-            <p className="dps-hint" data-testid="poi-sources-cached">
+            <p className={HINT} data-testid="poi-sources-cached">
               这份结果来自服务端的近期缓存，下面的获取时间是缓存里保存的原时间，不是这次点击的时间。
             </p>
           ) : null}
-          <ol className="dps-candidates">
+          <ol className="m-0 grid list-none gap-3 p-0">
             {report.candidates.map((candidate) => (
               <CandidateItem
                 key={`${candidate.element_type}-${candidate.element_id}`}
@@ -584,50 +605,58 @@ function ReportBlock({
             ))}
           </ol>
           {report.notes.length > 0 ? (
-            <p className="dps-hint" data-testid="poi-sources-notes">
+            <p className={HINT} data-testid="poi-sources-notes">
               来源处理说明：{report.notes.join('；')}
             </p>
           ) : null}
         </>
       ) : report.status === 'no_candidates' ? (
-        <p className="dps-notice" role="status">
+        <p className={NOTICE} role="status">
           {NO_CANDIDATES_TEXT}
         </p>
       ) : (
-        <p className="dps-notice" role="status">
+        <p className={NOTICE} role="status">
           {poiStatusText(report.status)}：{STATUS_EXPLAIN[report.status]}
         </p>
       )}
 
-      <dl className="dps-facts">
+      <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1">
         <div>
-          <dt>数据来源</dt>
-          <dd>
+          <dt className="text-xs text-muted-foreground">数据来源</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             {report.source.provider}（{report.source.data_source}）
           </dd>
         </div>
         <div>
-          <dt>查询发起时间</dt>
-          <dd>{formatPoiTimestamp(report.checked_at)}</dd>
+          <dt className="text-xs text-muted-foreground">查询发起时间</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {formatPoiTimestamp(report.checked_at)}
+          </dd>
         </div>
         <div>
-          <dt>本次获取时间</dt>
-          <dd>{formatPoiTimestamp(report.fetched_at)}</dd>
+          <dt className="text-xs text-muted-foreground">本次获取时间</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {formatPoiTimestamp(report.fetched_at)}
+          </dd>
         </div>
         <div>
-          <dt>请求坐标</dt>
-          <dd>
+          <dt className="text-xs text-muted-foreground">请求坐标</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             {formatPoiCoordinate(report.requested?.lat ?? Number.NaN)},{' '}
             {formatPoiCoordinate(report.requested?.lon ?? Number.NaN)}（WGS84，按行程记录查询，未核验）
           </dd>
         </div>
         <div>
-          <dt>查询半径</dt>
-          <dd>{formatPoiDistance(report.radius_m)}</dd>
+          <dt className="text-xs text-muted-foreground">查询半径</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {formatPoiDistance(report.radius_m)}
+          </dd>
         </div>
         <div>
-          <dt>候选身份</dt>
-          <dd>全部为公开资料候选，身份未确认（unconfirmed）</dd>
+          <dt className="text-xs text-muted-foreground">候选身份</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            全部为公开资料候选，身份未确认（unconfirmed）
+          </dd>
         </div>
       </dl>
     </div>
@@ -650,56 +679,67 @@ function CandidateItem({
   onCollectPoiCard?: (prefill: PoiCardPrefill) => void
 }) {
   return (
-    <li className="dps-candidate">
-      <p className="dps-candidate-name">
+    <li className="grid min-w-0 gap-1.5 rounded-[6px] border border-border bg-card p-3">
+      <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
         {candidate.name ?? '（来源未提供名称）'}
-        <span className="dps-candidate-distance">距离约 {formatPoiDistance(candidate.distance_m)}</span>
+        <span className="text-xs font-normal text-muted-foreground">
+          距离约 {formatPoiDistance(candidate.distance_m)}
+        </span>
       </p>
-      <p className="dps-candidate-meta">
+      <p className="m-0 flex flex-wrap items-center gap-2 text-sm leading-relaxed">
         <a
+          className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
           href={osmObjectUrl(candidate.element_type, candidate.element_id)}
           target="_blank"
           rel="noopener noreferrer"
         >
           OSM 对象（{candidate.element_type}）
         </a>
-        <span className="dps-tag dps-tag-unconfirmed">身份未确认</span>
+        <span className={TAG_UNCONFIRMED}>身份未确认</span>
       </p>
-      <dl className="dps-candidate-tags">
+      <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-t-border pt-2 max-md:grid-cols-1">
         <div>
-          <dt>opening_hours</dt>
-          <dd>{tagFieldText(candidate.opening_hours)}</dd>
+          <dt className="text-xs text-muted-foreground">opening_hours</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {tagFieldText(candidate.opening_hours)}
+          </dd>
         </div>
         <div>
-          <dt>fee</dt>
-          <dd>{tagFieldText(candidate.fee)}</dd>
+          <dt className="text-xs text-muted-foreground">fee</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {tagFieldText(candidate.fee)}
+          </dd>
         </div>
         <div>
-          <dt>charge</dt>
-          <dd>{tagFieldText(candidate.charge)}</dd>
+          <dt className="text-xs text-muted-foreground">charge</dt>
+          <dd className="m-0 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {tagFieldText(candidate.charge)}
+          </dd>
         </div>
         <div>
-          <dt>来源获取时间</dt>
-          <dd>{formatPoiTimestamp(candidate.retrieved_at)}</dd>
+          <dt className="text-xs text-muted-foreground">来源获取时间</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
+            {formatPoiTimestamp(candidate.retrieved_at)}
+          </dd>
         </div>
         <div>
-          <dt>对象编辑时间</dt>
-          <dd>
+          <dt className="text-xs text-muted-foreground">对象编辑时间</dt>
+          <dd className="m-0 font-mono text-sm leading-relaxed tabular-nums text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]">
             {candidate.source_updated_at
               ? formatPoiTimestamp(candidate.source_updated_at)
               : '未知（来源未提供）'}
           </dd>
         </div>
       </dl>
-      <p className="dps-hint">
+      <p className={HINT}>
         标签值是 OSM 贡献者写的原文，只说明地图上记录了什么，不等于实时营业状态、
         不证明免费或包含票价；原文超过来源长度上限时显示为未知。
       </p>
       {onCollectPoiCard ? (
-        <div className="dps-candidate-actions">
-          <button
-            type="button"
-            className="dps-btn"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
             data-testid="poi-sources-collect"
             aria-label={`收进资料卡：${candidate.name ?? osmObjectUrl(candidate.element_type, candidate.element_id)}`}
             onClick={() => {
@@ -707,8 +747,8 @@ function CandidateItem({
             }}
           >
             收进资料卡
-          </button>
-          <span className="dps-hint">打开预填表单（标「来自协作地图，未核实」），确认保存才写入；不采纳零写入。</span>
+          </Button>
+          <span className={HINT}>打开预填表单（标「来自协作地图，未核实」），确认保存才写入；不采纳零写入。</span>
         </div>
       ) : null}
     </li>
@@ -717,9 +757,13 @@ function CandidateItem({
 
 function Attribution({ report }: { report: PoiSourceReport | null }) {
   return (
-    <p className="dps-attribution" data-testid="poi-sources-attribution">
+    <p
+      className="m-0 border-t border-t-border pt-3 text-xs leading-[1.7] text-muted-foreground [overflow-wrap:anywhere]"
+      data-testid="poi-sources-attribution"
+    >
       数据 ©{' '}
       <a
+        className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
         href={report?.source.attribution_url ?? 'https://www.openstreetmap.org/copyright'}
         target="_blank"
         rel="noopener noreferrer"
@@ -728,6 +772,7 @@ function Attribution({ report }: { report: PoiSourceReport | null }) {
       </a>
       {' · '}
       <a
+        className="text-[color:var(--color-accent-ink)] underline-offset-2 [text-decoration-thickness:1px]"
         href={report?.source.docs_url ?? 'https://wiki.openstreetmap.org/wiki/Overpass_API'}
         target="_blank"
         rel="noopener noreferrer"

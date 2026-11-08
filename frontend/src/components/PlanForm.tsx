@@ -1,5 +1,4 @@
 import { useId, useState } from 'react'
-import './backendStatus.css'
 import type { PlanRequest, TravelMode } from '../lib/api'
 
 export interface PlanFormProps {
@@ -120,17 +119,24 @@ export default function PlanForm({ onSubmit, loading, onCancel, plannerUnavailab
       <p className="plan-hint">填写基本信息，由后端智能体生成逐日路线、中文讲解与地图路线。</p>
 
       {plannerUnavailable && (
-        <div className="plan-unavailable" id={plannerNoteId} role="status" aria-live="polite">
-          <p className="plan-unavailable-title">后端在线，规划暂不可用。</p>
-          <p>
-            后端健康检查明确返回 <code>planner_ready=false</code>，说明结构化规划组件还没就绪。
+        <div
+          className="grid gap-1.5 rounded-[6px] border-l-[3px] border-l-[color:var(--color-warn-ink)] bg-[color:var(--color-warn-bg)] p-3 text-sm leading-relaxed text-[color:var(--color-ink-2)] [overflow-wrap:anywhere]"
+          id={plannerNoteId}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="m-0 text-sm font-semibold text-[color:var(--color-warn-ink)]">
+            后端在线，规划暂不可用。
+          </p>
+          <p className="m-0">
+            后端健康检查明确返回 <code className="rounded-[4px] bg-secondary px-1.5 py-0.5 font-mono text-xs">planner_ready=false</code>，说明结构化规划组件还没就绪。
             这时提交也会失败，所以提交按钮先禁用了；参数仍可以接着填。
           </p>
-          <p>
+          <p className="m-0">
             具体原因前端看不到，可能包括后端没有配置模型访问凭据（例如 DASHSCOPE_API_KEY），
             或规划依赖初始化失败；实际以服务端启动日志为准。处理完后点页面上方的「重新检测」，不用刷新页面。
           </p>
-          <p>示例行程和这个浏览器里保存的副本不受影响，仍可查看。</p>
+          <p className="m-0">示例行程和这个浏览器里保存的副本不受影响，仍可查看。</p>
         </div>
       )}
 
