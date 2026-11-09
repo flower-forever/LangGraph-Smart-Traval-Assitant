@@ -75,9 +75,33 @@ describe('ItineraryView · 视图切换', () => {
   })
 })
 
-describe('ItineraryView · 选中站点跨视图保留', () => {
-  it('切换视图后 activeStopId 高亮仍在，且切换本身不触发 onSelectStop', () => {
+describe('ItineraryView · 分享入口', () => {
+  it('未传 onOpenShare 时不渲染「生成分享卡片」', () => {
+    render(<ItineraryView day={day} activeStopId={null} onSelectStop={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: '生成分享卡片' })).toBeNull()
+  })
+
+  it('传入 onOpenShare 时渲染入口并只在点击时回调', () => {
+    const onOpenShare = vi.fn()
     const onSelectStop = vi.fn()
+    render(
+      <ItineraryView
+        day={day}
+        activeStopId={null}
+        onSelectStop={onSelectStop}
+        onOpenShare={onOpenShare}
+      />,
+    )
+
+    expect(onOpenShare).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '生成分享卡片' }))
+    expect(onOpenShare).toHaveBeenCalledTimes(1)
+    expect(onSelectStop).not.toHaveBeenCalled()
+  })
+})
+
+describe('ItineraryView · 选中站点跨视图保留', () => {
+  it('切换视图后 activeStopId 高亮仍在，且切换本身不触发 onSelectStop', () => {    const onSelectStop = vi.fn()
     render(<ItineraryView day={day} activeStopId="s1" onSelectStop={onSelectStop} />)
 
     const listRows = screen.getAllByTestId('stop-row')

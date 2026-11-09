@@ -3,6 +3,7 @@ import './app.css'
 import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
+import ShareCardPanel from './components/ShareCardPanel'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
@@ -621,6 +622,8 @@ export default function App() {
   draftModeRef.current = draftMode
   /** 费用估算面板是否展开；默认收起，收起不清草稿 */
   const [budgetOpen, setBudgetOpen] = useState(false)
+  /** 分享卡片面板是否展开（四期 S4）；只读预览，不写任何存储 */
+  const [shareOpen, setShareOpen] = useState(false)
   /** 显式收起费用面板的标记：置位后焦点回「费用估算」入口按钮；隐式隐藏不置位不抢焦点 */
   const budgetExplicitCloseRef = useRef(false)
   const budgetEntryRef = useRef<HTMLDivElement | null>(null)
@@ -4057,6 +4060,7 @@ export default function App() {
                     activeStopId={activeStopId}
                     onSelectStop={handleSelectStop}
                     poiCards={poiCardsRecord}
+                    onOpenShare={() => setShareOpen(true)}
                   />
                 )}
               </div>
@@ -4071,6 +4075,13 @@ export default function App() {
                 )}
               </div>
             </div>
+            {shareOpen && trip && currentDay && (
+              <ShareCardPanel
+                trip={trip}
+                initialDay={activeDay}
+                onClose={() => setShareOpen(false)}
+              />
+            )}
             {editingDraft && (
               <p className={DRAFT_PREVIEW_NOTE} data-testid="draft-preview-note" role="note">
                 上面的行程和地图显示的是内存草稿的预览，还没有应用，也没有保存；
