@@ -4206,6 +4206,8 @@ export default function App() {
               <ShareCardPanel
                 trip={trip}
                 initialDay={activeDay}
+                draftTrip={draft ? { ...draft.base, id: draft.forkTripId, days: [...draft.days] } : null}
+                poiCards={poiCardsRecord}
                 onClose={() => setShareOpen(false)}
               />
             )}

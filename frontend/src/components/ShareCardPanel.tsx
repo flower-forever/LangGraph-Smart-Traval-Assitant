@@ -1,10 +1,13 @@
 /**
- * 行程分享卡片预览与下载面板（四期 S4）。
+ * 行程分享卡片预览与下载面板（四期 S4；五期 S5 扩展）。
  *
  * 边界：
- * - 打开面板、切换日期、切换风格都只重算内存里的 SVG 预览：不发请求、
- *   不写 localStorage / sessionStorage、不改 Trip、不自动下载。
- * - 只有显式点「下载 SVG」「下载 PNG」才创建文件；PNG 在本地 canvas 光栅化。
+ * - 打开面板、切换日期 / 风格 / 来源、勾选小地图都只重算内存里的预览：
+ *   不发请求、不写 localStorage / sessionStorage、不改 Trip、不自动下载。
+ * - 只有显式点「下载 SVG」「下载 PNG」才创建图片文件；PNG 在本地 canvas 光栅化。
+ * - 离线路书必须先预览，再点「确认下载 .html」才创建文件；取消零下载。
+ * - 草稿来源只在父级传入 draftTrip 时出现；没有草稿不制造选项，默认永远
+ *   是「当前已应用行程」。
  * - 关闭 / Esc 会作废尚未完成的 PNG 生成，关闭后不会再触发下载。
  * - 预览卡片颜色固定在 lib/shareCard.ts 的六风格 token 中，不随 App 深浅主题变化；
  *   面板外壳使用 App 语义变量，深浅主题下均可读。
@@ -28,18 +31,45 @@ import {
   downloadSvgCard,
   shareCardFileName,
 } from '../lib/shareCardFile'
+import {
+  appendMiniMapToShareCard,
+  buildShareMiniMap,
+  type ShareMiniMap,
+} from '../lib/shareMiniMap'
+import {
+  MAX_ROADBOOK_HTML_BYTES,
+  buildOfflineRoadbook,
+  downloadRoadbookHtml,
+} from '../lib/offlineRoadbook'
+import type { PoiCardsRecordV1 } from '../lib/poiCards'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 
 export interface ShareCardPanelProps {
+  /** 当前已应用（保存中）的行程。 */
   trip: Trip
   initialDay: number
   onClose: () => void
+  /**
+   * 未应用草稿的行程预览；null / 缺省 = 没有草稿，不显示来源切换。
+   * 由父级显式传入，组件不自行从 store 推断草稿状态。
+   */
+  draftTrip?: Trip | null
+  /** 资料卡库；离线路书的三态来源徽章复用 projectStopFacts。缺省 = 全部未知。 */
+  poiCards?: PoiCardsRecordV1 | null
+  /** 当前时刻注入（epoch ms）；离线路书记录时效用，缺省 Date.now。 */
+  now?: () => number
   /** 测试注入 PNG 光栅化；默认走原生 canvas。 */
   rasterize?: (svg: string) => Promise<RasterizeOutcome>
 }
 
 type PngState = 'idle' | 'working' | 'unsupported' | 'decode' | 'encode'
+type ShareSource = 'applied' | 'draft'
+
+interface RoadbookPreview {
+  html: string
+  fileName: string
+}
 
 const PNG_ERROR_TEXT: Record<Exclude<PngState, 'idle' | 'working'>, string> = {
   unsupported: '当前浏览器不支持在本地生成 PNG，请改下载 SVG。',
@@ -50,10 +80,17 @@ const PNG_ERROR_TEXT: Record<Exclude<PngState, 'idle' | 'working'>, string> = {
 const FIELD_LABEL = 'text-sm leading-relaxed text-muted-foreground'
 const PANEL_NOTE = 'm-0 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]'
 
+function mebibytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`
+}
+
 export default function ShareCardPanel({
   trip,
   initialDay,
   onClose,
+  draftTrip = null,
+  poiCards = null,
+  now = () => Date.now(),
   rasterize = (svg) => rasterizeShareCardPng(svg),
 }: ShareCardPanelProps) {
   const initialExists = trip.days.some((day) => day.day === initialDay)
@@ -61,27 +98,50 @@ export default function ShareCardPanel({
     initialExists ? initialDay : (trip.days[0]?.day ?? initialDay),
   )
   const [style, setStyle] = useState<ShareCardStyle>(DEFAULT_SHARE_CARD_STYLE)
+  const [source, setSource] = useState<ShareSource>('applied')
+  const [includeMiniMap, setIncludeMiniMap] = useState(false)
   const [pngState, setPngState] = useState<PngState>('idle')
   const [svgFailed, setSvgFailed] = useState(false)
+  const [roadbookPreview, setRoadbookPreview] = useState<RoadbookPreview | null>(null)
+  const [roadbookError, setRoadbookError] = useState<string | null>(null)
 
   const titleId = useId()
   const dayId = useId()
   const styleId = useId()
+  const sourceName = useId()
   const pngErrorId = useId()
   const pngSeqRef = useRef(0)
 
+  // 草稿只有真实存在且带日期时才提供选项；缺省永远显示已应用行程。
+  const hasDraft = draftTrip !== null && draftTrip.days.length > 0
+  const effectiveSource: ShareSource = source === 'draft' && hasDraft ? 'draft' : 'applied'
+  const activeTrip = effectiveSource === 'draft' && draftTrip !== null ? draftTrip : trip
+
   const selectedDay = useMemo(
-    () => trip.days.find((day) => day.day === dayNumber) ?? trip.days[0],
-    [trip.days, dayNumber],
+    () => activeTrip.days.find((day) => day.day === dayNumber) ?? activeTrip.days[0],
+    [activeTrip.days, dayNumber],
   )
   const data = useMemo(
-    () => (selectedDay ? buildShareCardData(trip, selectedDay) : null),
-    [trip, selectedDay],
+    () => (selectedDay ? buildShareCardData(activeTrip, selectedDay) : null),
+    [activeTrip, selectedDay],
   )
-  const svg = useMemo(
+  const miniMap = useMemo<ShareMiniMap>(
+    () =>
+      selectedDay
+        ? buildShareMiniMap(selectedDay)
+        : { svg: null, unknownStops: [], routeTypes: [] },
+    [selectedDay],
+  )
+  const cardSvg = useMemo(
     () => (data ? renderShareCard(style, data) : ''),
     [style, data],
   )
+  const svg = useMemo(() => {
+    if (!includeMiniMap || miniMap.svg === null || cardSvg === '') return cardSvg
+    return appendMiniMapToShareCard(cardSvg, miniMap, {
+      label: data ? `${data.tripTitle} · 第 ${data.dayNumber} 天 · 路线小地图` : '路线小地图',
+    })
+  }, [cardSvg, data, includeMiniMap, miniMap])
 
   const handleClose = useCallback(() => {
     pngSeqRef.current += 1
@@ -115,9 +175,32 @@ export default function ShareCardPanel({
   }
 
   const handleDayChange = (next: number) => {
-    // 同上：换天后旧图不再对应当前预览
+    // 同上：换天后旧图不再对应当前预览；路书预览也必须重算
     pngSeqRef.current += 1
     setDayNumber(next)
+    setPngState('idle')
+    setSvgFailed(false)
+    setRoadbookPreview(null)
+    setRoadbookError(null)
+  }
+
+  const handleSourceChange = (next: ShareSource) => {
+    if (next === 'draft' && !hasDraft) return
+    pngSeqRef.current += 1
+    setSource(next)
+    setPngState('idle')
+    setSvgFailed(false)
+    setRoadbookPreview(null)
+    setRoadbookError(null)
+    const days = next === 'draft' && draftTrip !== null ? draftTrip.days : trip.days
+    if (days.length > 0 && !days.some((day) => day.day === dayNumber)) {
+      setDayNumber(days[0].day)
+    }
+  }
+
+  const handleToggleMiniMap = (checked: boolean) => {
+    pngSeqRef.current += 1
+    setIncludeMiniMap(checked)
     setPngState('idle')
     setSvgFailed(false)
   }
@@ -149,10 +232,40 @@ export default function ShareCardPanel({
     setPngState(outcome.reason)
   }
 
+  const handleRoadbookRequest = () => {
+    const result = buildOfflineRoadbook(activeTrip, {
+      poiCards,
+      now: now(),
+      isDraft: effectiveSource === 'draft',
+    })
+    if (!result.ok) {
+      const limitLabel =
+        result.limit === MAX_ROADBOOK_HTML_BYTES ? '2 MiB' : mebibytes(result.limit)
+      setRoadbookPreview(null)
+      setRoadbookError(
+        `离线路书超过 ${limitLabel} 上限（当前 ${mebibytes(result.bytes)}），未生成任何文件；请精简站点或文字后重试。`,
+      )
+      return
+    }
+    setRoadbookError(null)
+    setRoadbookPreview({ html: result.html, fileName: result.fileName })
+  }
+
+  const handleRoadbookConfirm = () => {
+    if (!roadbookPreview) return
+    if (!downloadRoadbookHtml(roadbookPreview.html, roadbookPreview.fileName)) {
+      setRoadbookError('当前浏览器不支持在本地创建下载文件，未下载任何文件。')
+      return
+    }
+    setRoadbookError(null)
+    setRoadbookPreview(null)
+  }
+
   const pngError =
     pngState === 'unsupported' || pngState === 'decode' || pngState === 'encode'
       ? PNG_ERROR_TEXT[pngState]
       : null
+  const isDraftSource = effectiveSource === 'draft'
 
   return (
     <div
@@ -180,10 +293,50 @@ export default function ShareCardPanel({
               生成分享卡片
             </h2>
             <p className={PANEL_NOTE}>
-              卡片只含行程名、天数、日期、站点与交通摘要。预览与风格切换不会写入任何存储；
-              只有点「下载 SVG」或「下载 PNG」才会在你自己的电脑上生成文件。
+              卡片只含行程名、天数、日期、站点与交通摘要。预览、风格切换与路线小地图都不会写入任何存储；
+              只有点「下载 SVG」「下载 PNG」或在路书预览里确认下载，才会在你自己的电脑上生成文件。
             </p>
           </div>
+
+          {hasDraft ? (
+            <fieldset
+              className="m-0 grid min-w-0 gap-2 rounded-[6px] border border-border bg-card p-3"
+              data-testid="share-source"
+            >
+              <legend className={FIELD_LABEL}>分享哪一版行程</legend>
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="radio"
+                    name={sourceName}
+                    value="applied"
+                    checked={effectiveSource === 'applied'}
+                    onChange={() => handleSourceChange('applied')}
+                  />
+                  当前已应用行程（默认）
+                </label>
+                <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="radio"
+                    name={sourceName}
+                    value="draft"
+                    checked={effectiveSource === 'draft'}
+                    onChange={() => handleSourceChange('draft')}
+                  />
+                  当前草稿（未应用）
+                </label>
+              </div>
+              {isDraftSource ? (
+                <p
+                  className="m-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-2 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]"
+                  data-testid="share-draft-badge"
+                  role="status"
+                >
+                  草稿未应用，分享的是草稿
+                </p>
+              ) : null}
+            </fieldset>
+          ) : null}
 
           <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="grid min-w-0 content-start gap-3">
@@ -193,13 +346,54 @@ export default function ShareCardPanel({
               >
                 <div
                   data-style={style}
-                  // 内容由 lib/shareCard.ts 受控生成，所有用户文本已做 XML 转义
+                  // 内容由 lib/shareCard.ts / lib/shareMiniMap.ts 受控生成，所有用户文本已做 XML 转义
                   dangerouslySetInnerHTML={{ __html: svg }}
                 />
               </div>
               <p className={`${PANEL_NOTE} text-center`}>
                 预览按 1080 × 1440 比例缩放；字体使用系统字体栈，不同电脑上的字形可能略有差异。
               </p>
+
+              <div
+                className="grid min-w-0 gap-2 rounded-[6px] border border-border bg-card p-3"
+                data-testid="share-minimap-block"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="m-0 text-sm font-semibold text-foreground">路线小地图（SVG）</p>
+                  <label className="flex min-h-9 items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={includeMiniMap && miniMap.svg !== null}
+                      disabled={miniMap.svg === null}
+                      onChange={(event) => handleToggleMiniMap(event.target.checked)}
+                      data-testid="share-minimap-toggle"
+                    />
+                    附加到分享卡尾部
+                  </label>
+                </div>
+                {miniMap.svg !== null ? (
+                  <div
+                    className="[&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
+                    data-testid="share-minimap-preview"
+                    dangerouslySetInnerHTML={{ __html: miniMap.svg }}
+                  />
+                ) : (
+                  <p className={PANEL_NOTE}>
+                    本日没有可用坐标，无法绘制小地图；缺坐标站点会在离线路书里单列「位置未知」。
+                  </p>
+                )}
+                {miniMap.unknownStops.length > 0 ? (
+                  <p className={PANEL_NOTE} data-testid="share-minimap-unknown">
+                    位置未知（未画入地图）：
+                    {miniMap.unknownStops
+                      .map((name) => (name.trim() === '' ? '未命名站点' : name.trim()))
+                      .join('、')}
+                  </p>
+                ) : null}
+                <p className={PANEL_NOTE}>
+                  实线 = 导航路线；虚线 = 示意直线（不是导航结果）；不画线 = 路线未知。地图不使用任何瓦片或网络请求。
+                </p>
+              </div>
             </div>
 
             <div className="grid min-w-0 content-start gap-4">
@@ -212,7 +406,7 @@ export default function ShareCardPanel({
                   value={selectedDay?.day ?? ''}
                   onChange={(event) => handleDayChange(Number(event.target.value))}
                 >
-                  {trip.days.map((day) => (
+                  {activeTrip.days.map((day) => (
                     <option key={day.day} value={day.day}>
                       {`D${day.day} · ${day.title}`}
                     </option>
@@ -290,6 +484,47 @@ export default function ShareCardPanel({
                   >
                     当前浏览器不支持在本地创建下载文件，未下载任何文件。
                   </p>
+                ) : null}
+              </div>
+
+              <div className="grid min-w-0 gap-2 border-t border-border pt-3">
+                <p className="m-0 text-sm font-semibold text-foreground">离线 HTML 路书</p>
+                <p className={PANEL_NOTE}>
+                  单文件 HTML：样式与脚本内联，断网可打开；先预览，确认后才下载，取消不产生文件。
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" onClick={handleRoadbookRequest}>
+                    下载离线路书 (.html)
+                  </Button>
+                </div>
+                {roadbookError ? (
+                  <p
+                    className="m-0 rounded-[6px] border border-[color:var(--color-warn-ink)]/40 bg-[color:var(--color-warn-bg)] p-2.5 text-sm font-medium leading-relaxed text-[color:var(--color-warn-ink)] [overflow-wrap:anywhere]"
+                    data-testid="roadbook-error"
+                    role="alert"
+                  >
+                    {roadbookError}
+                  </p>
+                ) : null}
+                {roadbookPreview ? (
+                  <div className="grid min-w-0 gap-2" data-testid="roadbook-preview-block">
+                    <p className={PANEL_NOTE}>
+                      离线路书预览（{isDraftSource ? '草稿版' : '已应用行程'}）。确认后才下载；取消不产生任何文件。
+                    </p>
+                    <iframe
+                      title="离线路书预览"
+                      sandbox="allow-scripts"
+                      srcDoc={roadbookPreview.html}
+                      className="h-[360px] w-full rounded-[6px] border border-border bg-white"
+                      data-testid="roadbook-preview"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button onClick={handleRoadbookConfirm}>确认下载 .html</Button>
+                      <Button variant="ghost" onClick={() => setRoadbookPreview(null)}>
+                        取消预览
+                      </Button>
+                    </div>
+                  </div>
                 ) : null}
               </div>
             </div>
