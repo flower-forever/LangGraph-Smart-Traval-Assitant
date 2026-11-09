@@ -14,6 +14,8 @@ interface ItineraryListProps {
    * 本组件不写任何键。
    */
   poiCards?: PoiCardsRecordV1 | null
+  /** 「去资料卡补充」入口（S2）：无卡时透传给展示位；缺省 = 不渲染入口。 */
+  onOpenPoiCardPanel?: (stopName: string) => void
 }
 
 /** 组装某一天的纯文本行程，供「复制」使用 */
@@ -85,7 +87,13 @@ const LEG_TAG_CLASS: Record<TripDay['legs'][number]['route_type'], string> = {
   unavailable: 'border-border text-[color:var(--color-faint)]',
 }
 
-export default function ItineraryList({ day, activeStopId, onSelectStop, poiCards = null }: ItineraryListProps) {
+export default function ItineraryList({
+  day,
+  activeStopId,
+  onSelectStop,
+  poiCards = null,
+  onOpenPoiCardPanel,
+}: ItineraryListProps) {
   const [copied, setCopied] = useState<'idle' | 'done' | 'fail'>('idle')
   const timerRef = useRef<number | null>(null)
 
@@ -194,7 +202,7 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
                       </a>
                     </p>
                   )}
-                  <StopPoiCard stop={stop} poiCards={poiCards} />
+                  <StopPoiCard stop={stop} poiCards={poiCards} onOpenPoiCardPanel={onOpenPoiCardPanel} />
                 </div>
               )}
 

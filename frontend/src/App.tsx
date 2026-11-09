@@ -4,6 +4,7 @@ import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
 import RouteFlowHint from './components/RouteFlowHint'
+import { projectStopFacts } from './lib/stopFacts'
 import ShareCardPanel from './components/ShareCardPanel'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
@@ -584,6 +585,23 @@ export default function App() {
   )
 
   /** 不采纳收进：丢弃预填与未保存编辑，关闭面板，零写入（面板 onClose 内联完成）。 */
+
+  /**
+   * S2 信息可信卡：停点展示位「去资料卡补充」入口 → 打开资料卡面板新建态。
+   * 预填停点名（PoiCardPrefill 不带来源 provenance：入口本身没有来源，
+   * 用户在面板里自己填写 / 保存，保存路径按 manual 标 provenance，不编造来源）。
+   * 本函数只设置内存态，零写入；不自动抓取、不发请求。
+   */
+  const handleStopFactSupplement = useCallback((stopName: string) => {
+    ensurePoiCardsLoaded()
+    const name = stopName.trim()
+    setPoiCardCollectPrefill(
+      name.length === 0 ? null : { name, collectNotice: '从停点展示位进入：名称已预填，内容与来源请自行补充；保存前不写入本地。' },
+    )
+    setPoiCardsSaveStatus('idle')
+    setPoiCardsSaveMessage(null)
+    setPoiCardOpenId(null)
+  }, [ensurePoiCardsLoaded])
 
   /** AI 候选的 U 级独立确认：存在时面板旁显示显式确认入口；H 级永不进入这里。 */
   const [aiPlanningAck, setAiPlanningAck] = useState<{
@@ -4135,6 +4153,7 @@ export default function App() {
                     onSelectStop={handleSelectStop}
                     poiCards={poiCardsRecord}
                     onOpenShare={() => setShareOpen(true)}
+                    onOpenPoiCardPanel={handleStopFactSupplement}
                   />
                 )}
               </div>

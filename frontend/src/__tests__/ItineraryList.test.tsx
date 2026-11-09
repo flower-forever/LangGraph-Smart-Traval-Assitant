@@ -102,7 +102,7 @@ describe('ItineraryList 复制', () => {
   })
 })
 
-describe('ItineraryList · 资料卡展示位（三期 S2）', () => {
+describe('ItineraryList · 资料卡展示位（三期 S2 / 五期 S2 改造）', () => {
   const stopId = day.stops[0].id
 
   function makePoiCards(name: string) {
@@ -123,27 +123,36 @@ describe('ItineraryList · 资料卡展示位（三期 S2）', () => {
     return { ...empty.value, cards: [card.value] }
   }
 
-  it('停点展开时按名称归一化显示资料卡，带「按名称匹配，请自行核对」', () => {
+  it('停点展开时按名称归一化显示信息可信卡，sourced 字段带徽章与来源', () => {
     render(
       <ItineraryList day={day} activeStopId={stopId} onSelectStop={vi.fn()} poiCards={makePoiCards(day.stops[0].name)} />,
     )
-    const note = screen.getByRole('note', { name: new RegExp(`景点资料卡：${day.stops[0].name}`) })
-    expect(within(note).getByText(/按名称匹配，请自行核对/)).toBeInTheDocument()
-    expect(within(note).getByText('介绍：湖上景观。')).toBeInTheDocument()
-    expect(within(note).getByText('开放时间：全天')).toBeInTheDocument()
-    expect(within(note).getByText('门票：免费')).toBeInTheDocument()
-    expect(within(note).getByText('景点资料卡 · 未核实')).toBeInTheDocument()
+    const note = screen.getByRole('note', { name: new RegExp(`景点信息可信卡：${day.stops[0].name}`) })
+    expect(within(note).getByText('介绍：')).toBeInTheDocument()
+    expect(within(note).getByText('湖上景观。')).toBeInTheDocument()
+    expect(within(note).getByText('开放时间：')).toBeInTheDocument()
+    expect(within(note).getByText('全天')).toBeInTheDocument()
+    expect(within(note).getByText('门票：')).toBeInTheDocument()
+    expect(within(note).getByText('免费')).toBeInTheDocument()
+    // sourced 徽章（intro 有 provenance）；openHours / ticket 无 provenance → 未核实
+    expect(within(note).getAllByText('有来源（待核对）').length).toBe(1)
+    expect(within(note).getAllByText('未核实').length).toBe(2)
+    expect(within(note).getAllByText(/按名称匹配，请自行核对/).length).toBeGreaterThanOrEqual(1)
+    // 红线：不出现「已核实」
+    expect(within(note).queryByText(/已核实/)).toBeNull()
   })
 
-  it('未知字段显示「未知」；无卡 / 多命中时不显示展示位', () => {
-    // 无卡
+  it('无资料卡 / 多命中：三字段「未知」+ 补充入口；列表组件默认不传入口回调', () => {
+    // 无卡（未传入口回调 → 只显示未知，不渲染按钮）
     const { unmount } = render(
       <ItineraryList day={day} activeStopId={stopId} onSelectStop={vi.fn()} poiCards={null} />,
     )
-    expect(screen.queryByTestId(`stop-poi-card-${stopId}`)).toBeNull()
+    const note = screen.getByRole('note', { name: `景点信息可信卡：${day.stops[0].name}` })
+    expect(within(note).getAllByText('未知').length).toBe(3)
+    expect(within(note).queryByTestId('stop-poi-card-supplement')).toBeNull()
     unmount()
 
-    // 多命中（重名两条）→ findPoiCardByName 返回 null → 不显示
+    // 多命中（重名两条）→ findPoiCardByName 返回 null → 同口径未知
     const a = createPoiCard({ id: 'm1', name: day.stops[0].name, address: '地址A' }, 1_000)
     const b = createPoiCard({ id: 'm2', name: day.stops[0].name, address: '地址B' }, 1_000)
     if (!a.ok || !b.ok) throw new Error('fixture 失败')
@@ -157,6 +166,7 @@ describe('ItineraryList · 资料卡展示位（三期 S2）', () => {
         poiCards={{ ...empty.value, cards: [a.value, b.value] }}
       />,
     )
-    expect(screen.queryByTestId(`stop-poi-card-${stopId}`)).toBeNull()
+    const note2 = screen.getByRole('note', { name: `景点信息可信卡：${day.stops[0].name}` })
+    expect(within(note2).getAllByText('未知').length).toBe(3)
   })
 })

@@ -189,7 +189,7 @@ describe('TimelineView · 展开与选中', () => {
 describe('TimelineView · 资料卡展示位', () => {
   const stopId = day.stops[0].id
 
-  it('唯一命中时展示资料卡摘要与「按名称匹配，请自行核对」', () => {
+  it('唯一命中时展示信息可信卡，sourced 字段带徽章与「按名称匹配，请自行核对」', () => {
     render(
       <TimelineView
         day={day}
@@ -198,19 +198,22 @@ describe('TimelineView · 资料卡展示位', () => {
         poiCards={makePoiCards(day.stops[0].name)}
       />,
     )
-    const note = screen.getByRole('note', { name: `景点资料卡：${day.stops[0].name}` })
-    expect(within(note).getByText('景点资料卡 · 未核实')).toBeInTheDocument()
-    expect(within(note).getByText('介绍：湖上景观。')).toBeInTheDocument()
-    expect(within(note).getByText('开放时间：全天')).toBeInTheDocument()
-    expect(within(note).getByText('门票：免费')).toBeInTheDocument()
-    expect(within(note).getByText(/按名称匹配，请自行核对/)).toBeInTheDocument()
+    const note = screen.getByRole('note', { name: `景点信息可信卡：${day.stops[0].name}` })
+    expect(within(note).getByText('湖上景观。')).toBeInTheDocument()
+    expect(within(note).getByText('全天')).toBeInTheDocument()
+    expect(within(note).getByText('免费')).toBeInTheDocument()
+    expect(within(note).getAllByText('有来源（待核对）').length).toBe(1)
+    expect(within(note).getAllByText('未核实').length).toBe(2)
+    expect(within(note).getAllByText(/按名称匹配，请自行核对/).length).toBeGreaterThanOrEqual(1)
+    expect(within(note).queryByText(/已核实/)).toBeNull()
   })
 
-  it('无匹配或多命中时不显示资料卡', () => {
+  it('无匹配或多命中时显示「未知」信息可信卡（不隐藏）', () => {
     const { unmount } = render(
       <TimelineView day={day} activeStopId={stopId} onSelectStop={vi.fn()} poiCards={makePoiCards('别的景点')} />,
     )
-    expect(screen.queryByTestId(`stop-poi-card-${stopId}`)).toBeNull()
+    const note = screen.getByRole('note', { name: `景点信息可信卡：${day.stops[0].name}` })
+    expect(within(note).getAllByText('未知').length).toBe(3)
     unmount()
 
     const a = createPoiCard({ id: 'm1', name: day.stops[0].name, address: '地址A' }, 1_000)
@@ -226,6 +229,7 @@ describe('TimelineView · 资料卡展示位', () => {
         poiCards={{ ...empty.value, cards: [a.value, b.value] }}
       />,
     )
-    expect(screen.queryByTestId(`stop-poi-card-${stopId}`)).toBeNull()
+    const note2 = screen.getByRole('note', { name: `景点信息可信卡：${day.stops[0].name}` })
+    expect(within(note2).getAllByText('未知').length).toBe(3)
   })
 })

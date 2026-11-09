@@ -14,6 +14,8 @@ interface ItineraryViewProps {
   poiCards?: PoiCardsRecordV1 | null
   /** 打开分享卡片面板（四期 S4）；缺省时不渲染入口，视图本身不引入分享逻辑。 */
   onOpenShare?: () => void
+  /** 「去资料卡补充」入口（S2）：透传给两种视图；缺省 = 不渲染入口。 */
+  onOpenPoiCardPanel?: (stopName: string) => void
 }
 
 type ItineraryViewMode = 'list' | 'timeline'
@@ -28,7 +30,14 @@ const VIEW_OPTIONS: ReadonlyArray<{ value: ItineraryViewMode; label: string }> =
  * 当前视图只是组件内状态：默认列表，不持久化、不写任何存储键；
  * activeStopId 由父级持有，切换视图不会改变当前选中站点。
  */
-export default function ItineraryView({ day, activeStopId, onSelectStop, poiCards = null, onOpenShare }: ItineraryViewProps) {
+export default function ItineraryView({
+  day,
+  activeStopId,
+  onSelectStop,
+  poiCards = null,
+  onOpenShare,
+  onOpenPoiCardPanel,
+}: ItineraryViewProps) {
   const [view, setView] = useState<ItineraryViewMode>('list')
 
   return (
@@ -69,8 +78,24 @@ export default function ItineraryView({ day, activeStopId, onSelectStop, poiCard
       </div>
 
       {view === 'list'
-        ? <ItineraryList day={day} activeStopId={activeStopId} onSelectStop={onSelectStop} poiCards={poiCards} />
-        : <TimelineView day={day} activeStopId={activeStopId} onSelectStop={onSelectStop} poiCards={poiCards} />}
+        ? (
+            <ItineraryList
+              day={day}
+              activeStopId={activeStopId}
+              onSelectStop={onSelectStop}
+              poiCards={poiCards}
+              onOpenPoiCardPanel={onOpenPoiCardPanel}
+            />
+          )
+        : (
+            <TimelineView
+              day={day}
+              activeStopId={activeStopId}
+              onSelectStop={onSelectStop}
+              poiCards={poiCards}
+              onOpenPoiCardPanel={onOpenPoiCardPanel}
+            />
+          )}
     </div>
   )
 }

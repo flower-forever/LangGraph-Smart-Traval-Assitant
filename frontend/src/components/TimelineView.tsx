@@ -14,6 +14,8 @@ interface TimelineViewProps {
    * 本组件不写任何键。
    */
   poiCards?: PoiCardsRecordV1 | null
+  /** 「去资料卡补充」入口（S2）：无卡时透传给展示位；缺省 = 不渲染入口。 */
+  onOpenPoiCardPanel?: (stopName: string) => void
 }
 
 /** 路段类型 → leg-tag 徽标色，与列表视图同一口径。 */
@@ -33,7 +35,13 @@ function stopTimeLabel(time: string): string {
  * onSelectStop / poiCards。纯只读展示：不调用 localStorage / sessionStorage，
  * 不修改 Trip 数据，展开/收起状态完全由父级 activeStopId 驱动。
  */
-export default function TimelineView({ day, activeStopId, onSelectStop, poiCards = null }: TimelineViewProps) {
+export default function TimelineView({
+  day,
+  activeStopId,
+  onSelectStop,
+  poiCards = null,
+  onOpenPoiCardPanel,
+}: TimelineViewProps) {
   if (day.stops.length === 0) {
     return (
       <div className="rounded-[14px] border border-border bg-card p-5 mb-5" data-testid="timeline-view">
@@ -135,7 +143,7 @@ export default function TimelineView({ day, activeStopId, onSelectStop, poiCards
                           </a>
                         </p>
                       )}
-                      <StopPoiCard stop={stop} poiCards={poiCards} />
+                      <StopPoiCard stop={stop} poiCards={poiCards} onOpenPoiCardPanel={onOpenPoiCardPanel} />
                     </div>
                   )}
                 </div>
