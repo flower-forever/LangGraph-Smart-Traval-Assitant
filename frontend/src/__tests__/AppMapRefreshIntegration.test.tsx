@@ -263,7 +263,7 @@ describe('App 仅刷新地图接线', () => {
     fireEvent.keyDown(screen.getByRole('tablist'), { key: 'ArrowRight' })
     expect(screen.getByRole('tab', { name: /西湖环湖/ })).toHaveAttribute('aria-selected', 'true')
 
-    await user.click(within(panel).getByRole('button', { name: '关闭' }))
+    await user.click(within(panel).getByRole('button', { name: '收起' }))
     expect(screen.queryByTestId('map-refresh-slot')).toBeNull()
     expect(screen.getByRole('button', { name: '保存当前行程' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '行程备份与导入' })).toBeInTheDocument()
@@ -307,7 +307,7 @@ describe('App 仅刷新地图接线', () => {
     expect(window.localStorage.getItem(SAVED_TRIPS_STORAGE_KEY)).toBe(storageBefore)
     expect(screen.getByRole('tabpanel')).toHaveTextContent('断桥残雪')
 
-    await user.click(within(panel).getByRole('button', { name: '关闭' }))
+    await user.click(within(panel).getByRole('button', { name: '收起' }))
     expect(screen.queryByTestId('map-refresh-slot')).toBeNull()
     expect(screen.getByRole('button', { name: '保存当前行程' })).toBeInTheDocument()
     expect(screen.getByTestId('map-refresh-entry')).toBeInTheDocument()
@@ -330,7 +330,7 @@ describe('App 仅刷新地图接线', () => {
     await user.click(within(panel).getByRole('button', { name: '获取地图候选' }))
     await waitFor(() => expect(mapBodies(fetchMock)).toHaveLength(1))
 
-    await user.click(within(panel).getByRole('button', { name: '关闭' }))
+    await user.click(within(panel).getByRole('button', { name: '收起' }))
     expect(screen.queryByTestId('map-refresh-slot')).toBeNull()
 
     await act(async () => {

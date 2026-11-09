@@ -419,14 +419,14 @@ describe('App 网页资料接线集成', () => {
     await user.click(screen.getByRole('button', { name: 'AI 调整这一天' }))
     await waitFor(() => expect(screen.queryByTestId('web-sources-entry')).toBeNull())
     expect(screen.queryByTestId('web-sources-panel')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     await waitFor(() => expect(screen.getByTestId('web-sources-entry')).toBeInTheDocument())
 
     await openWebSources(user)
     await user.click(screen.getByRole('button', { name: '仅刷新地图' }))
     await waitFor(() => expect(screen.queryByTestId('web-sources-entry')).toBeNull())
     expect(screen.queryByTestId('web-sources-panel')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     await waitFor(() => expect(screen.getByTestId('web-sources-entry')).toBeInTheDocument())
 
     expect(searchCalls(fetchMock)).toHaveLength(0)

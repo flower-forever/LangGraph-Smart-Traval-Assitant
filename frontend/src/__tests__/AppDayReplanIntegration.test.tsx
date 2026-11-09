@@ -160,7 +160,7 @@ describe('App AI 单日调整接线', () => {
     expect(fetchMock.mock.calls.map(([url]) => String(url))).not.toContain('/api/trips/plan')
 
     // 关闭面板：日期切换、保存与备份入口恢复
-    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     expect(screen.queryByRole('region', { name: 'AI 调整单日安排' })).toBeNull()
     expect(screen.getByRole('button', { name: '保存当前行程' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '行程备份与导入' })).toBeInTheDocument()
@@ -363,7 +363,7 @@ describe('App AI 单日调整接线', () => {
     await user.click(screen.getByRole('button', { name: '生成调整候选' }))
     await waitFor(() => expect(replanUrls(fetchMock)).toHaveLength(1))
     // 等待中关闭面板：候选作废，页面回到可操作状态
-    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     expect(screen.queryByRole('region', { name: 'AI 调整单日安排' })).toBeNull()
 
     // 迟到的响应到达：不出现候选 / 应用入口，行程与版本号都不变
@@ -407,7 +407,7 @@ describe('App AI 单日调整接线', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '应用候选' })).toBeEnabled())
     // 有效的 AI 成功说明规划确实可用
     expect(backendText()).toContain('可以生成行程')
-    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     expect(screen.queryByRole('region', { name: 'AI 调整单日安排' })).toBeNull()
 
     // 迟到的探活（说规划不可用）不能把已经证明可用的结论翻回去

@@ -429,7 +429,7 @@ export default function VersionsPanel({
         </div>
         {onClose !== undefined ? (
           <Button variant="outline" onClick={onClose}>
-            收起版本面板
+            收起
           </Button>
         ) : null}
       </header>

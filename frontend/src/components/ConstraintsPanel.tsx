@@ -604,7 +604,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
         </div>
         {onClose ? (
           <Button variant="outline" onClick={handleClose}>
-            收起必去与预约
+            收起
           </Button>
         ) : null}
       </header>

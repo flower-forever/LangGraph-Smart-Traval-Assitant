@@ -149,7 +149,7 @@ describe('App AI 行程助手接线', () => {
 
     // 先建工作区，再加一条必去点约束
     await user.click(screen.getByRole('button', { name: '用当前行程新建工作区' }))
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
     await user.click(await screen.findByRole('button', { name: '添加约束' }))
     await user.type(screen.getByLabelText('标题'), '平湖秋月')
     await user.click(screen.getByRole('button', { name: '保存约束' }))
@@ -236,7 +236,7 @@ describe('App AI 行程助手接线', () => {
     expect(within(assistantPanel()).getByLabelText('建议卡片')).toBeInTheDocument()
 
     // 关闭面板再打开：在途提案不复活，行程也没被改
-    await user.click(within(assistantPanel()).getByRole('button', { name: '关闭' }))
+    await user.click(within(assistantPanel()).getByRole('button', { name: '收起' }))
     await waitFor(() => expect(screen.queryByRole('region', { name: 'AI 行程助手' })).toBeNull())
     await openAssistant(user)
     expect(within(assistantPanel()).queryByLabelText('建议卡片')).toBeNull()
@@ -272,7 +272,7 @@ describe('App AI 行程助手接线', () => {
 
     // 先建工作区，再加一条时间端不全的预约窗口约束 → 候选出现 U 级
     await user.click(screen.getByRole('button', { name: '用当前行程新建工作区' }))
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
     await user.click(await screen.findByRole('button', { name: '添加约束' }))
     await user.selectOptions(screen.getByLabelText('类型'), 'fixed_window')
     await user.type(screen.getByLabelText('标题'), '平湖秋月')

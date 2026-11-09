@@ -530,6 +530,8 @@ node node_modules/typescript/bin/tsc -b --force
 node node_modules/vite/bin/vite.js build
 ```
 
+> **四期 S1 更新（2026-11-09）**：`_indep-probe-0400.test.js` 已删除，全量命令不再需要 `--exclude`；上面的历史记录保留原样。
+
 ---
 
 ## 12. 集成依赖 / 明确未做

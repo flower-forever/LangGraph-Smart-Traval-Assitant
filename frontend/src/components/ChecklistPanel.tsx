@@ -678,7 +678,7 @@ export default function ChecklistPanel({
         </div>
         {onClose ? (
           <Button variant="outline" onClick={onClose}>
-            收起面板
+            收起
           </Button>
         ) : null}
       </header>

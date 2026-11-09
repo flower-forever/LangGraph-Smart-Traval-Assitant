@@ -132,7 +132,7 @@ async function setupLinkedWorkspace(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function openConstraintsPanel(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+  await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
   await screen.findByRole('region', { name: '必去点与预约时间约束' })
 }
 
@@ -148,7 +148,7 @@ async function applyReminderConstraint(
   await user.click(screen.getByRole('button', { name: '应用约束改动' }))
   await waitFor(() => expect(hubRegion().textContent).toContain('revision 2'))
   // 收起约束面板，给 AI 面板让位
-  await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+  await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
 }
 
 async function applyMustVisitConstraint(
@@ -161,7 +161,7 @@ async function applyMustVisitConstraint(
   await user.click(screen.getByRole('button', { name: '保存约束' }))
   await user.click(screen.getByRole('button', { name: '应用约束改动' }))
   await waitFor(() => expect(hubRegion().textContent).toContain('revision 2'))
-  await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+  await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
 }
 
 async function applyIncompleteWindowConstraint(
@@ -177,7 +177,7 @@ async function applyIncompleteWindowConstraint(
   await user.click(screen.getByLabelText(/我确认仍采用含未核实时间方案/))
   await user.click(screen.getByRole('button', { name: '应用约束改动' }))
   await waitFor(() => expect(hubRegion().textContent).toContain('revision 2'))
-  await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+  await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
 }
 
 async function openAiPanelAndGenerate(user: ReturnType<typeof userEvent.setup>) {
@@ -259,7 +259,7 @@ describe('App AI 单日 × F2 约束接线', () => {
     // AI 面板打开期间工作区卡片暂时收起；先确认页面 revision 未被应用推进，再关闭面板核对内存 revision。
     expect(screen.getByRole('region', { name: '行程安排' })).toHaveAttribute('data-trip-revision', '2')
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
-    await user.click(within(panel).getByRole('button', { name: '关闭' }))
+    await user.click(within(panel).getByRole('button', { name: '收起' }))
     await waitFor(() => expect(hubRegion().textContent).toContain('revision 2'))
   })
 

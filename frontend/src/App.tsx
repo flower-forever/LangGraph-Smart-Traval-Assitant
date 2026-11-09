@@ -3438,7 +3438,7 @@ export default function App() {
                         }}
                         disabled={currentWorkspaceRecord === null}
                       >
-                        锚点与酒店
+                        住宿与抵离锚点
                       </button>
                       <button
                         type="button"
@@ -3452,7 +3452,7 @@ export default function App() {
                         }}
                         disabled={currentWorkspaceRecord === null}
                       >
-                        必去点与预约
+                        必去点与预约时间约束
                       </button>
                       <button
                         type="button"
@@ -3466,7 +3466,7 @@ export default function App() {
                         }}
                         disabled={currentWorkspaceRecord === null}
                       >
-                        出行清单
+                        准备清单
                       </button>
                       <button
                         type="button"

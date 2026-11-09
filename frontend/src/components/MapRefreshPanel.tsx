@@ -314,7 +314,7 @@ export default function MapRefreshPanel({
             </h3>
           </div>
           <Button variant="outline" onClick={onClose}>
-            关闭
+            收起
           </Button>
         </div>
         <p className={NOTICE}>当前没有可刷新的这一天，原始行程保持不变。</p>
@@ -354,7 +354,7 @@ export default function MapRefreshPanel({
           </p>
         </div>
         <Button variant="outline" onClick={onClose}>
-          关闭
+          收起
         </Button>
       </div>
 

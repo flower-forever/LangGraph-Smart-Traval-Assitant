@@ -482,7 +482,7 @@ export default function AssistantDialogPanel({
           </p>
         </div>
         <Button variant="outline" onClick={onClose}>
-          关闭
+          收起
         </Button>
       </div>
 

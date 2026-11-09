@@ -224,7 +224,7 @@ describe('App AI 后段调整接线', () => {
     await user.click(screen.getByRole('button', { name: '生成调整候选' }))
     await waitFor(() => expect(replanUrls(fetchMock)).toHaveLength(1))
     // 等待中关闭面板
-    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     expect(screen.queryByRole('region', { name: 'AI 调整单日安排' })).toBeNull()
 
     // 迟到的成功响应：不出现候选/应用入口/通告，行程不变

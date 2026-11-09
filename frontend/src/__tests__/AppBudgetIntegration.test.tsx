@@ -135,7 +135,7 @@ describe('App 费用估算接线', () => {
     await screen.findByTestId('map-refresh-slot')
     expect(screen.queryByRole('region', { name: /费用估算/ })).toBeNull()
 
-    await user.click(within(screen.getByTestId('map-refresh-slot')).getByRole('button', { name: '关闭' }))
+    await user.click(within(screen.getByTestId('map-refresh-slot')).getByRole('button', { name: '收起' }))
     // 关闭地图面板：费用面板重新挂载，草稿仍在
     await screen.findByRole('region', { name: /费用估算/ })
     const rowsAfter = within(budgetRegion()).getAllByTestId('budget-row')

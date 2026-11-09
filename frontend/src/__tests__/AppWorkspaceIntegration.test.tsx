@@ -248,7 +248,7 @@ describe('App 工作区与版本接线', () => {
   }
 
   async function openChecklistAndAdd(user: ReturnType<typeof userEvent.setup>, title: string) {
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     await user.click(screen.getByRole('button', { name: '新增清单项' }))
     await user.type(screen.getByLabelText('标题'), title)
     await user.click(screen.getByRole('button', { name: '添加这一项' }))
@@ -270,7 +270,7 @@ describe('App 工作区与版本接线', () => {
     // 新工作区从当前 0 + 1 开始，不回放快照里的 revision 7
     expect(hubRegion().textContent).toContain('revision 1')
     // sidecar 一并恢复
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     expect(await screen.findByText('护照')).toBeInTheDocument()
     expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
   })
@@ -355,7 +355,7 @@ describe('App 工作区与版本接线', () => {
     await user.click(screen.getByRole('button', { name: '用当前行程新建工作区' }))
     expect(await screen.findByText(/已关联《/)).toBeInTheDocument()
     await openChecklistAndAdd(user, '内存里的护照')
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
 
     // 现在 localStorage 里有一份同一 trip.id 的完整工作区；v1 恢复不得自动读取或挂接
     const storedWorkspace = sessionWorkspaceRecord(5, sidecarWithChecklist('存储里的护照'), 'ws-stored-1')
@@ -389,7 +389,7 @@ describe('App 工作区与版本接线', () => {
     expect(await screen.findByText(/已关联《/)).toBeInTheDocument()
     expect(hubRegion().textContent).toContain('revision 1')
 
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     await user.click(screen.getByRole('button', { name: '新增清单项' }))
     await user.type(screen.getByLabelText('标题'), 'StrictMode 护照')
     await user.click(screen.getByRole('button', { name: '添加这一项' }))
@@ -477,11 +477,11 @@ describe('App 工作区与版本接线', () => {
     })
 
     // 约束（sidecar-only）：revision 2 → 3
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     const constraintsRevisionBefore = Number(
       hubRegion().textContent.match(/revision (\d+)/)?.[1] ?? 0,
     )
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
     await screen.findByRole('region', { name: '必去点与预约时间约束' })
     await user.click(screen.getByRole('button', { name: '添加约束' }))
     await user.type(screen.getByLabelText('标题'), '断桥残雪')
@@ -492,13 +492,13 @@ describe('App 工作区与版本接线', () => {
       expect(seeded?.workspaceRevision).toBe(constraintsRevisionBefore + 1)
       expect(JSON.stringify(seeded?.sidecar.constraints)).toContain('断桥残雪')
     })
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
 
     // 锚点（sidecar-only）：添加住宿并应用 → revision +1，留存携带 accommodation
     const anchorsRevisionBefore = Number(
       hubRegion().textContent.match(/revision (\d+)/)?.[1] ?? 0,
     )
-    await user.click(screen.getByRole('button', { name: '锚点与酒店' }))
+    await user.click(screen.getByRole('button', { name: '住宿与抵离锚点' }))
     await user.click(screen.getByRole('button', { name: '添加住宿信息' }))
     await user.type(screen.getByLabelText('住宿名称'), '留存酒店')
     await user.type(screen.getByLabelText('入住日期（当地）'), '2026-04-03')

@@ -486,7 +486,7 @@ describe('受控编辑', () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     renderPanel({ onClose })
-    await user.click(screen.getByRole('button', { name: '收起必去与预约' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 

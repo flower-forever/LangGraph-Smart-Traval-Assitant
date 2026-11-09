@@ -91,7 +91,7 @@ describe('App × 行程工具真实接线', () => {
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
 
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     await user.click(screen.getByRole('button', { name: '新增清单项' }))
     await user.type(screen.getByLabelText('标题'), '护照')
     await user.click(screen.getByRole('button', { name: '添加这一项' }))
@@ -105,7 +105,7 @@ describe('App × 行程工具真实接线', () => {
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
 
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
     await user.click(screen.getByRole('button', { name: '添加约束' }))
     await user.type(screen.getByLabelText('标题'), '断桥残雪')
     await user.click(screen.getByRole('button', { name: '保存约束' }))
@@ -119,7 +119,7 @@ describe('App × 行程工具真实接线', () => {
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
 
-    await user.click(screen.getByRole('button', { name: '锚点与酒店' }))
+    await user.click(screen.getByRole('button', { name: '住宿与抵离锚点' }))
     await user.click(screen.getByRole('button', { name: '添加住宿信息' }))
     await user.type(screen.getByLabelText('住宿名称'), '中央酒店')
     await user.type(screen.getByLabelText('入住日期（当地）'), '2026-04-03')
@@ -279,14 +279,14 @@ describe('App × 行程工具真实接线', () => {
     title: string,
   ): Promise<void> {
     const revisionBefore = hubRevision()
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
     await screen.findByRole('region', { name: '必去点与预约时间约束' })
     await user.click(screen.getByRole('button', { name: '添加约束' }))
     await user.type(screen.getByLabelText('标题'), title)
     await user.click(screen.getByRole('button', { name: '保存约束' }))
     await user.click(screen.getByRole('button', { name: '应用约束改动' }))
     await waitFor(() => expect(hubRevision()).toBe(revisionBefore + 1))
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
   }
 
   /** 修改已有约束的绑定站点（null → 具体 stop），触发同 ID 锚点变化。 */
@@ -296,7 +296,7 @@ describe('App × 行程工具真实接线', () => {
     stopOptionText: string,
   ): Promise<void> {
     const revisionBefore = hubRevision()
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
     await screen.findByRole('region', { name: '必去点与预约时间约束' })
     await user.click(screen.getByRole('button', { name: `编辑约束 ${constraintTitle}` }))
     const stopSelect = screen.getByLabelText('绑定站点') as HTMLSelectElement
@@ -308,7 +308,7 @@ describe('App × 行程工具真实接线', () => {
     await user.click(screen.getByRole('button', { name: '保存约束' }))
     await user.click(screen.getByRole('button', { name: '应用约束改动' }))
     await waitFor(() => expect(hubRevision()).toBe(revisionBefore + 1))
-    await user.click(screen.getByRole('button', { name: '必去点与预约' }))
+    await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
   }
 
   async function addLinkedChecklistItem(
@@ -317,7 +317,7 @@ describe('App × 行程工具真实接线', () => {
     constraintTitle: string,
   ): Promise<void> {
     if (screen.queryByRole('button', { name: '新增清单项' }) === null) {
-      await user.click(screen.getByRole('button', { name: '出行清单' }))
+      await user.click(screen.getByRole('button', { name: '准备清单' }))
     }
     await user.click(screen.getByRole('button', { name: '新增清单项' }))
     await user.type(screen.getByLabelText('标题'), title)
@@ -340,12 +340,12 @@ describe('App × 行程工具真实接线', () => {
     // 未修改约束时不误报
     expect(screen.queryByRole('region', { name: '需重新关联的清单项' })).toBeNull()
     await user.click(screen.getByLabelText('核对预约A：未准备'))
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
 
     // 同 ID 约束改绑定站点：日期 / 地点锚点变化，关联任务必须提示复核
     await bindConstraintStop(user, '断桥残雪', '断桥残雪')
 
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     const audit = await screen.findByRole('region', { name: '需重新关联的清单项' })
     expect(audit.textContent).toContain('核对预约A')
     expect(audit.textContent).toContain('已变更')
@@ -364,11 +364,11 @@ describe('App × 行程工具真实接线', () => {
     await addLinkedChecklistItem(user, '核对预约A', '断桥残雪')
     await addLinkedChecklistItem(user, '核对预约B', '平湖秋月')
     await user.click(screen.getByLabelText('核对预约A：未准备'))
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
 
     await bindConstraintStop(user, '断桥残雪', '断桥残雪')
 
-    await user.click(screen.getByRole('button', { name: '出行清单' }))
+    await user.click(screen.getByRole('button', { name: '准备清单' }))
     const audit = await screen.findByRole('region', { name: '需重新关联的清单项' })
     expect(audit.textContent).toContain('核对预约A')
     // 只影响被改约束的关联任务：B 的任务不误伤

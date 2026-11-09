@@ -846,7 +846,7 @@ export default function DayReplanPanel({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h3 className="m-0 font-display text-lg font-bold leading-[1.35] tracking-[0.03em] [overflow-wrap:anywhere]">AI 调整单日安排</h3>
           <Button variant="outline" onClick={onClose}>
-            关闭
+            收起
           </Button>
         </div>
         <Alert variant="warning" role="note">
@@ -925,7 +925,7 @@ export default function DayReplanPanel({
           </p>
         </div>
         <Button variant="outline" onClick={onClose} disabled={false}>
-          关闭
+          收起
         </Button>
       </div>
 

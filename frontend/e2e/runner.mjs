@@ -824,7 +824,7 @@ async function scenarioLateReplan() {
       // 已显式观察到 abort，无 sleep：面板此时不可能收到响应；直接断言状态
       const previewCount = await page.locator(sel.candidatePreview).count()
       expectTrue(previewCount === 0, '停止等待后候选预览复活')
-      await page.click(`${sel.aiPanel} button:has-text("关闭")`)
+      await page.click(`${sel.aiPanel} button:has-text("收起")`)
       const title = await page.textContent(sel.tripTitle)
       expectTrue(title.includes('契约桩示例'), `迟到场景后行程异常：${title}`)
       return { title }

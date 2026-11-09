@@ -33,12 +33,12 @@
 
 ## 3. 六个 feature 的真实入口
 
-- **F1 锚点与酒店**：Hub 工具槽「锚点与酒店」→ `AnchorsPanel`。App 在打开时捕获 `runtime.capture`；应用时 `applyAnchorsProposal` 后 `adoptRecord(notify:false)`，Trip 内容变化才同步投影并推进页面 revision。
-- **F2 必去点与预约**：Hub「必去点与预约」→ `ConstraintsPanel`。ticket 预检核对 ticket.runtime 的实际 record / trip / sidecar / budget / candidate 引用，再跑 `checkConstraintsApply`；H 级硬冲突不可应用、无确认入口；U 级必须面板内独立勾选确认。
+- **F1 锚点与酒店**：Hub 工具槽「住宿与抵离锚点」→ `AnchorsPanel`。App 在打开时捕获 `runtime.capture`；应用时 `applyAnchorsProposal` 后 `adoptRecord(notify:false)`，Trip 内容变化才同步投影并推进页面 revision。
+- **F2 必去点与预约**：Hub「必去点与预约时间约束」→ `ConstraintsPanel`。ticket 预检核对 ticket.runtime 的实际 record / trip / sidecar / budget / candidate 引用，再跑 `checkConstraintsApply`；H 级硬冲突不可应用、无确认入口；U 级必须面板内独立勾选确认。
 - **F2 × AI day / day_tail**：`DayReplanPanel` 收到 `planningContext` 后，请求体带 `constraints: { version, scope, day, anchor_stop_id, fingerprint, items }`，`parent.revision` 使用统一 workspace revision；只发送全局 + 目标日且 stopId 在当前日的约束，sidecar 仍保留全量。服务端 U 级警告不转成 known；App 对最终候选再跑一次本地 H/U 门，U 级用面板下方独立按钮确认，H 级直接拒绝。U 确认挂起时，App 快照面板实时输入代际（`liveInputRef`）；确认提交做同步 final guard——指令 / 方式 / 人数 / 范围 / 锚点 / 行程内容 / day 任一变化（含 A→B→A）都推进单调 contentEpoch，旧确认（连同旧点击闭包）被拒并提示重新生成；输入变化同时通过 `onPlanningInputChanged` 收起旧确认入口。未改输入的显式确认仍成功，H 不可 override。
 - **F3 候选池**：Hub「候选地点池」→ `CandidatePoolPanel`。候选库是独立键：打开 / 保存 / 导出 / 导入都是显式动作，不挂到工作区记录；保存用 `saveCandidatesRecord` + `expectedRaw`，失败保旧；导入先纯校验预览，再 `confirmCandidatesImport`，成功后显示一次撤销；`candidateLocation` 保留在候选库，加入草稿时 TripDraft 不携 coords，不静默补 `(0,0)`；`candidateLocation` 的 caveat 在面板与加入草稿提示中保留。
 - **F4 版本库**：Hub 内 `VersionsPanel`。保存 / 采用 / 撤销都由 controller 显式执行；采用与撤销是整体 transition，当前 revision +1，不恢复旧 revision；版本库与工作区分别保存，不声称跨库原子写入，也不使用 F4 sync adapter 的 `writeRaw`。
-- **F5 出行清单**：Hub「出行清单」→ `ChecklistPanel`。受控 `onChange` 先生成整体 workspace transition，失败原记录不变；清单 `constraintId` 三态保真（undefined / null / string），删除预约不级联清单、不按同名或日期自动重绑，dangling 保留并提示需重新关联。`previousConstraints` 由 App 维护为「同 ID 约束最近一次修改之前的真实快照」，**只用于检测变化**；提示的解除是逐条的：用户对条目点「按当前预约重新核对」（`action:'reconfirm-constraint'`，`checklist.ts` 的 `reconfirmChecklistItemWithConstraint`）把当前约束声明的锚点写回该条目后，audit 按该条目锚点解除它的提示；「标记需重新关联」（`action:'relink'`）只追加生成标记，不解除任何提示，也没有全局 baseline ack。普通勾 done / 无关编辑不清提示；初始 / reload 为 null 不制造误报。
+- **F5 出行清单**：Hub「准备清单」→ `ChecklistPanel`。受控 `onChange` 先生成整体 workspace transition，失败原记录不变；清单 `constraintId` 三态保真（undefined / null / string），删除预约不级联清单、不按同名或日期自动重绑，dangling 保留并提示需重新关联。`previousConstraints` 由 App 维护为「同 ID 约束最近一次修改之前的真实快照」，**只用于检测变化**；提示的解除是逐条的：用户对条目点「按当前预约重新核对」（`action:'reconfirm-constraint'`，`checklist.ts` 的 `reconfirmChecklistItemWithConstraint`）把当前约束声明的锚点写回该条目后，audit 按该条目锚点解除它的提示；「标记需重新关联」（`action:'relink'`）只追加生成标记，不解除任何提示，也没有全局 baseline ack。普通勾 done / 无关编辑不清提示；初始 / reload 为 null 不制造误报。
 - **F6 离线页**：Hub 工具槽内 `<OfflineTripPanel record={currentWorkspaceRecord} epoch={workspaceEpoch} />`，使用当前 controller 的单调 safe epoch，而不是默认 0；renderer 只基于当前已应用 workspace + 已通过的 F5 exact `constraintId` audit，不传在途候选 / 其它版本 / 恢复 raw。显式「预览离线行程页」后才出现「下载离线页 (.html)」；生成与下载都不读写存储、不联网。
 
 ## 4. 存储 / 候选库 / 版本库事件

@@ -396,11 +396,13 @@ S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 
 | A5 | 已修 | W3a 候选池空态收敛；W4 实测空态提示高度 **41px**（≤160px 口径） |
 | A6 | 已修 | Button variants 全量：default 主操作/outline、secondary 次/ghost 取消/destructive 危险；disabled 灰底明确 |
 | A7 | 已修 | 天气 dd/时间/坐标/金额 mono+tabular-nums（W2 起逐波）；W4 复核天气面板数字排版完好 |
-| A8 | 遗留（行为红线） | 入口名与面板标题不一致（「出行清单」→面板「出行清单与模板」等）——入口名是测试可访问名与用户习惯锚点，行为零变化红线优先，登记不修 |
+| A8 | 已修（四期 S1：入口名统一为面板标题） | 入口名与面板标题统一：「住宿与抵离锚点」「必去点与预约时间约束」「准备清单」；「候选地点池」原已一致。四期 S1 同步更新测试可访问名，行为零变化。 |
 | A9 | 已修 | 说明段落 max-w-[72ch] 全量；W4 实测主线最大段落行盒 1198px 属表单/地图宽元素，说明文字均在 72ch 内 |
 | A10 | 已修 | 状态提示统一 Panel 头 badge（天气「已返回」等）；role=status/alert 语义保留 |
 | A11 | 已修 | W2 radio/checkbox min-h-6/size-4；W4 实测 4 个 radio 命中区全部 ≥24px 且 label 包裹整行，0 个裸小控件 |
-| A12 | 部分修，余项登记 | PanelHeader 骨架统一（eyebrow/title/status/collapse）；收起按钮文案仍有「收起/关闭提示/收进…」变体——统一为单一文案属文案红线（测试断言沿用），登记遗留随 S9 收尾审计裁决 |
+| A12 | 已修（四期 S1：面板收起按钮统一为「收起」） | PanelHeader 骨架统一（eyebrow/title/status/collapse）；面板级收起按钮文案统一为「收起」（DayReplan/MapRefresh/AssistantDialog/Constraints/Checklist/Versions），取消编辑与撤销提示等非收起按钮保持原语义。 |
+
+**四期 S1 收尾口径**：A8/A12 对应入口名与收起按钮已按上表统一；探针已于四期 S1 删除，今后全量不再需要 `--exclude`。四期 S1 起 vitest 全局 `testTimeout=20s`，既有 per-test 标注保留（冗余无害）。
 
 **验证证据**（2026-11-09，Node v22.21.1）：
 
