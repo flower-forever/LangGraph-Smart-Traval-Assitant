@@ -4,6 +4,9 @@ import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
 import RouteFlowHint from './components/RouteFlowHint'
+import ItineraryHealthCard from './components/ItineraryHealthCard'
+import { projectStopFacts } from './lib/stopFacts'
+import { paceLabelOf, type HealthPace } from './lib/itineraryHealth'
 import ShareCardPanel from './components/ShareCardPanel'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
@@ -366,6 +369,11 @@ export default function App() {
   const [backend, setBackend] = useState<BackendState>(BACKEND_INITIAL)
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
+  /**
+   * 最近一次规划用的节奏档位（S3）：null = 本页行程不是 pace 请求生成的
+   * （示例 / 恢复 / 文件导入），结果页不显示节奏标注。
+   */
+  const [lastPlannedPace, setLastPlannedPace] = useState<HealthPace | null>(null)
   const [restoredAt, setRestoredAt] = useState<number | null>(null)
   /**
    * 当前行程是不是从用户选择的备份文件打开进来的。
@@ -2101,6 +2109,7 @@ export default function App() {
     setPlanCancelled(false)
     setError(null)
     setRequestOutcome({ kind: 'pending', destination: payload.destination })
+    setLastPlannedPace(payload.pace ?? null)
     try {
       const t = await planTrip(payload, { signal: controller.signal })
       if (sequence !== planSeqRef.current) return
@@ -3366,6 +3375,11 @@ export default function App() {
                 <span className={TRIP_SOURCE_TAG} data-source={trip.source}>
                   {tripIsExample ? '示例行程' : 'AI 规划'}
                 </span>
+                {lastPlannedPace !== null && !tripIsExample && (
+                  <span className={TRIP_SOURCE_TAG} data-testid="pace-tag" data-pace={lastPlannedPace}>
+                    按{paceLabelOf(lastPlannedPace)}节奏
+                  </span>
+                )}
                 {outcomeNote && (
                   /*
                    * 归属说明是当前请求/视图的临时状态：不写进 trip，保存/备份不会带上它。
@@ -4144,6 +4158,15 @@ export default function App() {
 
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
+                {currentDay && (
+                  <ItineraryHealthCard
+                    day={currentDay}
+                    pace={lastPlannedPace ?? 'balanced'}
+                    factsByStop={currentDay.stops.map(
+                      (stop) => (poiCardsReadRef.current ? projectStopFacts(stop, poiCardsRecord, Date.now()) : null),
+                    )}
+                  />
+                )}
                 {currentDay && <RouteFlowHint day={currentDay} />}
                 {currentDay && (
                   <ItineraryView

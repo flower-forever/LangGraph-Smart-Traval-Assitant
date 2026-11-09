@@ -96,6 +96,25 @@ describe('api client', () => {
     expect(JSON.parse(init.body)).not.toHaveProperty('constraints')
   })
 
+  it('S3：payload 不带 pace 时请求体不含 pace 键；带 pace 时透传', async () => {
+    const legacy = {
+      destination: '杭州', days: 3, departure_date: null, travelers: 2,
+      preferences: '', travel_mode: 'walking' as const,
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(MOCK_TRIP))
+      .mockResolvedValueOnce(jsonResponse(MOCK_TRIP))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await planTrip({ ...legacy })
+    const [, legacyInit] = fetchMock.mock.calls[0]
+    expect(JSON.parse(legacyInit.body)).not.toHaveProperty('pace')
+
+    await planTrip({ ...legacy, pace: 'packed' })
+    const [, paceInit] = fetchMock.mock.calls[1]
+    expect(JSON.parse(paceInit.body)).toMatchObject({ pace: 'packed' })
+  })
+
   it('网络失败抛 ApiError(network)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
     const err = await fetchExampleTrip().catch((e) => e)

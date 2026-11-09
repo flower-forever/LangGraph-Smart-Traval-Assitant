@@ -85,4 +85,58 @@ describe('PlanForm', () => {
     await user.click(screen.getByRole('button', { name: '停止等待' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+
+  /* ───────── S3 · 节奏选择 ───────── */
+
+  it('不选节奏：payload 不含 pace 字段（旧请求体逐字节兼容）', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={onSubmit} loading={false} />)
+
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    const payload = onSubmit.mock.calls[0][0]
+    expect(payload).not.toHaveProperty('pace')
+    // JSON.stringify 后也不该出现 pace 键
+    expect(JSON.stringify(payload)).not.toContain('"pace"')
+  })
+
+  it('选「松弛」：payload 带 pace=relaxed；切回「不选」恢复兼容', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={onSubmit} loading={false} />)
+
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    const relaxed = screen.getByLabelText('松弛')
+    await user.click(relaxed)
+    expect((relaxed as HTMLInputElement).checked).toBe(true)
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ pace: 'relaxed' })
+
+    // 再切回不选：payload 恢复无 pace（第二个表单独立渲染）
+    cleanup()
+    const reset = vi.fn()
+    render(<PlanForm onSubmit={reset} loading={false} />)
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    await user.click(screen.getByLabelText('紧凑'))
+    await user.click(screen.getByLabelText('不选'))
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    expect(reset.mock.calls[0][0]).not.toHaveProperty('pace')
+  })
+
+  it('节奏组是 radiogroup、默认均衡被说明、有阈值提示', () => {
+    render(<PlanForm onSubmit={vi.fn()} loading={false} />)
+    const group = screen.getByTestId('pace-radiogroup')
+    expect(group).toHaveAttribute('role', 'radiogroup')
+    const help = screen.getByTestId('pace-field').textContent ?? ''
+    expect(help).toContain('默认均衡')
+    expect(help).toContain('节奏是建议，不是保证')
+  })
+
+  it('选中档位显示对应阈值说明（均衡 → ≤6 站）', async () => {
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={vi.fn()} loading={false} />)
+    await user.click(screen.getByLabelText('均衡'))
+    expect(screen.getByTestId('pace-field').textContent).toContain('≤6 站/天')
+  })
 })

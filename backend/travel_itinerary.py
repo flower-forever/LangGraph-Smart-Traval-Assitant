@@ -333,6 +333,8 @@ class TripPlanRequest(BaseModel):
     travelers: int = Field(default=1, ge=1, le=50)
     preferences: str = Field(default="", max_length=500)
     travel_mode: Literal["walking", "driving"] = "walking"
+    # 五期 S3 规划节奏：缺省 balanced（旧行为）；旧请求不传该字段照常工作。
+    pace: Literal["relaxed", "balanced", "packed"] = "balanced"
     # F2：省略即旧行为；声明为可选字段，不在顶层收紧 extra="ignore"。
     constraints: PlanningConstraints | None = None
 
@@ -1018,6 +1020,7 @@ def stable_trip_id(request: TripPlanRequest) -> str:
             "travelers": request.travelers,
             "preferences": request.preferences,
             "travel_mode": request.travel_mode,
+            "pace": request.pace,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -1039,8 +1042,30 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "travelers": request.travelers,
         "preferences": request.preferences,
         "travel_mode": request.travel_mode,
+        "pace": request.pace,
     }
     mode_hint = "步行优先：每天站点尽量集中，适合连续步行游览。" if request.travel_mode == "walking" else "驾车：站点之间可以有合理车程，但不要安排跨城赶路。"
+
+    # 五期 S3：按节奏给出规划强度约束。阈值与前端 itineraryHealth.ts PACE_LIMITS 同口径，
+    # 便于用户用「行程体检」复核生成结果是否达到所选节奏。
+    pace_hints: dict[str, str] = {
+        "relaxed": (
+            "节奏：松弛。每天最多 4 个站点；每天首站到达到末站离开不超过 8 小时；"
+            "每天结束时间不晚于 20:00；相邻站点之间至少留 20 分钟缓冲；"
+            "宁可少排几个站，也不要把时间排到分钟级爆满。"
+        ),
+        "balanced": (
+            "节奏：均衡。每天最多 6 个站点；每天首站到达到末站离开不超过 10 小时；"
+            "每天结束时间不晚于 21:00；相邻站点之间至少留 15 分钟缓冲；"
+            "不要把时间排到分钟级爆满。"
+        ),
+        "packed": (
+            "节奏：紧凑。每天最多 8 个站点；每天首站到达到末站离开不超过 12 小时；"
+            "每天结束时间不晚于 22:00；相邻站点之间至少留 10 分钟缓冲；"
+            "即使紧凑也不要把时间排到分钟级爆满。"
+        ),
+    }
+    pace_hint = pace_hints[request.pace]
 
     # 把 < / > 转义成 JSON 的 \u003c / \u003e，避免用户文本提前闭合 <user_input> 标签。
     user_input_json = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -1091,7 +1116,10 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "5. 不要编造站点之间的距离、耗时、实时价格、营业状态、门票余量或预订信息；"
         "路线与耗时由服务端地图接口补充，不确定时使用保守描述。\n"
         f"6. {mode_hint}\n"
-        "7. 只输出 JSON，不要包含 ``` 标记。\n"
+        f"7. {pace_hint}\n"
+        "8. 午餐（11:30-13:30）与晚餐（17:30-19:30）窗口内至少各留 45 分钟用餐时间；"
+        "不确认沿途是否有餐馆时不要编造用餐地点。\n"
+        "9. 只输出 JSON，不要包含 ``` 标记。\n"
         f"{constraints_rule}"
     )
 

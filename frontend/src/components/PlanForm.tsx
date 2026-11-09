@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
 import type { PlanRequest, TravelMode } from '../lib/api'
+import type { HealthPace } from '../lib/itineraryHealth'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Textarea } from './ui/textarea'
@@ -24,6 +25,8 @@ interface FormState {
   travelers: string
   preferences: string
   travel_mode: TravelMode
+  /** 规划节奏：空字符串 = 不选（= 均衡，不传 pace 字段，请求体与旧版一致） */
+  pace: '' | HealthPace
 }
 
 const INITIAL: FormState = {
@@ -33,7 +36,15 @@ const INITIAL: FormState = {
   travelers: '2',
   preferences: '',
   travel_mode: 'walking',
+  pace: '',
 }
+
+/** 节奏选项：label 与 value；不选 = 均衡（pace 字段不进请求体）。 */
+const PACE_OPTIONS: ReadonlyArray<{ value: HealthPace; label: string; help: string }> = [
+  { value: 'relaxed', label: '松弛', help: '≤4 站/天，日跨度 ≤8 小时' },
+  { value: 'balanced', label: '均衡', help: '≤6 站/天，日跨度 ≤10 小时' },
+  { value: 'packed', label: '紧凑', help: '≤8 站/天，日跨度 ≤12 小时' },
+]
 
 interface Errors {
   destination?: string
@@ -136,6 +147,8 @@ export default function PlanForm({ onSubmit, loading, onCancel, plannerUnavailab
       travelers: Number(form.travelers),
       preferences: form.preferences.trim(),
       travel_mode: form.travel_mode,
+      // 不选节奏 = 均衡：pace 字段不进请求体，保持旧版请求逐字节兼容。
+      ...(form.pace !== '' ? { pace: form.pace } : {}),
     })
   }
 
@@ -290,6 +303,42 @@ export default function PlanForm({ onSubmit, loading, onCancel, plannerUnavailab
             disabled={loading}
           />
           <p className={FIELD_HELP}>{form.preferences.length} / 300 字</p>
+        </div>
+
+        <div className={`${FIELD_PREFERENCES} pace-field`} data-testid="pace-field">
+          <span className={FIELD_LABEL} id="pace-label">节奏（可选，默认均衡）</span>
+          <div className={MODE_TOGGLE} role="radiogroup" aria-labelledby="pace-label" data-testid="pace-radiogroup">
+            {PACE_OPTIONS.map(({ value, label }) => (
+              <label key={value} className={MODE_OPTION}>
+                <input
+                  type="radio"
+                  name="pace"
+                  value={value}
+                  className={MODE_RADIO}
+                  checked={form.pace === value}
+                  onChange={() => set('pace', value)}
+                  disabled={loading}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+            <label className={MODE_OPTION}>
+              <input
+                type="radio"
+                name="pace"
+                value=""
+                className={MODE_RADIO}
+                checked={form.pace === ''}
+                onChange={() => set('pace', '')}
+                disabled={loading}
+              />
+              <span>不选</span>
+            </label>
+          </div>
+          <p className={FIELD_HELP}>
+            {PACE_OPTIONS.find(({ value }) => value === form.pace)?.help ??
+              '不选按均衡节奏规划；节奏是建议，不是保证'}
+          </p>
         </div>
       </div>
 

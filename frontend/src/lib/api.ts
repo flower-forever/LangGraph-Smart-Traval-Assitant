@@ -68,6 +68,12 @@ export interface PlanRequest {
   travelers: number
   preferences: string
   travel_mode: TravelMode
+  /**
+   * 规划节奏（五期 S3）：'relaxed' | 'balanced' | 'packed'。
+   * 可选字段：不传时请求体与旧版逐字一致（JSON.stringify 省略 undefined），
+   * 后端缺省按 balanced。
+   */
+  pace?: 'relaxed' | 'balanced' | 'packed'
 }
 
 export type ApiErrorKind =
