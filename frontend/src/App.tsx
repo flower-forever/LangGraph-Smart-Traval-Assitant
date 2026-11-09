@@ -5,6 +5,7 @@ import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
 import RouteFlowHint from './components/RouteFlowHint'
 import ItineraryHealthCard from './components/ItineraryHealthCard'
+import TodayPanel from './components/TodayPanel'
 import { projectStopFacts } from './lib/stopFacts'
 import { paceLabelOf, type HealthPace } from './lib/itineraryHealth'
 import ShareCardPanel from './components/ShareCardPanel'
@@ -4158,6 +4159,17 @@ export default function App() {
 
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
+                {currentDay && trip && (
+                  <TodayPanel
+                    days={trip.days}
+                    poiCardsRecord={poiCardsRecord}
+                    poiCardsLoaded={poiCardsReadRef.current}
+                    checklist={currentWorkspaceRecord?.sidecar.checklist.items ?? []}
+                    constraints={currentWorkspaceRecord?.sidecar.constraints.items ?? []}
+                    activeStopId={activeStopId}
+                    onSelectStop={handleSelectStop}
+                  />
+                )}
                 {currentDay && (
                   <ItineraryHealthCard
                     day={currentDay}
