@@ -75,7 +75,7 @@
 
 ## 面板（`frontend/src/components/PoiCardBackupPanel.tsx`）
 
-- 入口：App 行程工具区「资料卡备份」按钮（`aria-expanded`），不依赖工作区关联；
+- 入口：App 行程工具区「资料卡备份与恢复」按钮（`aria-expanded`），不依赖工作区关联；
   打开时收起锚点 / 约束 / 清单 / 候选池面板，反之亦然。**每次显式打开都会调用
   只读的 `reloadPoiCards()`**，同步最新 `record` 与冻结 raw，不要求刷新页面。
   raw 未变且已加载时直接返回，不重建 `record` 引用——同屏 `PoiCardPanel` 的

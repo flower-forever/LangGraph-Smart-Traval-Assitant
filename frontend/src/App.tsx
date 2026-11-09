@@ -3464,7 +3464,7 @@ export default function App() {
                         <p className={WSH_EYEBROW}>行程工具</p>
                         <p className={WSH_TOOL_NOTE}>
                           锚点 / 约束 / 清单 / 离线导出使用当前已应用的工作区记录；每次改动只做一次内存 transition，
-                          不会自动写库。候选地点池与资料卡备份是独立键，打开 / 保存 / 导入都需要你显式操作。
+                          不会自动写库。候选地点池与「资料卡备份与恢复」是独立键，打开 / 保存 / 导入都需要你显式操作。
                         </p>
                       </div>
                     </div>
@@ -3547,12 +3547,12 @@ export default function App() {
                           setCandidatePoolOpen(false)
                         }}
                       >
-                        资料卡备份
+                        资料卡备份与恢复
                       </button>
                     </div>
                     {currentWorkspaceRecord === null ? (
                       <p className={WSH_TOOL_NOTE}>
-                        锚点 / 约束 / 清单 / 离线导出需要先关联工作区；候选地点池和资料卡备份可以独立使用。
+                        锚点 / 约束 / 清单 / 离线导出需要先关联工作区；候选地点池和「资料卡备份与恢复」可以独立使用。
                       </p>
                     ) : null}
 

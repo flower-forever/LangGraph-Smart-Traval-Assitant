@@ -517,7 +517,7 @@ npx tsc --noEmit --pretty false --strict --noUnusedLocals --noUnusedParameters `
 ### 11.2 三期 S7b：站点简称匹配（2026-11-08，Temp 副本实跑）
 
 - 定向：`assistantDialog.test.ts` + `AssistantDialogPanel.test.tsx` → **71 passed（2 files）**
-- 全量（排除禁触的 `_indep-probe-0400.test.js`）→ **106 files / 2292 tests passed**
+- 全量（当时排除禁触的 `_indep-probe-0400.test.js`；该探针已在四期 S1 删除，现行命令不再需要 `--exclude`）→ **106 files / 2292 tests passed**（历史口径）
 - `tsc -b --force` → **exit 0 / 无输出**；`vite build` → **exit 0**（唯一的 1.27 MB chunk
   体积告警与本期无关，是既有告警）
 - 命令（junction `node_modules` 直跑同一套二进制，绕过 pnpm 11.25 的 deps 校验）：
@@ -525,12 +525,12 @@ npx tsc --noEmit --pretty false --strict --noUnusedLocals --noUnusedParameters `
 ```powershell
 cd frontend
 node node_modules/vitest/vitest.mjs run src/__tests__/assistantDialog.test.ts src/__tests__/AssistantDialogPanel.test.tsx
-node node_modules/vitest/vitest.mjs run --exclude "**/_indep-probe-0400.test.js"
+node node_modules/vitest/vitest.mjs run
 node node_modules/typescript/bin/tsc -b --force
 node node_modules/vite/bin/vite.js build
 ```
 
-> **四期 S1 更新（2026-11-09）**：`_indep-probe-0400.test.js` 已删除，全量命令不再需要 `--exclude`；上面的历史记录保留原样。
+> **四期 S1 更新（2026-11-09）**：`_indep-probe-0400.test.js` 已删除，全量命令不再需要 `--exclude`；上方命令已更新为现行命令，统计数字保留当时口径。
 
 ---
 

@@ -368,7 +368,7 @@ S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 
 
 **验证证据**（2026-11-08，Node v22.21.1）：
 
-- `vitest` 全量（排除禁触探针 `--exclude '**/_indep-probe-0400.test.js'`）：106 文件 / 2292 用例全部通过，0 失败 0 跳过。flake 白名单成员（AppWorkspaceIntegration / AppAssistantDialogIntegration / AppDayReplanTailIntegration / CandidatePoolPanel 压测 / DayReplanConstraintsIntegration / TripDraftWalkingDistanceEditor / WebSourcesPanel）本波全绿，无需启用白名单。
+- `vitest` 全量（当时排除禁触探针 `_indep-probe-0400.test.js`；探针已在四期 S1 删除，现行命令不再需要 `--exclude`）：106 文件 / 2292 用例全部通过，0 失败 0 跳过。flake 白名单成员（AppWorkspaceIntegration / AppAssistantDialogIntegration / AppDayReplanTailIntegration / CandidatePoolPanel 压测 / DayReplanConstraintsIntegration / TripDraftWalkingDistanceEditor / WebSourcesPanel）本波全绿，无需启用白名单。
 - `typecheck`：`tsc -b --force` 通过（check-source-paths OK，198 文件）。
 - `build`：`vite build` 通过（dist CSS ≈ 71.79 kB / JS ≈ 1320.61 kB，较 W3a 的 115.8 kB 再降 ≈ 44 kB，因九个面板 CSS 退役）。
 - 浏览器证据：dev-stub + Vite dev（挂 `@tailwindcss/vite`，复用 W3a 修复版脚本改 W3b 场景）+ 本机 Chromium，全程 loopback 离线、图片请求全 mock；22 张截图（后端状态三态含重新检测 → 行程备份导出 → Markdown 预览 → ICS 展开+下载 → 离线页预览+下载 → 锚点展开→编辑器（填名+起点勾选）→预览提案 → 约束展开→保存→应用（revision 证据）→ 网页搜索表单→结果 → POI 查询展开→候选 → 地图刷新选步行→预览 → 375 窄屏 → 1280 收尾）。桌面与窄屏均无横向滚动；Leaflet 地图容器正常（地图内部样式零改动）。截图目录（不进仓库）：`C:\Users\86133\AppData\Local\Temp\opencode\p3-w3b-shots\`（w3b-01…w3b-23，22 张）。
@@ -412,7 +412,7 @@ S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 
 
 **验证证据**（2026-11-09，Node v22.21.1）：
 
-- `vitest` 全量（排除禁触探针 `--exclude '**/_indep-probe-0400.test.js'`）：本波三轮。第一轮 106 文件 / 2291 用例 2290 过（uiPolish token 口径 + CandidatePoolPanel 压测超时，修正后）；第二轮（preflight 加回 + 链接修复后）106 文件 / 2291 用例全部通过；第三轮（终稿复核，注释收尾后）再次 106 文件 / 2291 用例全部通过，0 失败 0 跳过，flake 白名单成员全程全绿，无需隔离复跑。
+- `vitest` 全量（当时排除禁触探针 `_indep-probe-0400.test.js`；探针已在四期 S1 删除，现行命令不再需要 `--exclude`）：本波三轮。第一轮 106 文件 / 2291 用例 2290 过（uiPolish token 口径 + CandidatePoolPanel 压测超时，修正后）；第二轮（preflight 加回 + 链接修复后）106 文件 / 2291 用例全部通过；第三轮（终稿复核，注释收尾后）再次 106 文件 / 2291 用例全部通过，0 失败 0 跳过，flake 白名单成员全程全绿，无需隔离复跑。
 - `typecheck`：`tsc -b --force` 通过（check-source-paths OK，198 文件）。
 - `build`：`vite build` 通过（dist CSS ≈ 63.9 kB / JS ≈ 1332.9 kB；W3b 71.79 kB → 再降 ≈ 7.9 kB，tokens.css 与 shell 旧规则退役，preflight 增量部分抵消）。
 - 浏览器证据：dev-stub + Vite dev（挂 `@tailwindcss/vite`）+ 本机 Chromium，全程 loopback 离线、瓦片 mock；截图目录（不进仓库）`C:\Users\86133\AppData\Local\Temp\opencode\p3-w4-shots\`：preflight 前后各 6 张（主线顶部/表单校验/表单提交/skip-link/375 窄屏/1280 全页，pre/post 成对）+ hallmark 终审补充 5 张（站点详情层级/天气结果/候选池空态/命中区/375 复核）+ preflight-diff.json（磁盘两遍跑口径的正面对比记录）/ preflight-impact-raw.json（注入法失效机制的原始记录——返修后以剥离测试忠实重导出，替代此前误拷贝失真文件）/ before-snapshot.json。桌面与窄屏均无横向滚动；Leaflet 地图容器、弹窗、站点圆点正常（地图内部样式零改动，归属链接恢复规则除外）。
@@ -425,7 +425,7 @@ S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 
 
 **四期 S5 顺路度提示登记**：新增纯函数 `lib/routeFlow.ts`（`SWAP_IMPROVEMENT_THRESHOLD = 0.10`、`haversineKm`、`analyzeDayRoute`）与只读组件 `components/RouteFlowHint.tsx`。按当日站点原顺序计算 haversine 总路程，枚举 n−1 种相邻交换，取交换后总路程最短者；缩短比例 ≥10% 才提示（边界含等号，并列取最小 1-based 序号）。坐标缺失/非法、站点不足、无改善或全程零距离时整卡不渲染，绝不拿 (0,0) 填充。提示卡无按钮/应用入口，不写任何存储键，不自动改行程；主文案固定「本日路线可优化：第 {index} 站与第 {index+1} 站互换，路程约缩短 {X}%（约 {Y} 公里）。」，百分比与公里均保留 1 位小数，辅助说明明确「不是全局最优路线」。`App.tsx` 在 `ITINERARY_PANE` 内、`ItineraryView` 之前渲染（仅 `currentDay` 存在时），列表与时间轴共用同一提示。样式使用 `--color-warn-bg` / `--color-warn-ink` 语义变量，`min-w-0` + `max-w-[72ch]` + `[overflow-wrap:anywhere]`，深浅主题可读、375 窄屏不横溢。详见 `docs/ROUTE_FLOW.md`。
 
-**四期 S6 资料卡备份与恢复登记**：新增纯数据层 `lib/poiCardBackup.ts`（`POI_CARD_BACKUP_VERSION = 1`、`MAX_POI_CARDS_BACKUP_BYTES = 2 MiB`、`buildPoiCardBackup` / `serializePoiCardBackup` / `parsePoiCardBackup` / `planPoiCardImport` / `poiCardBackupFileName`）与面板 `components/PoiCardBackupPanel.tsx`。入口在 App 行程工具区「资料卡备份」（`aria-expanded`，不依赖工作区关联，与锚点/约束/清单/候选池互斥展开）。导出只读、零写入，文件仅含 `version` / `exportedAt` / `cards`；导入隐藏文件输入 → 文本解析 → 预览（新增/已存在按 identityKey 分组、默认跳过、覆盖前明示替换 Y 张）→「确认导入」才经父级 `handleSavePoiCards` 写入 `poi-cards:v1`（expectedRaw 冻结门）；取消/关闭/换文件零写入，失败保旧、原字节不动。逐卡校验复用 `validatePoiCardsRecord`，version ≠ 1 不迁移，重复 id / identityKey、超 200 张、超 2 MiB 均 typed 拒绝；全流程零网络、只写一个存储键。详见 `docs/POI_CARD_BACKUP.md`。
+**四期 S6 资料卡备份与恢复登记**：新增纯数据层 `lib/poiCardBackup.ts`（`POI_CARD_BACKUP_VERSION = 1`、`MAX_POI_CARDS_BACKUP_BYTES = 2 MiB`、`buildPoiCardBackup` / `serializePoiCardBackup` / `parsePoiCardBackup` / `planPoiCardImport` / `poiCardBackupFileName`）与面板 `components/PoiCardBackupPanel.tsx`。入口在 App 行程工具区「资料卡备份与恢复」（`aria-expanded`，不依赖工作区关联，与锚点/约束/清单/候选池互斥展开）。导出只读、零写入，文件仅含 `version` / `exportedAt` / `cards`；导入隐藏文件输入 → 文本解析 → 预览（新增/已存在按 identityKey 分组、默认跳过、覆盖前明示替换 Y 张）→「确认导入」才经父级 `handleSavePoiCards` 写入 `poi-cards:v1`（expectedRaw 冻结门）；取消/关闭/换文件零写入，失败保旧、原字节不动。逐卡校验复用 `validatePoiCardsRecord`，version ≠ 1 不迁移，重复 id / identityKey、超 200 张、超 2 MiB 均 typed 拒绝；全流程零网络、只写一个存储键。详见 `docs/POI_CARD_BACKUP.md`。
 
 **四期 S6 返修登记（2026-11-09 独立验收后）**：导入结果改由面板自己持有——`handleSavePoiCards` 返回本次 `PoiCardsSaveResult`，面板 `await onSave` 后只按本次结果更新导入状态，不再复用资料卡编辑面板的共享 `poiCardsSaveStatus / poiCardsSaveMessage`；关闭 / 卸载后在途结果不复活，PoiCardPanel 既有共享状态行为不变。新增只读 `reloadPoiCards()`（同步冻结 raw 与 record，零写入）：每次显式打开备份面板重读最新库；冲突失败显示「资料卡库已被其它入口更新」并提供「重新载入资料卡库」按钮，清空预览后可在本会话重新选文件导入，无需刷新页面。预览分组计数与覆盖警告改为按当前 `record` + 文件卡片 + 策略 `useMemo` 实时计算，确认使用同一份 plan；库在预览后变化会提示核对。选择文件先检查 `file.size`，超过 2 MiB 直接 typed 拒绝，不再先读完整文件。
 

@@ -129,7 +129,7 @@ describe('App × 资料卡备份与恢复', () => {
     const user = userEvent.setup()
     render(<App />)
     await screen.findByText(MOCK_TRIP.title)
-    const entry = screen.getByRole('button', { name: '资料卡备份' })
+    const entry = screen.getByRole('button', { name: '资料卡备份与恢复' })
     const before = snapshotStorage()
     expect(window.localStorage.getItem(POI_CARDS_STORAGE_KEY)).toBeNull()
 
@@ -168,7 +168,7 @@ describe('App × 资料卡备份与恢复', () => {
       await screen.findByText(MOCK_TRIP.title)
       const before = snapshotStorage()
 
-      const entry = screen.getByRole('button', { name: '资料卡备份' })
+      const entry = screen.getByRole('button', { name: '资料卡备份与恢复' })
       expect(entry).toHaveAttribute('aria-expanded', 'false')
       await user.click(entry)
       expect(entry).toHaveAttribute('aria-expanded', 'true')
@@ -271,7 +271,7 @@ describe('App × 资料卡备份与恢复', () => {
     await user.clear(intro)
     await user.type(intro, '尚未保存的新介绍。')
 
-    await user.click(screen.getByRole('button', { name: '资料卡备份' }))
+    await user.click(screen.getByRole('button', { name: '资料卡备份与恢复' }))
     expect(screen.getByRole('region', { name: '资料卡备份与恢复' })).toBeInTheDocument()
     // 表单 state 没有被 record 引用重建触发 useEffect 重置。
     expect(screen.getByLabelText(/介绍/)).toHaveValue('尚未保存的新介绍。')
@@ -297,7 +297,7 @@ describe('App × 资料卡备份与恢复', () => {
     const external = makeRecord([makeCard('card-1', '灵隐寺', '法云弄1号', '外部新介绍。')])
     window.localStorage.setItem(POI_CARDS_STORAGE_KEY, JSON.stringify(external))
 
-    await user.click(screen.getByRole('button', { name: '资料卡备份' }))
+    await user.click(screen.getByRole('button', { name: '资料卡备份与恢复' }))
     expect(screen.getByRole('region', { name: '资料卡备份与恢复' })).toBeInTheDocument()
     expect(screen.getByText('当前资料卡库共 1 张卡。')).toBeInTheDocument()
     // raw 真变化：允许同步新库并重置同屏表单，避免用户继续编辑旧快照。
@@ -321,7 +321,7 @@ describe('App × 资料卡备份与恢复', () => {
       if (descriptor) Object.defineProperty(window, 'localStorage', descriptor)
     }
 
-    await user.click(screen.getByRole('button', { name: '资料卡备份' }))
+    await user.click(screen.getByRole('button', { name: '资料卡备份与恢复' }))
     const panel = screen.getByRole('region', { name: '资料卡备份与恢复' })
     expect(within(panel).getByText('当前资料卡库共 0 张卡。')).toBeInTheDocument()
   })
