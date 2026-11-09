@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEv
 import './app.css'
 import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
-import ItineraryList from './components/ItineraryList'
+import ItineraryView from './components/ItineraryView'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
@@ -4052,7 +4052,7 @@ export default function App() {
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
                 {currentDay && (
-                  <ItineraryList
+                  <ItineraryView
                     day={currentDay}
                     activeStopId={activeStopId}
                     onSelectStop={handleSelectStop}

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TripDay } from '../lib/api'
 import { displayTime, formatDate, formatDistance, formatDuration, MODE_LABELS, osmSearchUrl, ROUTE_LABELS } from '../lib/format'
-import { findPoiCardByName, type PoiCardsRecordV1 } from '../lib/poiCards'
+import type { PoiCardsRecordV1 } from '../lib/poiCards'
 import { Button } from '@/components/ui/button'
+import StopPoiCard from './StopPoiCard'
 interface ItineraryListProps {
   day: TripDay
   activeStopId: string | null
@@ -193,27 +194,7 @@ export default function ItineraryList({ day, activeStopId, onSelectStop, poiCard
                       </a>
                     </p>
                   )}
-                  {(() => {
-                    const card = findPoiCardByName(poiCards, stop.name)
-                    if (card === null) return null
-                    return (
-                      <div
-                        className="mt-3 rounded-[10px] border border-border bg-card p-3"
-                        data-testid={`stop-poi-card-${stop.id}`}
-                        role="note"
-                        aria-label={`景点资料卡：${card.name}`}
-                      >
-                        <p className="m-0 mb-1 text-sm font-semibold text-foreground">景点资料卡 · 未核实</p>
-                        <p className="m-0 mb-1 text-sm text-[color:var(--color-secondary-foreground)]">介绍：{card.intro.trim() || '未知'}</p>
-                        <p className="m-0 mb-1 text-sm text-[color:var(--color-secondary-foreground)]">开放时间：{card.openingHours.trim() || '未知'}</p>
-                        <p className="m-0 mb-1 text-sm text-[color:var(--color-secondary-foreground)]">门票：{card.ticket.trim() || '未知'}</p>
-                        <p className="m-0 text-xs text-muted-foreground">
-                          按名称匹配，请自行核对
-                          {card.provenance.intro?.source ? ` · 来源：${card.provenance.intro.source}` : ''}
-                        </p>
-                      </div>
-                    )
-                  })()}
+                  <StopPoiCard stop={stop} poiCards={poiCards} />
                 </div>
               )}
 

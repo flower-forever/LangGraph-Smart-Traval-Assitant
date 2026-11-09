@@ -404,6 +404,10 @@ S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 
 
 **四期 S2 深色模式登记**：`src/theme.css` 在 `:root` / `@theme` 之后新增 `.dark` 全套语义覆盖（深暖灰底 + 提亮朱砂，浅色变量一字未改；正文/辅助文字对比度 ≥4.5:1）；`src/lib/theme.ts` + `useTheme.ts` + `components/ThemeToggle.tsx` 提供「跟随系统 / 浅色 / 深色」三态，键名 `travel-assistant:theme:v1`；`index.html` 头部内联同步脚本消除 FOUC。`ui/select.tsx` / `ui/checkbox.tsx` 的 data-URI SVG 走 `dark:` 双值；Leaflet 瓦片保留原图、深色下仅降亮。详见 `docs/THEME.md`。
 
+**四期 S3 时间轴视图登记**：新增 `components/TimelineView.tsx`，行程区改由 `components/ItineraryView.tsx` 承载「列表 / 时间轴」分段切换（默认列表、`aria-pressed`、不持久化）；列表与时间轴共用 `activeStopId` / `onSelectStop` / `poiCards`，切换不改选中站点、零存储写入。时间轴以 `<ol>` 呈现停点顺序，节点可展开讲解、地址、时长、坐标/OSM 链接与资料卡；站间 leg 显示模式、路线类型、距离、时长，缺失时统一「时间未知 / 地址未知 / 时长未知 / 距离未知 / 未提供本段路线信息。」。资料卡摘要抽为共享 `components/StopPoiCard.tsx`，列表既有 DOM 文案 / testid 不变。全部使用 theme.css 语义变量，375 窄屏时间列收窄不横溢。详见 `docs/TIMELINE.md`。
+
+**验证证据**（2026-11-09，Node v22.21.1，四期 S3）：`vitest` 全量 112 文件 / 2351 用例全部通过，0 失败 0 跳过；`npm run typecheck` 通过（check-source-paths OK，210 个 .ts/.tsx）；`npm run build` 通过（dist CSS 68.26 kB / JS 1,343.65 kB，JS 体积警告为既有登记）；`git diff --check` clean。
+
 **四期 S1 收尾口径**：A8/A12 对应入口名与收起按钮已按上表统一；探针已于四期 S1 删除，今后全量不再需要 `--exclude`。四期 S1 起 vitest 全局 `testTimeout=20s`，既有 per-test 标注保留（冗余无害）。
 
 **验证证据**（2026-11-09，Node v22.21.1）：
