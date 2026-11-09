@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- 四期 S2：首帧前同步落主题，避免深色用户看到浅色闪屏（FOUC）。
+         只读 localStorage 的主题键并用 matchMedia 解析 system；不引模块、不请求网络。 -->
+    <script>
+      (function () {
+        var pref = null;
+        try {
+          pref = localStorage.getItem('travel-assistant:theme:v1');
+        } catch (e) {}
+        var systemDark = false;
+        try {
+          systemDark =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } catch (e) {}
+        var dark = pref === 'dark' || (pref !== 'light' && systemDark);
+        if (dark) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = 'dark';
+        }
+      })();
+    </script>
     <meta name="description" content="路书——逐日路线、中文讲解与交互式地图，帮你把一趟旅行排得清楚。" />
     <meta name="theme-color" content="#f5f2ea" />
     <title>路书 · 智能出行助手</title>

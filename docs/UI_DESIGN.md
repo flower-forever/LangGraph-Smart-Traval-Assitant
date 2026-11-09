@@ -402,6 +402,8 @@ S1 时的来源口径：`frontend/tokens.css`（只读）。`src/theme.css` 做 
 | A11 | 已修 | W2 radio/checkbox min-h-6/size-4；W4 实测 4 个 radio 命中区全部 ≥24px 且 label 包裹整行，0 个裸小控件 |
 | A12 | 已修（四期 S1：面板收起按钮统一为「收起」） | PanelHeader 骨架统一（eyebrow/title/status/collapse）；面板级收起按钮文案统一为「收起」（DayReplan/MapRefresh/AssistantDialog/Constraints/Checklist/Versions），取消编辑与撤销提示等非收起按钮保持原语义。 |
 
+**四期 S2 深色模式登记**：`src/theme.css` 在 `:root` / `@theme` 之后新增 `.dark` 全套语义覆盖（深暖灰底 + 提亮朱砂，浅色变量一字未改；正文/辅助文字对比度 ≥4.5:1）；`src/lib/theme.ts` + `useTheme.ts` + `components/ThemeToggle.tsx` 提供「跟随系统 / 浅色 / 深色」三态，键名 `travel-assistant:theme:v1`；`index.html` 头部内联同步脚本消除 FOUC。`ui/select.tsx` / `ui/checkbox.tsx` 的 data-URI SVG 走 `dark:` 双值；Leaflet 瓦片保留原图、深色下仅降亮。详见 `docs/THEME.md`。
+
 **四期 S1 收尾口径**：A8/A12 对应入口名与收起按钮已按上表统一；探针已于四期 S1 删除，今后全量不再需要 `--exclude`。四期 S1 起 vitest 全局 `testTimeout=20s`，既有 per-test 标注保留（冗余无害）。
 
 **验证证据**（2026-11-09，Node v22.21.1）：

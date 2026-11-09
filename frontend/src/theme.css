@@ -157,3 +157,72 @@
   --text-md: var(--text-md);
   --text-display: var(--text-display);
 }
+
+/* ---- 深色模式（四期 S2） ----
+ * 色板与浅色同源：暖灰纸底（hue 85）+ 暗调朱砂主色（hue 30）。
+ * 放在 @theme 之后，保证 .dark 同时覆盖语义变量与静态扩展 token（同特异性下后者生效）。
+ * 对比度口径（WCAG 相对亮度实算，均为前景/底色组合）：
+ *   foreground/background 13.6 · card 12.4
+ *   muted-foreground/background 7.4 · card 6.8 · secondary 6.2 · accent 5.6 · warn-bg 5.7
+ *   --color-faint/background 6.2 · card 5.6 · secondary 5.2 · warn-bg 4.7
+ *   accent-foreground（朱砂文字 / focus）/background 7.3 · card 6.7 · accent 5.6
+ *   destructive/card 5.4 · background 5.9；destructive 在 destructive/10 叠加卡面上 4.7
+ *   primary-foreground/primary 5.3 · destructive-foreground/destructive 6.5
+ * 深色下 --primary 提亮到 L=65%（按钮面可被看见，作为 link 文字在 card 上 4.7:1），
+ * --primary-foreground 改用深墨；
+ * --accent-foreground 提亮到 L=74%，它同时承担朱砂文字与 focus ring；--destructive 提亮。
+ * 阴影加深，避免深底上纸面阴影完全消失。浅色变量（上方 :root / @theme）一字未改。
+ */
+.dark {
+  color-scheme: dark;
+
+  /* ---- 表面 / 文字 ---- */
+  --background: oklch(21% 0.012 85);            /* 深暖灰纸底 */
+  --foreground: oklch(91% 0.012 85);            /* 暖白正文 */
+  --card: oklch(24.5% 0.012 85);                /* 卡面略亮 */
+  --card-foreground: oklch(91% 0.012 85);
+  --popover: oklch(24.5% 0.012 85);
+  --popover-foreground: oklch(91% 0.012 85);
+
+  /* ---- 主色：朱砂（深色下提亮，按钮文字用深墨） ---- */
+  --primary: oklch(65% 0.15 30);
+  --primary-foreground: oklch(19% 0.01 85);
+
+  /* ---- 次级 / 弱化 ---- */
+  --secondary: oklch(27.5% 0.014 85);
+  --secondary-foreground: oklch(82% 0.014 85);
+  --muted: oklch(27.5% 0.014 85);
+  --muted-foreground: oklch(73% 0.014 85);
+  --accent: oklch(31% 0.05 30);                 /* 朱砂淡底（暗） */
+  --accent-foreground: oklch(74% 0.12 30);      /* 朱砂文字 / focus ring */
+
+  /* ---- 危险动作（提亮到正文可读；深墨文字） ---- */
+  --destructive: oklch(69% 0.19 27);
+  --destructive-foreground: oklch(16% 0.02 27);
+
+  /* ---- 线 / 焦点 ---- */
+  --border: oklch(32% 0.014 85);
+  --input: oklch(40% 0.016 85);
+  --ring: oklch(74% 0.12 30);
+
+  /* ---- 图表（色板同源，深色下整体提亮） ---- */
+  --chart-1: oklch(65% 0.15 30);
+  --chart-2: oklch(70% 0.11 150);
+  --chart-3: oklch(72% 0.09 65);
+  --chart-4: oklch(70% 0.07 230);
+  --chart-5: oklch(78% 0.015 85);
+  --chart-6: oklch(45% 0.016 85);
+
+  /* ---- 静态扩展 token（@theme 静态值在深色下的覆盖） ---- */
+  --color-faint: oklch(68% 0.012 85);
+  --color-ok: oklch(70% 0.11 150);
+  --color-warn-bg: oklch(30% 0.04 85);
+  --color-warn-ink: oklch(78% 0.1 70);
+  --color-line-strong: oklch(42% 0.016 85);
+  --color-map-water: oklch(28% 0.02 230);
+  --color-primary-strong: oklch(70% 0.14 30);
+
+  /* ---- 阴影：深底上加深，保留纸面层次 ---- */
+  --shadow-1: 0 1px 2px oklch(0% 0 0 / 0.55);
+  --shadow-2: 0 2px 12px oklch(0% 0 0 / 0.6);
+}

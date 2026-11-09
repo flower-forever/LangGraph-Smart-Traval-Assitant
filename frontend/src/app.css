@@ -18,6 +18,10 @@
 /* shadcn/ui 语义变量 + 设计刻度 + Tailwind 桥接（唯一 token 来源） */
 @import "./theme.css";
 
+/* Tailwind v4：`dark:` 变体跟随 <html class="dark">（三态主题由 useTheme 写在 documentElement），
+ * 而不是只看 prefers-color-scheme——显式「深色」要能在系统浅色时生效，「浅色」同理。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ---------- 基础 ----------
  * preflight（layer base）承担元素级重置（h1-h6/p/ul/表单默认、img/svg 块级化等）；
  * 自有基础重置只做 preflight 不覆盖的页面骨架与品牌口径：
@@ -68,6 +72,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .leaflet-container {
   font-family: var(--font-body);
   background: var(--color-map-water);
+}
+
+/* 四期 S2：深色模式下降亮外部瓦片图片（瓦片本身仍是原图，不做重着色；只压亮度/饱和度，
+ * 不触碰交互层 pointer-events / z-index）。浅色模式不加任何 filter。 */
+.dark .leaflet-tile-pane {
+  filter: brightness(0.82) contrast(1.02) saturate(0.9);
 }
 
 .leaflet-container .leaflet-popup-content-wrapper {
@@ -125,6 +135,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
   text-decoration: underline;
 }
 
+/* 四期 S2：深色下地图归属链接提亮（浅色保持 Leaflet/UA 原蓝 #0078a8 不变） */
+.dark .leaflet-control-attribution a {
+  color: #8ec9ea;
+}
+
 /* preflight 恢复规则：a{text-decoration:inherit} 使原本靠 UA 下划线的应用内链接
    全部失去下划线（可达性回归）。在 base 层按源顺序恢复 UA 下划线基线；
    放 base 层（非未分层）是为了让 utilities 的 no-underline 等类仍可按层序覆盖。 */
@@ -165,7 +180,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .stop-dot[data-active="true"] {
   border-color: var(--primary);
   background: var(--primary);
-  color: var(--card);
+  /* 语义上应跟随主按钮文字色（浅色下与 --card 同值，零视觉变化；深色下保证亮朱砂上的深墨对比） */
+  color: var(--primary-foreground);
   transform: scale(1.15);
 }
 

@@ -6,6 +6,7 @@ import ItineraryList from './components/ItineraryList'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
+import ThemeToggle from './components/ThemeToggle'
 import TripDraftEditor from './components/TripDraftEditor'
 import DayReplanPanel, {
   type DayReplanAdapter,
@@ -3192,7 +3193,7 @@ export default function App() {
           <span className={BRAND_SUB}>智能出行助手 · 逐日路线与中文讲解</span>
         </div>
         <div className="flex-1" />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div
             className="flex items-center gap-2 text-sm text-[color:var(--color-secondary-foreground)]"
             data-testid="backend-state"
@@ -3226,6 +3227,7 @@ export default function App() {
           >
             重新检测
           </Button>
+          <ThemeToggle />
         </div>
       </header>
 

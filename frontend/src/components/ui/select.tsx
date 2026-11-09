@@ -8,7 +8,9 @@ import { cn } from '@/lib/utils'
  *
  * 技术限制（W2 验收登记）：SVG data-URI 里的 stroke 色无法用 CSS 变量，
  * 下面 %23405640 是 theme.css --secondary-foreground（oklch(38% 0.02 150)）
- * 的 sRGB 近似值；改主题时需同步这两个值（theme.css 是唯一权威）。
+ * 的 sRGB 近似值；四期 S2 深色模式新增 %23c8c4ba（.dark 下
+ * --secondary-foreground = oklch(82% 0.014 85) 的 sRGB 近似），用 dark: 变体切换。
+ * 改主题时需同步这些值（theme.css 是唯一权威）。
  */
 function Select({
   className,
@@ -19,7 +21,7 @@ function Select({
       data-slot="select"
       className={cn(
         'flex h-9 w-full min-w-0 cursor-pointer appearance-none rounded-[6px] border border-input bg-secondary px-3 py-1 pr-8 text-base',
-        'bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2712%27%20height%3D%2712%27%20viewBox%3D%270%200%2012%2012%27%3E%3Cpath%20fill%3D%27none%27%20stroke%3D%27%23405640%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20d%3D%27M3%204.5l3%203%203-3%27%2F%3E%3C%2Fsvg%3E")] bg-[length:12px_12px] bg-[right_0.5rem_center] bg-no-repeat',
+        'bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2712%27%20height%3D%2712%27%20viewBox%3D%270%200%2012%2012%27%3E%3Cpath%20fill%3D%27none%27%20stroke%3D%27%23405640%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20d%3D%27M3%204.5l3%203%203-3%27%2F%3E%3C%2Fsvg%3E")] dark:bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2712%27%20height%3D%2712%27%20viewBox%3D%270%200%2012%2012%27%3E%3Cpath%20fill%3D%27none%27%20stroke%3D%27%23c8c4ba%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20d%3D%27M3%204.5l3%203%203-3%27%2F%3E%3C%2Fsvg%3E")] bg-[length:12px_12px] bg-[right_0.5rem_center] bg-no-repeat',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
         'aria-invalid:border-destructive',
         'disabled:cursor-not-allowed disabled:opacity-55',
