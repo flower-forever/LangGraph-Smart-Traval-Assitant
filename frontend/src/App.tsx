@@ -3,6 +3,7 @@ import './app.css'
 import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
+import RouteFlowHint from './components/RouteFlowHint'
 import ShareCardPanel from './components/ShareCardPanel'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
@@ -4054,6 +4055,7 @@ export default function App() {
 
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
+                {currentDay && <RouteFlowHint day={currentDay} />}
                 {currentDay && (
                   <ItineraryView
                     day={currentDay}
