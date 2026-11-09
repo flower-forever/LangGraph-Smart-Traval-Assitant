@@ -33,6 +33,7 @@ import CandidatePoolPanel, {
   type CandidatePoolStorageStatus,
 } from './components/CandidatePoolPanel'
 import PoiCardPanel from './components/PoiCardPanel'
+import PoiCardBackupPanel from './components/PoiCardBackupPanel'
 import type { PoiCardPrefill } from './lib/poiCardPrefill'
 import {
   createEmptyPoiCardsRecord,
@@ -40,6 +41,7 @@ import {
   loadPoiCardsRecord,
   savePoiCardsRecord,
   type PoiCardsRecordV1,
+  type PoiCardsSaveResult,
 } from './lib/poiCards'
 import OfflineTripPanel from './components/OfflineTripPanel'
 import { emptyBudgetSession, tripOwnerSnapshot, type BudgetSessionState } from './lib/tripBudget'
@@ -443,6 +445,8 @@ export default function App() {
   const [constraintsOpen, setConstraintsOpen] = useState(false)
   const [checklistOpen, setChecklistOpen] = useState(false)
   const [candidatePoolOpen, setCandidatePoolOpen] = useState(false)
+  /** 资料卡备份与恢复面板：独立键，不依赖工作区关联。 */
+  const [poiCardBackupOpen, setPoiCardBackupOpen] = useState(false)
 
   /** 候选库独立键：只在显式打开 / 保存 / 导入 / 导出时读写，不挂到工作区记录。 */
   const [candidatesRecord, setCandidatesRecord] = useState<CandidatesRecordV1 | null>(null)
@@ -486,16 +490,22 @@ export default function App() {
   poiCardsRecordRef.current = poiCardsRecord
 
   /**
-   * 读取资料卡库（只读）：资料卡是展示位的辅助信息，跟随一次页面加载读取；
-   * 读取失败 / corrupt 时保持 null，界面只少一个展示位，不阻断行程。
-   * 空存储按「空库」处理（新建空记录）：收进 / 手动新建都从合法空库开始，
-   * 不是假装有数据——存储里确实什么都没有。本函数从不写任何键。
+   * 显式重新读取资料卡库（只读，零写入）：同步冻结 raw 与 record。
+   * 空存储 → 合法空记录；corrupt / unknown_version / unavailable → null。
+   * 打开备份面板时调用一次（显式打开 = 读取最新），冲突后也由用户显式调用。
+   * 空白串按 empty 口径把冻结 raw 归一到 null，与 savePoiCardsRecord 的比对口径一致。
    */
-  const ensurePoiCardsLoaded = useCallback(() => {
-    if (poiCardsReadRef.current) return
-    poiCardsReadRef.current = true
+  const reloadPoiCards = useCallback(() => {
     const read = loadPoiCardsRecord(storageRef.current ?? undefined)
-    poiCardsRawRef.current = read.raw
+    const nextRaw = read.status === 'empty' ? null : read.raw
+    // 只有真正读到了本地库才允许短路；unavailable 的 raw 也是 null，
+    // 不能当成「已加载的空库」，否则存储恢复后打开面板仍会误报不可用。
+    const loaded = read.status !== 'unavailable'
+    // raw 未变且已加载：不重建 record 引用。PoiCardPanel 的 useEffect 依赖
+    // record；即使内容相同，新引用也会重置同屏未保存的表单编辑。
+    if (loaded && poiCardsReadRef.current && nextRaw === poiCardsRawRef.current) return
+    poiCardsReadRef.current = loaded
+    poiCardsRawRef.current = nextRaw
     if (read.status === 'empty') {
       const empty = createEmptyPoiCardsRecord(Date.now())
       setPoiCardsRecord(empty.ok ? empty.value : null)
@@ -504,26 +514,53 @@ export default function App() {
     setPoiCardsRecord(read.record)
   }, [])
 
-  /** 显式保存：把面板给的整条记录写入 poiCards:v1；失败时原字节不动。 */
-  const handleSavePoiCards = useCallback((record: PoiCardsRecordV1) => {
-    const storage = storageRef.current
-    setPoiCardsSaveStatus('saving')
-    setPoiCardsSaveMessage(null)
-    void savePoiCardsRecord(record, {
-      storage: storage ?? undefined,
-      expectedRaw: poiCardsRawRef.current,
-    }).then((result) => {
+  /**
+   * 读取资料卡库（只读）：资料卡是展示位的辅助信息，跟随一次页面加载读取；
+   * 读取失败 / corrupt 时保持 null，界面只少一个展示位，不阻断行程。
+   * 空存储按「空库」处理（新建空记录）：收进 / 手动新建都从合法空库开始，
+   * 不是假装有数据——存储里确实什么都没有。本函数从不写任何键。
+   */
+  const ensurePoiCardsLoaded = useCallback(() => {
+    if (poiCardsReadRef.current) return
+    reloadPoiCards()
+  }, [reloadPoiCards])
+
+  /**
+   * 显式保存：把面板给的整条记录写入 poiCards:v1；失败时原字节不动。
+   * 返回本次结果：资料卡编辑面板继续用共享保存状态；备份面板只按本次返回值
+   * 显示导入成功 / 失败，避免把别处的 saved / error 误报成导入结果。
+   */
+  const handleSavePoiCards = useCallback(
+    async (record: PoiCardsRecordV1): Promise<PoiCardsSaveResult> => {
+      const storage = storageRef.current
+      setPoiCardsSaveStatus('saving')
+      setPoiCardsSaveMessage(null)
+      let result: PoiCardsSaveResult
+      try {
+        result = await savePoiCardsRecord(record, {
+          storage: storage ?? undefined,
+          expectedRaw: poiCardsRawRef.current,
+        })
+      } catch {
+        result = {
+          ok: false,
+          reason: 'unknown',
+          message: '写入资料卡库失败；已有数据保持原样，请重试。',
+        }
+      }
       if (!result.ok) {
         setPoiCardsSaveStatus('error')
         setPoiCardsSaveMessage(result.message)
-        return
+        return result
       }
       poiCardsRawRef.current = result.raw
       setPoiCardsRecord(result.record)
       setPoiCardsSaveStatus('saved')
       setPoiCardsSaveMessage(`已保存资料卡（${result.record.cards.length} 张，${result.bytes} 字节）。`)
-    })
-  }, [])
+      return result
+    },
+    [],
+  )
 
   /**
    * S3 收进：来源面板「收进资料卡」→ 打开预填表单（PoiCardPanel 新建态 + prefill）。
@@ -3427,7 +3464,7 @@ export default function App() {
                         <p className={WSH_EYEBROW}>行程工具</p>
                         <p className={WSH_TOOL_NOTE}>
                           锚点 / 约束 / 清单 / 离线导出使用当前已应用的工作区记录；每次改动只做一次内存 transition，
-                          不会自动写库。候选地点池是独立键，打开 / 保存 / 导入都需要你显式操作。
+                          不会自动写库。候选地点池与资料卡备份是独立键，打开 / 保存 / 导入都需要你显式操作。
                         </p>
                       </div>
                     </div>
@@ -3441,6 +3478,7 @@ export default function App() {
                           setConstraintsOpen(false)
                           setChecklistOpen(false)
                           setCandidatePoolOpen(false)
+                          setPoiCardBackupOpen(false)
                         }}
                         disabled={currentWorkspaceRecord === null}
                       >
@@ -3455,6 +3493,7 @@ export default function App() {
                           setAnchorsOpen(false)
                           setChecklistOpen(false)
                           setCandidatePoolOpen(false)
+                          setPoiCardBackupOpen(false)
                         }}
                         disabled={currentWorkspaceRecord === null}
                       >
@@ -3469,6 +3508,7 @@ export default function App() {
                           setAnchorsOpen(false)
                           setConstraintsOpen(false)
                           setCandidatePoolOpen(false)
+                          setPoiCardBackupOpen(false)
                         }}
                         disabled={currentWorkspaceRecord === null}
                       >
@@ -3482,16 +3522,37 @@ export default function App() {
                           if (candidatePoolOpen) {
                             setCandidatePoolOpen(false)
                           } else {
+                            setPoiCardBackupOpen(false)
                             openCandidatePool()
                           }
                         }}
                       >
                         候选地点池
                       </button>
+                      <button
+                        type="button"
+                        className={WSH_BTN}
+                        aria-expanded={poiCardBackupOpen}
+                        onClick={() => {
+                          if (poiCardBackupOpen) {
+                            setPoiCardBackupOpen(false)
+                          } else {
+                            // 显式打开 = 读取最新；不写存储，只同步 record 与冻结 raw。
+                            reloadPoiCards()
+                            setPoiCardBackupOpen(true)
+                          }
+                          setAnchorsOpen(false)
+                          setConstraintsOpen(false)
+                          setChecklistOpen(false)
+                          setCandidatePoolOpen(false)
+                        }}
+                      >
+                        资料卡备份
+                      </button>
                     </div>
                     {currentWorkspaceRecord === null ? (
                       <p className={WSH_TOOL_NOTE}>
-                        锚点 / 约束 / 清单 / 离线导出需要先关联工作区；候选地点池可以独立使用。
+                        锚点 / 约束 / 清单 / 离线导出需要先关联工作区；候选地点池和资料卡备份可以独立使用。
                       </p>
                     ) : null}
 
@@ -3607,6 +3668,17 @@ export default function App() {
                             撤销最近一次候选库导入
                           </button>
                         ) : null}
+                      </div>
+                    ) : null}
+
+                    {poiCardBackupOpen ? (
+                      <div className={WSH_TOOL_PANEL}>
+                        <PoiCardBackupPanel
+                          record={poiCardsRecord}
+                          onSave={handleSavePoiCards}
+                          onReload={reloadPoiCards}
+                          onClose={() => setPoiCardBackupOpen(false)}
+                        />
                       </div>
                     ) : null}
 
