@@ -16,7 +16,6 @@ import {
   buildStopNarration,
   chineseVoiceStatus,
   clampSpeechRate,
-  createNarrationPlayer,
   isChineseVoice,
   pickChineseVoice,
   stripMarkdownForSpeech,
@@ -24,6 +23,7 @@ import {
   type SpeechEngine,
   type SpeechVoice,
 } from '../lib/speech'
+import { createNarrationPlayer } from '../lib/speechCore'
 
 const STOP: TripStop = {
   id: 's1',

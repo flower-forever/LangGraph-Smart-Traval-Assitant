@@ -246,7 +246,7 @@ export default function TodayPanel({
               )}
             </p>
           )}
-          <p className="m-0 mt-1 flex flex-wrap items-center gap-2" data-testid="today-opening">
+          <div className="m-0 mt-1 flex flex-wrap items-center gap-2" data-testid="today-opening">
             {opening.value !== null ? (
               <>
                 <span>营业时间：{opening.value}</span>
@@ -258,7 +258,7 @@ export default function TodayPanel({
                 <StopFactBadge fact={opening} detailLabel={`营业时间来源：${next.stop.name}`} />
               </>
             )}
-          </p>
+          </div>
         </>
       )}
 

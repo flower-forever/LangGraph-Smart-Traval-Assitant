@@ -13,7 +13,7 @@
  *  不补 (0,0)、不估距离、不沿用旧路线。
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type RefObject } from 'react'
 
 import type { TripStop } from '../lib/api'
 import type { TripDraft } from '../lib/tripDraft'
@@ -31,6 +31,7 @@ import {
 } from '../lib/stopSwap'
 import type { PoiCardsRecordV1 } from '../lib/poiCards'
 import type { CandidateItemV1 } from '../lib/workspace'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -50,6 +51,11 @@ export interface StopSwapPanelProps {
   poiCards?: PoiCardsRecordV1 | null
   /** 关闭面板。 */
   onClose: () => void
+  /**
+   * 关闭后焦点归还目标。入口按钮在面板打开期间会被禁用，浏览器会把焦点
+   * 移到 body；不传时退回挂载前记录的 activeElement。
+   */
+  returnFocusTo?: RefObject<HTMLElement | null> | null
 }
 
 interface AppliedState {
@@ -70,12 +76,19 @@ export default function StopSwapPanel({
   candidates = null,
   poiCards = null,
   onClose,
+  returnFocusTo = null,
 }: StopSwapPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [preview, setPreview] = useState<SwapPreview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [applied, setApplied] = useState<AppliedState | null>(null)
+  // 内联面板不是 aria-modal：只做 Esc 关闭 + 焦点进入/归还，不圈定 Tab。
+  const panelRef = useDialogFocus<HTMLElement>({
+    onEscape: onClose,
+    trapTab: false,
+    returnFocusTo,
+  })
 
   const day = draft.days.find((item) => item.day === dayNumber) ?? null
   const otherStopNames = useMemo(
@@ -167,6 +180,8 @@ export default function StopSwapPanel({
 
   return (
     <section
+      ref={panelRef}
+      tabIndex={-1}
       className="mt-3 grid gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-background p-4"
       aria-label={`更换第 ${dayNumber} 天的站点`}
       data-testid="stop-swap-panel"
@@ -181,7 +196,7 @@ export default function StopSwapPanel({
             替换前先预览，确认后才写入内存草稿（不会自动保存）。
           </p>
         </div>
-        <Button variant="ghost" onClick={onClose} aria-label="关闭更换面板">
+        <Button variant="ghost" onClick={onClose} aria-label="关闭更换面板" data-dialog-initial-focus>
           关闭
         </Button>
       </div>

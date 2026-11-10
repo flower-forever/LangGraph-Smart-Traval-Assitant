@@ -230,7 +230,7 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
     renderPanel()
 
     await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
-    const frame = screen.getByTestId('roadbook-preview')
+    const frame = await screen.findByTestId('roadbook-preview')
     const html = frame.getAttribute('srcdoc') ?? ''
     expect(html).toContain('<!doctype html>')
     expect(html).toContain('data-day-tab="1"')
@@ -243,8 +243,9 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
     expect(createObjectURL).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await screen.findByTestId('roadbook-preview')
     await user.click(screen.getByRole('button', { name: '确认下载 .html' }))
-    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1))
     expect(lastDownload).toMatch(/^travel-assistant-roadbook-.+\.html$/)
     expect(screen.queryByTestId('roadbook-preview')).toBeNull()
     expectSameStorage(before)

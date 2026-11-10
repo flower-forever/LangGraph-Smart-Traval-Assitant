@@ -34,6 +34,7 @@ import {
   type ReplayStation,
 } from '../lib/routeReplay'
 import { cn } from '../lib/utils'
+import { useDialogFocus } from '../lib/useDialogFocus'
 
 export interface RouteReplayPanelProps {
   /** 行程的全部天；回放按天切换。 */
@@ -98,7 +99,6 @@ export default function RouteReplayPanel({
   reducedMotion: reducedMotionOverride,
 }: RouteReplayPanelProps) {
   const titleId = useId()
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const mapElRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<L.Map | null>(null)
   const layerRef = useRef<L.LayerGroup | null>(null)
@@ -130,21 +130,12 @@ export default function RouteReplayPanel({
 
   const [cinema, setCinema] = useState(false)
 
-  /* ── 键盘：Esc 退电影模式；普通模式关闭面板 ── */
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
+  const dialogRef = useDialogFocus<HTMLDivElement>({
+    onEscape: () => {
       if (cinema) setCinema(false)
       else onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [cinema, onClose])
-
-  useEffect(() => {
-    closeButtonRef.current?.focus()
-  }, [])
+    },
+  })
 
   /* ── 地图：只初始化一次；图层随 plan 重建 ── */
   useEffect(() => {
@@ -388,13 +379,15 @@ export default function RouteReplayPanel({
 
   return (
     <div
-      className={cn('fixed inset-0 z-50 flex items-center justify-center bg-black/55', cinema ? 'p-0' : 'p-2 sm:p-4')}
+      className={cn('fixed inset-0 z-[1200] flex items-center justify-center bg-black/55', cinema ? 'p-0' : 'p-2 sm:p-4')}
       data-testid="route-replay-overlay"
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         className={cn(
           'flex w-full flex-col overflow-hidden border border-border bg-background shadow-xl',
           cinema ? 'h-[100dvh] max-w-none rounded-none border-0' : 'h-[min(94vh,900px)] max-w-[1180px] rounded-[10px]',
@@ -420,11 +413,11 @@ export default function RouteReplayPanel({
               </p>
             </div>
             <button
-              ref={closeButtonRef}
               type="button"
               className={BTN}
               onClick={onClose}
               data-testid="replay-close"
+              data-dialog-initial-focus
             >
               退出回放
             </button>

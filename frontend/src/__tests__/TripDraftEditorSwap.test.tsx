@@ -5,7 +5,7 @@
  * 相邻路段真的被改（并保留其它天的内容）。
  */
 import { useState } from 'react'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -135,6 +135,22 @@ describe('TripDraftEditor · 换一个入口', () => {
     // 其它天原样保留。
     const day3 = draft?.days.find((day) => day.day === 3)
     expect(day3?.stops[0].name).toBe('龙井村')
+  })
+
+  it('Esc 关闭后焦点回到「换一个」入口按钮', () => {
+    render(<Harness />)
+    const entry = screen.getByTestId('stop-swap-open-s1')
+    // 模拟 Chrome：入口被 disabled 后焦点已落到 body；fireEvent.click 不预先聚焦入口。
+    entry.focus()
+    entry.blur()
+    fireEvent.click(entry)
+    expect(screen.getByTestId('stop-swap-panel')).toBeInTheDocument()
+    expect(entry).toBeDisabled()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('stop-swap-panel')).toBeNull()
+    expect(entry).toBeEnabled()
+    expect(document.activeElement).toBe(entry)
   })
 
   it('面板开着切天：面板自动关闭，编辑器恢复可用（不再锁死）', async () => {

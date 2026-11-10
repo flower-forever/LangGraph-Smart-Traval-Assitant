@@ -48,6 +48,11 @@ import {
   runTailBoundaryNarrowScenario,
   setTailBoundaryAppOrigin,
 } from './tailBoundaryScenarios.mjs'
+import {
+  runS8SmokeDesktop,
+  runS8SmokeNarrow,
+  setS8AppOrigin,
+} from './s8SmokeScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1101,6 +1106,35 @@ async function scenarioTailBoundaryNarrow() {
   }
 }
 
+/** ───────────────────────── 场景 18–19：五期 S8 收尾冒烟（桌面 / 375 窄屏） ───────────────────────── */
+
+async function scenarioS8SmokeDesktop() {
+  const { context, page } = await newOfflineContext('s8Smoke')
+  const rec = makeStepRecorder('s8Smoke', 'desktop-1440')
+  try {
+    await runS8SmokeDesktop({
+      page,
+      rec,
+      control,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s8Smoke = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS8SmokeNarrow() {
+  const { context, page } = await newOfflineContext('s8SmokeNarrow', { width: 375, height: 812 })
+  const rec = makeStepRecorder('s8SmokeNarrow', 'mobile-375')
+  try {
+    await runS8SmokeNarrow({ page, rec, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios.s8SmokeNarrow = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1172,6 +1206,9 @@ try {
   await scenarioTailBoundaryStopWaiting()
   await scenarioTailBoundaryZeroDistance()
   await scenarioTailBoundaryNarrow()
+  setS8AppOrigin(appOrigin)
+  await scenarioS8SmokeDesktop()
+  await scenarioS8SmokeNarrow()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

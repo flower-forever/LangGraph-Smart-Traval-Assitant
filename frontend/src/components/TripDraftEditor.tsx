@@ -398,6 +398,8 @@ export default function TripDraftEditor({
   const actionAlertRef = useRef<HTMLDivElement | null>(null)
   const fieldRefs = useRef<Partial<Record<FormField, HTMLInputElement | HTMLTextAreaElement | null>>>({})
   const editButtonRefs = useRef(new Map<string, HTMLButtonElement>())
+  const swapEntryRefs = useRef(new Map<string, HTMLButtonElement>())
+  const swapReturnFocusRef = useRef<HTMLButtonElement | null>(null)
 
   const day = draft.days.find((item) => item.day === dayNumber) ?? null
   const changedDays = useMemo(() => draftChangedDays(draft), [draft])
@@ -712,6 +714,9 @@ export default function TripDraftEditor({
 
   /** S6 · 换一个：展开某一站的替换面板（同时只开一个）。 */
   function openSwap(stop: TripStop) {
+    // 入口按钮在面板打开期间会被 disabled，浏览器会把焦点移到 body；
+    // 显式记住本次入口，关闭面板时归还焦点（不能只靠挂载前的 activeElement）。
+    swapReturnFocusRef.current = swapEntryRefs.current.get(stop.id) ?? null
     setActionError(null)
     setNotice(null)
     setDiscardConfirm(false)
@@ -1281,6 +1286,10 @@ export default function TripDraftEditor({
                       variant="ghost"
                       onClick={() => openSwap(stop)}
                       disabled={session !== null || swapStopIdActive !== null}
+                      ref={(element) => {
+                        if (element) swapEntryRefs.current.set(stop.id, element)
+                        else swapEntryRefs.current.delete(stop.id)
+                      }}
                       aria-label={`换一个${describeStop(stop, index)}`}
                       data-testid={`stop-swap-open-${stop.id}`}
                     >
@@ -1323,6 +1332,7 @@ export default function TripDraftEditor({
                       candidates={candidates}
                       poiCards={poiCards}
                       onClose={closeSwap}
+                      returnFocusTo={swapReturnFocusRef}
                     />
                   )}
                 </li>

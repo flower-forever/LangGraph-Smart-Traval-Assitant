@@ -9,7 +9,7 @@
  * - 连续播放本日按站点顺序推进；
  * - 零写入。
  */
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import StopPoiCard from '../components/StopPoiCard'
@@ -95,12 +95,13 @@ describe('StopPoiCard · 语音讲解入口', () => {
     expect(screen.getByTestId('stop-speech-status-s1')).toHaveTextContent('当前设备没有中文语音')
   })
 
-  it('中文 voice：点击朗读，再点暂停 / 继续，停止会 cancel', () => {
+  it('中文 voice：点击朗读，再点暂停 / 继续，停止会 cancel', async () => {
     const { synth, utterances } = installSpeech([ZH_VOICE])
     render(<StopPoiCard stop={STOP} poiCards={null} />)
 
     fireEvent.click(screen.getByTestId('stop-listen-s1'))
-    expect(synth.speak).toHaveBeenCalledTimes(1)
+    // S8：语音重实现按需动态加载；加载完成前点击会排队，加载后立即开播。
+    await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1))
     expect(utterances[0].text).toContain('断桥残雪')
     expect(utterances[0].text).toContain('时间 09:00')
     expect(utterances[0].text).toContain('地址 杭州市西湖区白堤东端')
@@ -120,30 +121,32 @@ describe('StopPoiCard · 语音讲解入口', () => {
     expect(screen.getByTestId('stop-listen-s1')).toHaveTextContent('听讲解')
   })
 
-  it('语速选择会应用到下一次朗读', () => {
+  it('语速选择会应用到下一次朗读', async () => {
     const { utterances } = installSpeech([ZH_VOICE])
     render(<StopPoiCard stop={STOP} poiCards={null} />)
     fireEvent.change(screen.getByTestId('stop-speech-rate-s1'), { target: { value: '1.5' } })
     fireEvent.click(screen.getByTestId('stop-listen-s1'))
+    await waitFor(() => expect(utterances[0]).toBeDefined())
     expect(utterances[0].rate).toBe(1.5)
   })
 
-  it('切换站点（卸载旧卡）会停止朗读', () => {
+  it('切换站点（卸载旧卡）会停止朗读', async () => {
     const { synth } = installSpeech([ZH_VOICE])
     const view = render(<StopPoiCard stop={STOP} poiCards={null} />)
     fireEvent.click(screen.getByTestId('stop-listen-s1'))
-    expect(synth.speak).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1))
 
     view.rerender(<StopPoiCard stop={OTHER_STOP} poiCards={null} />)
     expect(synth.cancel).toHaveBeenCalled()
   })
 
-  it('零写入：朗读 / 暂停 / 停止不碰 localStorage', () => {
+  it('零写入：朗读 / 暂停 / 停止不碰 localStorage', async () => {
     installSpeech([ZH_VOICE])
     const before = Object.keys(localStorage).length
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
     render(<StopPoiCard stop={STOP} poiCards={null} />)
     fireEvent.click(screen.getByTestId('stop-listen-s1'))
+    await waitFor(() => expect(screen.getByTestId('stop-listen-s1')).toHaveTextContent('暂停讲解'))
     fireEvent.click(screen.getByTestId('stop-listen-s1'))
     fireEvent.click(screen.getByTestId('stop-speech-stop-s1'))
     expect(Object.keys(localStorage)).toHaveLength(before)
@@ -170,12 +173,12 @@ describe('TodayPanel · 连续播放本日', () => {
     )
   }
 
-  it('按站点顺序连续朗读，暂停 / 继续 / 停止可用', () => {
+  it('按站点顺序连续朗读，暂停 / 继续 / 停止可用', async () => {
     const { synth, utterances } = installSpeech([ZH_VOICE])
     renderToday()
 
     fireEvent.click(screen.getByTestId('today-listen-day'))
-    expect(synth.speak).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1))
     expect(utterances[0].text).toContain('第 1 站')
     expect(utterances[0].text).toContain('断桥残雪')
     expect(screen.getByTestId('today-listen-day')).toHaveTextContent('暂停本日讲解')

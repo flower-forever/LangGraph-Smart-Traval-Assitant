@@ -200,9 +200,15 @@ export function buildShareMiniMap(day: TripDay): ShareMiniMap {
         ` x2="${formatNumber(b.x)}" y2="${formatNumber(b.y)}" stroke="#8a7f68" stroke-width="2.5"` +
         ` stroke-dasharray="8 6" stroke-linecap="round"/>`,
     )
+    // 标签放在中点垂直偏移处：水平线不再压住端点圆点（S8 验收 Minor）。
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const length = Math.hypot(dx, dy) || 1
+    const labelX = (a.x + b.x) / 2 + (-dy / length) * 14
+    const labelY = (a.y + b.y) / 2 + (dx / length) * 14
     straightLabels.push(
-      `<text data-route-label="straight_line" x="${formatNumber((a.x + b.x) / 2)}"` +
-        ` y="${formatNumber((a.y + b.y) / 2 - 8)}" text-anchor="middle" font-size="14"` +
+      `<text data-route-label="straight_line" x="${formatNumber(labelX)}"` +
+        ` y="${formatNumber(labelY)}" text-anchor="middle" dominant-baseline="central" font-size="14"` +
         ` fill="#6b6355">示意</text>`,
     )
   }

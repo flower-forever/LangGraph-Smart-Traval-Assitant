@@ -1,17 +1,15 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import './app.css'
 import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
 import RouteFlowHint from './components/RouteFlowHint'
-import RouteReplayPanel from './components/RouteReplayPanel'
 import ItineraryHealthCard from './components/ItineraryHealthCard'
 import InterestTag from './components/InterestTag'
 import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
 import { projectStopFacts } from './lib/stopFacts'
 import { paceLabelOf, type HealthPace } from './lib/itineraryHealth'
-import ShareCardPanel from './components/ShareCardPanel'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
@@ -141,6 +139,25 @@ import {
 } from './lib/sessionRestore'
 import type { StorageLike } from './lib/savedTrips'
 import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailability, ProbeFailure, TravelMode, Trip } from './lib/api'
+
+/** 五期 S8：两个重面板按需加载；打开前不进入首屏 chunk。 */
+const RouteReplayPanel = lazy(() => import('./components/RouteReplayPanel'))
+const ShareCardPanel = lazy(() => import('./components/ShareCardPanel'))
+
+function PanelLoadingFallback({ label }: { label: string }) {
+  return (
+    <div
+      className="fixed inset-0 z-[1200] grid place-items-center bg-black/55 p-4"
+      role="status"
+      aria-live="polite"
+      data-testid="panel-loading"
+    >
+      <p className="m-0 rounded-[8px] border border-border bg-background px-4 py-3 text-sm text-foreground shadow-xl">
+        {label}
+      </p>
+    </div>
+  )
+}
 
 /** 站点 id / fork 行程 id 都由页面用 UUID 生成；无 crypto.randomUUID 的环境退回随机串 */
 function newUuid(): string {
@@ -4235,20 +4252,24 @@ export default function App() {
               </div>
             </div>
             {replayOpen && trip && currentDay && (
-              <RouteReplayPanel
-                days={draft ? draft.days : trip.days}
-                initialDay={activeDay}
-                onClose={() => setReplayOpen(false)}
-              />
+              <Suspense fallback={<PanelLoadingFallback label="正在加载路线回放…" />}>
+                <RouteReplayPanel
+                  days={draft ? draft.days : trip.days}
+                  initialDay={activeDay}
+                  onClose={() => setReplayOpen(false)}
+                />
+              </Suspense>
             )}
             {shareOpen && trip && currentDay && (
-              <ShareCardPanel
-                trip={trip}
-                initialDay={activeDay}
-                draftTrip={draft ? { ...draft.base, id: draft.forkTripId, days: [...draft.days] } : null}
-                poiCards={poiCardsRecord}
-                onClose={() => setShareOpen(false)}
-              />
+              <Suspense fallback={<PanelLoadingFallback label="正在加载分享卡片…" />}>
+                <ShareCardPanel
+                  trip={trip}
+                  initialDay={activeDay}
+                  draftTrip={draft ? { ...draft.base, id: draft.forkTripId, days: [...draft.days] } : null}
+                  poiCards={poiCardsRecord}
+                  onClose={() => setShareOpen(false)}
+                />
+              </Suspense>
             )}
             {editingDraft && (
               <p className={DRAFT_PREVIEW_NOTE} data-testid="draft-preview-note" role="note">

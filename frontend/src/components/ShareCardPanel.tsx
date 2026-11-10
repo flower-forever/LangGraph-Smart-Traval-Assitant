@@ -22,10 +22,7 @@ import {
   renderShareCard,
   type ShareCardStyle,
 } from '../lib/shareCard'
-import {
-  rasterizeShareCardPng,
-  type RasterizeOutcome,
-} from '../lib/shareCardPng'
+import type { RasterizeOutcome } from '../lib/shareCardPng'
 import {
   downloadPngBlob,
   downloadSvgCard,
@@ -36,12 +33,8 @@ import {
   buildShareMiniMap,
   type ShareMiniMap,
 } from '../lib/shareMiniMap'
-import {
-  MAX_ROADBOOK_HTML_BYTES,
-  buildOfflineRoadbook,
-  downloadRoadbookHtml,
-} from '../lib/offlineRoadbook'
 import type { PoiCardsRecordV1 } from '../lib/poiCards'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 
@@ -91,7 +84,7 @@ export default function ShareCardPanel({
   draftTrip = null,
   poiCards = null,
   now = () => Date.now(),
-  rasterize = (svg) => rasterizeShareCardPng(svg),
+  rasterize = async (svg) => (await import('../lib/shareCardPng')).rasterizeShareCardPng(svg),
 }: ShareCardPanelProps) {
   const initialExists = trip.days.some((day) => day.day === initialDay)
   const [dayNumber, setDayNumber] = useState<number>(
@@ -104,6 +97,7 @@ export default function ShareCardPanel({
   const [svgFailed, setSvgFailed] = useState(false)
   const [roadbookPreview, setRoadbookPreview] = useState<RoadbookPreview | null>(null)
   const [roadbookError, setRoadbookError] = useState<string | null>(null)
+  const [roadbookBusy, setRoadbookBusy] = useState(false)
 
   const titleId = useId()
   const dayId = useId()
@@ -149,15 +143,7 @@ export default function ShareCardPanel({
     onClose()
   }, [onClose])
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      handleClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [handleClose])
+  const dialogRef = useDialogFocus<HTMLDivElement>({ onEscape: handleClose })
 
   useEffect(() => {
     // 父级直接卸载面板时作废未完成的 PNG，避免卸载后仍触发下载
@@ -232,33 +218,50 @@ export default function ShareCardPanel({
     setPngState(outcome.reason)
   }
 
-  const handleRoadbookRequest = () => {
-    const result = buildOfflineRoadbook(activeTrip, {
-      poiCards,
-      now: now(),
-      isDraft: effectiveSource === 'draft',
-    })
-    if (!result.ok) {
-      const limitLabel =
-        result.limit === MAX_ROADBOOK_HTML_BYTES ? '2 MiB' : mebibytes(result.limit)
-      setRoadbookPreview(null)
-      setRoadbookError(
-        `离线路书超过 ${limitLabel} 上限（当前 ${mebibytes(result.bytes)}），未生成任何文件；请精简站点或文字后重试。`,
-      )
-      return
-    }
+  const handleRoadbookRequest = async () => {
+    if (roadbookBusy) return
+    setRoadbookBusy(true)
     setRoadbookError(null)
-    setRoadbookPreview({ html: result.html, fileName: result.fileName })
+    try {
+      const { buildOfflineRoadbook } = await import('../lib/offlineRoadbook')
+      const result = buildOfflineRoadbook(activeTrip, {
+        poiCards,
+        now: now(),
+        isDraft: effectiveSource === 'draft',
+      })
+      if (!result.ok) {
+        const limitLabel = result.limit === 2 * 1024 * 1024 ? '2 MiB' : mebibytes(result.limit)
+        setRoadbookPreview(null)
+        setRoadbookError(
+          `离线路书超过 ${limitLabel} 上限（当前 ${mebibytes(result.bytes)}），未生成任何文件；请精简站点或文字后重试。`,
+        )
+        return
+      }
+      setRoadbookPreview({ html: result.html, fileName: result.fileName })
+    } catch {
+      setRoadbookPreview(null)
+      setRoadbookError('离线路书模块加载失败，未生成任何文件；请重试。')
+    } finally {
+      setRoadbookBusy(false)
+    }
   }
 
-  const handleRoadbookConfirm = () => {
+  const handleRoadbookConfirm = async () => {
     if (!roadbookPreview) return
-    if (!downloadRoadbookHtml(roadbookPreview.html, roadbookPreview.fileName)) {
-      setRoadbookError('当前浏览器不支持在本地创建下载文件，未下载任何文件。')
-      return
+    setRoadbookBusy(true)
+    try {
+      const { downloadRoadbookHtml } = await import('../lib/offlineRoadbook')
+      if (!downloadRoadbookHtml(roadbookPreview.html, roadbookPreview.fileName)) {
+        setRoadbookError('当前浏览器不支持在本地创建下载文件，未下载任何文件。')
+        return
+      }
+      setRoadbookError(null)
+      setRoadbookPreview(null)
+    } catch {
+      setRoadbookError('离线路书模块加载失败，未下载任何文件；请重试。')
+    } finally {
+      setRoadbookBusy(false)
     }
-    setRoadbookError(null)
-    setRoadbookPreview(null)
   }
 
   const pngError =
@@ -269,16 +272,18 @@ export default function ShareCardPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 sm:p-6"
+      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/55 p-3 sm:p-6"
       data-testid="share-card-overlay"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) handleClose()
       }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         className="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-[10px] border border-border bg-background p-4 shadow-xl sm:p-6"
       >
         <div className="grid min-w-0 gap-5">
@@ -289,6 +294,8 @@ export default function ShareCardPanel({
             <h2
               className="m-0 font-display text-2xl font-bold leading-[1.3] tracking-[0.02em] [overflow-wrap:anywhere]"
               id={titleId}
+              tabIndex={-1}
+              data-dialog-initial-focus
             >
               生成分享卡片
             </h2>
@@ -493,8 +500,15 @@ export default function ShareCardPanel({
                   单文件 HTML：样式与脚本内联，断网可打开；先预览，确认后才下载，取消不产生文件。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" onClick={handleRoadbookRequest}>
-                    下载离线路书 (.html)
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      void handleRoadbookRequest()
+                    }}
+                    disabled={roadbookBusy}
+                    aria-busy={roadbookBusy || undefined}
+                  >
+                    {roadbookBusy ? '正在准备离线路书…' : '下载离线路书 (.html)'}
                   </Button>
                 </div>
                 {roadbookError ? (
@@ -519,7 +533,14 @@ export default function ShareCardPanel({
                       data-testid="roadbook-preview"
                     />
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button onClick={handleRoadbookConfirm}>确认下载 .html</Button>
+                      <Button
+                        onClick={() => {
+                          void handleRoadbookConfirm()
+                        }}
+                        disabled={roadbookBusy}
+                      >
+                        确认下载 .html
+                      </Button>
                       <Button variant="ghost" onClick={() => setRoadbookPreview(null)}>
                         取消预览
                       </Button>
