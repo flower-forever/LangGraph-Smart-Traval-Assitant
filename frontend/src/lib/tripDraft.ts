@@ -58,6 +58,13 @@ export const STOP_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
 /** 新相邻关系没有可信路线时的固定说明。 */
 export const UNAVAILABLE_LEG_DESCRIPTION = '本地编辑后待重新获取路线'
 
+/**
+ * 更换站点后，被牵连路段的固定说明。
+ * 与 UNAVAILABLE_LEG_DESCRIPTION 分开：两者来源不同（改名 / 改地址 vs 换站点），
+ * 但都表示同一件事——这段路没有可信数据，需要重新获取。
+ */
+export const SWAPPED_LEG_DESCRIPTION = '更换站点后待重新获取路线'
+
 /** 界面上需要展示的固定提示（不写进行程）。 */
 export const LOCAL_EDIT_DISCLAIMER =
   '本次只做本地编辑：不会自动保存，也不会请求后端或其他外部服务；编辑结果不代表真实预约、营业状态或实测交通。'
@@ -145,6 +152,16 @@ export interface NewDraftStop {
    * 带可信坐标的候选日应走独立受校验的替换日 API，而不是普通新增站点。
    */
   location?: null
+}
+
+/** 「换一个」的替换内容：换的是去哪，不是什么时候去。 */
+export interface DraftStopReplacement {
+  /** 新站点名称；1–120 字。 */
+  name: string
+  /** 新站点地址；最多 300 字。缺省或 null 视为空地址。 */
+  address?: string | null
+  /** 新站点描述；最多 1000 字。缺省或 null 视为空描述。 */
+  description?: string | null
 }
 
 export interface AddDraftStopOptions {
@@ -416,6 +433,32 @@ function invalidateLegsAround(
       duration_minutes: null,
       geometry: [],
       description: UNAVAILABLE_LEG_DESCRIPTION,
+    }
+  })
+}
+
+/**
+ * 「换一个」用的路段作废：与 invalidateLegsAround 同义，但**保留原出行方式**。
+ * 换站点不改变这趟行程的出行方式（步行还是驾车），所以不该顺手把方式改成
+ * 草稿的新建路段方式。
+ */
+function invalidateLegsAroundKeepingMode(
+  legs: readonly TripLeg[],
+  placeChangedStopId: string,
+): TripLeg[] {
+  return legs.map((leg) => {
+    if (leg.from_stop_id !== placeChangedStopId && leg.to_stop_id !== placeChangedStopId) {
+      return leg
+    }
+    return {
+      from_stop_id: leg.from_stop_id,
+      to_stop_id: leg.to_stop_id,
+      mode: leg.mode,
+      route_type: 'unavailable',
+      distance_m: null,
+      duration_minutes: null,
+      geometry: [],
+      description: SWAPPED_LEG_DESCRIPTION,
     }
   })
 }
@@ -698,8 +741,87 @@ export function updateDraftStop(
   return commitDay(draft, day, nextDay)
 }
 
-/** 在指定天插入新站点；新站点默认没有坐标，相关新路段一律 unavailable。 */
-export function addDraftStop(
+/**
+ * 「换一个」：把当天某站替换成候选条目（五期 S6）。
+ *
+ * - **保留**原站点 id、到达时间与停留时长：换的是「去哪」，不是「什么时候去」；
+ *   当天顺序不变，站点序号也不变。
+ * - 名称 / 地址 / 描述换成候选的内容；描述缺省时清空——留着旧站的描述会变成
+ *   对新站点的错误介绍。
+ * - 坐标清空：候选库坐标的来源是手工录入或从站点复制，**未核实**，
+ *   不能冒充成已核实站点坐标（与 addDraftStop 同一纪律）。
+ * - **被替换站点的前后路段一律作废**：route_type='unavailable'、geometry=[]、
+ *   distance_m / duration_minutes 为 null，说明写 SWAPPED_LEG_DESCRIPTION；
+ *   绝不沿用旧路线。其余路段原样保留（引用与 geometry 都不动）。
+ * - 校验只针对这次传入的替换内容；失败时草稿完全不变（保旧）。
+ */
+export function replaceDraftStop(
+  draft: TripDraft,
+  dayNumber: number,
+  stopId: string,
+  replacement: DraftStopReplacement,
+): DraftEditResult {
+  const day = findDay(draft, dayNumber)
+  if (!day) {
+    return failure('unknown_day', `草稿里没有${calendarDayLabel(dayNumber)}，操作未生效。`)
+  }
+  const stopIndex = day.stops.findIndex((stop) => stop.id === stopId)
+  if (stopIndex < 0) {
+    return failure('unknown_stop', '这一天的站点列表里没有指定站点，操作未生效。')
+  }
+  if (!isRecord(replacement)) {
+    return failure('invalid_name', '替换内容必须是对象，草稿未改动。')
+  }
+  const name = typeof replacement.name === 'string' ? replacement.name.trim() : ''
+  if (!isValidStopName(name)) {
+    return failure(
+      'invalid_name',
+      `站点名称需要是 1–${MAX_STOP_NAME_LENGTH} 个字符的非空文本，草稿未改动。`,
+    )
+  }
+  const address =
+    replacement.address === undefined || replacement.address === null
+      ? ''
+      : replacement.address
+  if (!isValidAddress(address)) {
+    return failure(
+      'invalid_address',
+      `站点地址最多 ${MAX_STOP_ADDRESS_LENGTH} 个字符，草稿未改动。`,
+    )
+  }
+  const description =
+    replacement.description === undefined || replacement.description === null
+      ? ''
+      : replacement.description
+  if (!isValidDescription(description)) {
+    return failure(
+      'invalid_description',
+      `站点描述最多 ${MAX_STOP_DESCRIPTION_LENGTH} 个字符，草稿未改动。`,
+    )
+  }
+
+  const current = day.stops[stopIndex]
+  const stop: TripStop = {
+    id: current.id,
+    name,
+    time: current.time,
+    duration_minutes: current.duration_minutes,
+    description,
+    address,
+    // 候选坐标未核实：这里不给坐标，路线由后续「仅刷新地图」重新获取。
+    location: null,
+  }
+  const stops = day.stops.map((item, index) => (index === stopIndex ? stop : item))
+  const legs = invalidateLegsAroundKeepingMode(day.legs, stopId)
+  const nextDay: TripDay = {
+    ...day,
+    stops,
+    legs,
+  }
+  return commitDay(draft, day, nextDay)
+}
+
+/** 在指定天插入新站点；新站点默认没有坐标，相关新路段一律 unavailable。 */export function addDraftStop(
   draft: TripDraft,
   dayNumber: number,
   stop: NewDraftStop,

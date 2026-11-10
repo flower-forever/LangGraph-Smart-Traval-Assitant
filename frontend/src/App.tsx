@@ -5,6 +5,8 @@ import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
 import RouteFlowHint from './components/RouteFlowHint'
 import ItineraryHealthCard from './components/ItineraryHealthCard'
+import InterestTag from './components/InterestTag'
+import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
 import { projectStopFacts } from './lib/stopFacts'
 import { paceLabelOf, type HealthPace } from './lib/itineraryHealth'
@@ -375,6 +377,11 @@ export default function App() {
    * （示例 / 恢复 / 文件导入），结果页不显示节奏标注。
    */
   const [lastPlannedPace, setLastPlannedPace] = useState<HealthPace | null>(null)
+  /**
+   * 最近一次规划用的兴趣标签（S6）：空数组 = 不显示兴趣标注；
+   * 与节奏标注同为当前页临时状态，不写进 trip，保存/备份不会带上。
+   */
+  const [lastPlannedInterests, setLastPlannedInterests] = useState<PlanInterest[]>([])
   const [restoredAt, setRestoredAt] = useState<number | null>(null)
   /**
    * 当前行程是不是从用户选择的备份文件打开进来的。
@@ -2111,6 +2118,7 @@ export default function App() {
     setError(null)
     setRequestOutcome({ kind: 'pending', destination: payload.destination })
     setLastPlannedPace(payload.pace ?? null)
+    setLastPlannedInterests(payload.interests ? [...payload.interests] : [])
     try {
       const t = await planTrip(payload, { signal: controller.signal })
       if (sequence !== planSeqRef.current) return
@@ -2807,6 +2815,17 @@ export default function App() {
     setAssistantOpen(true)
   }, [trip, draft, assistantOpen, candidatesRecord, workspaceController])
 
+  /**
+   * S6 换一个：进入草稿编辑时惰性读一次候选库（独立键，只读，不读就不读，绝不写）。
+   * 否则新会话直接进编辑区时「换一个」面板只有资料卡候选，误报候选不足；
+   * 与打开 AI 助手时的读取同模式（见上方 candidatesRecord === null 分支）。
+   */
+  useEffect(() => {
+    if (draft === null || candidatesRecord !== null) return
+    const read = loadCandidatesRecord(storageRef.current)
+    if (read.record !== null) setCandidatesRecord(read.record)
+  }, [draft, candidatesRecord, storageRef])
+
   /** 关闭 AI 行程助手：放弃在途提案；行程与已保存记录都不动。 */
   const handleCloseAssistant = useCallback(() => {
     setAssistantOpen(false)
@@ -3381,6 +3400,7 @@ export default function App() {
                     按{paceLabelOf(lastPlannedPace)}节奏
                   </span>
                 )}
+                {lastPlannedInterests.length > 0 && !tripIsExample && <InterestTag interests={lastPlannedInterests} />}
                 {outcomeNote && (
                   /*
                    * 归属说明是当前请求/视图的临时状态：不写进 trip，保存/备份不会带上它。
@@ -3965,6 +3985,8 @@ export default function App() {
                 onEditingChange={setEditorEditing}
                 onInputDirtyChange={updateEditorInputDirty}
                 onSelectStop={handleSelectStop}
+                candidates={candidatesRecord?.items ?? []}
+                poiCards={poiCardsRecord}
               />
             )}
 

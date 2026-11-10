@@ -1,6 +1,12 @@
 import { useId, useState } from 'react'
 import type { PlanRequest, TravelMode } from '../lib/api'
 import type { HealthPace } from '../lib/itineraryHealth'
+import {
+  INTEREST_OPTIONS,
+  interestLabelOf,
+  normalizeInterests,
+  type PlanInterest,
+} from '../lib/interests'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Textarea } from './ui/textarea'
@@ -27,6 +33,8 @@ interface FormState {
   travel_mode: TravelMode
   /** 规划节奏：空字符串 = 不选（= 均衡，不传 pace 字段，请求体与旧版一致） */
   pace: '' | HealthPace
+  /** 个性化兴趣（S6）：空数组 = 不选（不传 interests 字段，请求体与旧版一致） */
+  interests: PlanInterest[]
 }
 
 const INITIAL: FormState = {
@@ -37,6 +45,7 @@ const INITIAL: FormState = {
   preferences: '',
   travel_mode: 'walking',
   pace: '',
+  interests: [],
 }
 
 /** 节奏选项：label 与 value；不选 = 均衡（pace 字段不进请求体）。 */
@@ -106,6 +115,10 @@ const MODE_OPTION =
   'inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-background px-4 py-2 transition-colors duration-150 ease-out hover:bg-secondary has-[input:checked]:border-[color:var(--color-primary)] has-[input:checked]:bg-accent-surface'
 const MODE_RADIO =
   'size-4 shrink-0 accent-[color:var(--color-primary)] outline-2 outline-offset-2 outline-[color:var(--color-accent-foreground)] focus-visible:outline'
+const INTEREST_OPTION =
+  'inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[6px] border border-[color:var(--color-line-strong)] bg-background px-4 py-2 transition-colors duration-150 ease-out hover:bg-secondary has-[input:checked]:border-[color:var(--color-primary)] has-[input:checked]:bg-accent-surface'
+const INTEREST_CHECKBOX =
+  'size-4 shrink-0 accent-[color:var(--color-primary)] outline-2 outline-offset-2 outline-[color:var(--color-accent-foreground)] focus-visible:outline'
 const PLAN_ACTIONS =
   'mt-4 flex items-center gap-3 max-[640px]:flex-wrap max-[640px]:[&>*]:flex-[1_1_auto]'
 const PLAN_CANCEL_NOTE =
@@ -149,6 +162,18 @@ export default function PlanForm({ onSubmit, loading, onCancel, plannerUnavailab
       travel_mode: form.travel_mode,
       // 不选节奏 = 均衡：pace 字段不进请求体，保持旧版请求逐字节兼容。
       ...(form.pace !== '' ? { pace: form.pace } : {}),
+      // 不选兴趣：interests 字段整个不进请求体，保持旧版请求逐字节兼容。
+      ...(form.interests.length > 0 ? { interests: [...form.interests] } : {}),
+    })
+  }
+
+  function toggleInterest(value: PlanInterest) {
+    setForm((prev) => {
+      const next = prev.interests.includes(value)
+        ? prev.interests.filter((item) => item !== value)
+        : [...prev.interests, value]
+      // 固定顺序：同一组兴趣永远序列化成同一个请求体。
+      return { ...prev, interests: normalizeInterests(next) }
     })
   }
 
@@ -338,6 +363,36 @@ export default function PlanForm({ onSubmit, loading, onCancel, plannerUnavailab
           <p className={FIELD_HELP}>
             {PACE_OPTIONS.find(({ value }) => value === form.pace)?.help ??
               '不选按均衡节奏规划；节奏是建议，不是保证'}
+          </p>
+        </div>
+
+        <div className={`${FIELD_PREFERENCES} interest-field`} data-testid="interest-field">
+          <span className={FIELD_LABEL} id="interest-label">兴趣（可选，可多选）</span>
+          <div
+            className="flex flex-wrap gap-2"
+            role="group"
+            aria-labelledby="interest-label"
+            data-testid="interest-group"
+          >
+            {INTEREST_OPTIONS.map(({ value, label }) => (
+              <label key={value} className={INTEREST_OPTION}>
+                <input
+                  type="checkbox"
+                  name="interests"
+                  value={value}
+                  className={INTEREST_CHECKBOX}
+                  checked={form.interests.includes(value)}
+                  onChange={() => toggleInterest(value)}
+                  disabled={loading}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          <p className={FIELD_HELP}>
+            {form.interests.length > 0
+              ? `已选：${form.interests.map(interestLabelOf).join('、')}。兴趣只是偏好，规划器不保证一定安排到。`
+              : '不选就不传兴趣偏好（请求与旧版一致）；兴趣只是偏好，不代表一定安排到。'}
           </p>
         </div>
       </div>

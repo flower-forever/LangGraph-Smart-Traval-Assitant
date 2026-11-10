@@ -139,4 +139,63 @@ describe('PlanForm', () => {
     await user.click(screen.getByLabelText('均衡'))
     expect(screen.getByTestId('pace-field').textContent).toContain('≤6 站/天')
   })
+
+  /* ───────── S6 · 兴趣多选 ───────── */
+
+  it('不选兴趣：payload 不含 interests 字段（旧请求体逐字节兼容）', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={onSubmit} loading={false} />)
+
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    const payload = onSubmit.mock.calls[0][0]
+    expect(payload).not.toHaveProperty('interests')
+    expect(JSON.stringify(payload)).not.toContain('"interests"')
+  })
+
+  it('勾选多个兴趣：payload 带 interests 数组（固定顺序）', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={onSubmit} loading={false} />)
+
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    await user.click(screen.getByLabelText('美食'))
+    await user.click(screen.getByLabelText('历史'))
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ interests: ['history', 'food'] })
+  })
+
+  it('取消勾选后 interests 恢复为空（旧请求体兼容）', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={onSubmit} loading={false} />)
+
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    await user.click(screen.getByLabelText('自然'))
+    await user.click(screen.getByLabelText('自然'))
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('interests')
+  })
+
+  it('兴趣组是 group、默认不选、说明写明「不保证一定安排到」', () => {
+    render(<PlanForm onSubmit={vi.fn()} loading={false} />)
+    const group = screen.getByTestId('interest-group')
+    expect(group).toHaveAttribute('role', 'group')
+    const help = screen.getByTestId('interest-field').textContent ?? ''
+    expect(help).toContain('不代表一定安排到')
+    expect((screen.getByLabelText('历史') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('兴趣与节奏并存：两者都进 payload', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<PlanForm onSubmit={onSubmit} loading={false} />)
+
+    await user.type(screen.getByLabelText(/目的地/), '杭州')
+    await user.click(screen.getByLabelText('紧凑'))
+    await user.click(screen.getByLabelText('拍照'))
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ pace: 'packed', interests: ['photo'] })
+  })
 })

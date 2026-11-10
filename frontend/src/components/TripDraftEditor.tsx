@@ -48,6 +48,9 @@ import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import StopSwapPanel from '@/components/StopSwapPanel'
+import type { PoiCardsRecordV1 } from '../lib/poiCards'
+import type { CandidateItemV1 } from '../lib/workspace'
 
 /** 本地检查一次最多先列 4 条；剩余条数如实标注，可展开，不静默吞掉。 */
 const CHECK_PREVIEW_COUNT = 4
@@ -136,6 +139,16 @@ export interface TripDraftEditorProps {
   onEditingChange?: (editing: boolean) => void
   /** 站点名称可点选，用于地图与列表联动。 */
   onSelectStop?: (stopId: string) => void
+  /**
+   * 候选地点池条目（S6 · 换一个的候选来源之一）。
+   * 可空：不传时「换一个」只有资料卡来源；本组件不读存储、不自己加载候选库。
+   */
+  candidates?: readonly CandidateItemV1[] | null
+  /**
+   * 资料卡库（S6 · 换一个的候选来源之一，同时用于候选的可信状态判定）。
+   * 可空：不传时可信状态一律「未知」。本组件不读存储、不自己加载资料卡。
+   */
+  poiCards?: PoiCardsRecordV1 | null
 }
 
 function formFromStop(stop: TripStop): FormState {
@@ -271,11 +284,15 @@ export default function TripDraftEditor({
   onInputDirtyChange,
   onEditingChange,
   onSelectStop,
+  candidates = null,
+  poiCards = null,
 }: TripDraftEditorProps) {
   const baseId = useId()
   const formFieldId = `${baseId}-form`
 
   const [session, setSession] = useState<EditorSession | null>(null)
+  /** S6 · 换一个：正在展开替换面板的站点 id；同时最多一个。 */
+  const [swapStopId, setSwapStopId] = useState<string | null>(null)
   const [focusRequest, setFocusRequest] = useState<FocusTarget | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -423,6 +440,21 @@ export default function TripDraftEditor({
     (session.forkTripId !== draft.forkTripId || session.revision !== draft.revision)
   const sessionOffDay = session !== null && day !== null && session.dayNumber !== day.day
 
+  /** S6 · 换一个：面板只在当天确实还有这个站点时才算打开。
+   *  切天那一帧就用它判锁状态，避免出现「面板已经不在了，但新增 / 应用 / 放弃还锁着」
+   *  的中间态（面板本来就在当前天的站点列表里渲染，换天后它已经不在那儿了）。 */
+  const swapStopIdActive =
+    swapStopId !== null && day !== null && day.stops.some((stop) => stop.id === swapStopId)
+      ? swapStopId
+      : null
+
+  /** S6 · 换一个：**切天时自动关闭面板**（面板只是预览，没有副作用，关掉零损失）。
+   *  不这样做会留下死角：面板不在当前天了，但新增 / 删除 / 撤销 / 应用 / 放弃仍被锁死，
+   *  界面上又没有关闭入口，只能切回原来那天才能恢复。 */
+  useEffect(() => {
+    setSwapStopId(null)
+  }, [dayNumber])
+
   const inputDirty = session !== null && isFormDirty(session)
   const editing = session !== null
 
@@ -492,6 +524,7 @@ export default function TripDraftEditor({
     setActionError(null)
     setNotice(null)
     setDiscardConfirm(false)
+    setSwapStopId(null)
     const form = formFromStop(stop)
     setSession({
       mode: 'edit',
@@ -512,6 +545,7 @@ export default function TripDraftEditor({
     setActionError(null)
     setNotice(null)
     setDiscardConfirm(false)
+    setSwapStopId(null)
     setSession({
       mode: 'add',
       dayNumber,
@@ -676,6 +710,19 @@ export default function TripDraftEditor({
     setFocusRequest(focusAfter)
   }
 
+  /** S6 · 换一个：展开某一站的替换面板（同时只开一个）。 */
+  function openSwap(stop: TripStop) {
+    setActionError(null)
+    setNotice(null)
+    setDiscardConfirm(false)
+    setSession(null)
+    setSwapStopId(stop.id)
+  }
+
+  function closeSwap() {
+    setSwapStopId(null)
+  }
+
   function handleMove(stop: TripStop, index: number, direction: 'up' | 'down') {
     if (!day) return
     const result = moveDraftStop(draft, day.day, stop.id, direction)
@@ -697,6 +744,7 @@ export default function TripDraftEditor({
   }
 
   function handleUndo() {
+    if (swapStopIdActive !== null) return
     setActionError(null)
     const result = undoDraft(draft)
     if (!result.ok) {
@@ -714,7 +762,7 @@ export default function TripDraftEditor({
   }
 
   function handleApply() {
-    if (session || !dirty) return
+    if (session || swapStopIdActive !== null || !dirty) return
     setNotice(null)
     setActionError(null)
     const result = applyDraft(draft)
@@ -741,7 +789,7 @@ export default function TripDraftEditor({
   }
 
   function handleDiscardClick() {
-    if (session) return
+    if (session || swapStopIdActive !== null) return
     setActionError(null)
     setNotice(null)
     if (!dirty) {
@@ -1066,20 +1114,20 @@ export default function TripDraftEditor({
         <Button
           onClick={openAdd}
           ref={addButtonRef}
-          disabled={session !== null || day === null}
+          disabled={session !== null || swapStopIdActive !== null || day === null}
         >
           新增站点
         </Button>
         <Button
           variant="outline"
           onClick={handleUndo}
-          disabled={session !== null || draft.history.length === 0}
+          disabled={session !== null || swapStopIdActive !== null || draft.history.length === 0}
         >
           撤销草稿操作
         </Button>
         <Button
           onClick={handleApply}
-          disabled={session !== null || !dirty}
+          disabled={session !== null || swapStopIdActive !== null || !dirty}
         >
           应用草稿
         </Button>
@@ -1087,7 +1135,7 @@ export default function TripDraftEditor({
           variant="outline"
           onClick={handleDiscardClick}
           ref={discardButtonRef}
-          disabled={session !== null}
+          disabled={session !== null || swapStopIdActive !== null}
         >
           放弃草稿
         </Button>
@@ -1102,6 +1150,15 @@ export default function TripDraftEditor({
           <AlertDescription>
             单站输入尚未保存：新增 / 删除 / 上下移动 / 撤销 / 应用 / 放弃在这个编辑器里已暂停，避免结构动作把输入带走。
             先保存到草稿或取消输入。
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {swapStopIdActive !== null && (
+        <Alert variant="default" role="note" className="bg-secondary">
+          <AlertDescription>
+            「换一个」面板打开中：新增 / 删除 / 上下移动 / 撤销 / 应用 / 放弃已暂停，
+            避免结构动作把正在预览的替换结果带走。先确认或取消这次替换。
           </AlertDescription>
         </Alert>
       )}
@@ -1211,7 +1268,7 @@ export default function TripDraftEditor({
                     <Button
                       variant="ghost"
                       onClick={() => openEdit(stop)}
-                      disabled={session !== null}
+                      disabled={session !== null || swapStopIdActive !== null}
                       ref={(element) => {
                         if (element) editButtonRefs.current.set(stop.id, element)
                         else editButtonRefs.current.delete(stop.id)
@@ -1222,8 +1279,17 @@ export default function TripDraftEditor({
                     </Button>
                     <Button
                       variant="ghost"
+                      onClick={() => openSwap(stop)}
+                      disabled={session !== null || swapStopIdActive !== null}
+                      aria-label={`换一个${describeStop(stop, index)}`}
+                      data-testid={`stop-swap-open-${stop.id}`}
+                    >
+                      换一个
+                    </Button>
+                    <Button
+                      variant="ghost"
                       onClick={() => handleMove(stop, index, 'up')}
-                      disabled={session !== null || index === 0}
+                      disabled={session !== null || swapStopIdActive !== null || index === 0}
                       aria-label={`上移${describeStop(stop, index)}`}
                     >
                       上移
@@ -1231,7 +1297,9 @@ export default function TripDraftEditor({
                     <Button
                       variant="ghost"
                       onClick={() => handleMove(stop, index, 'down')}
-                      disabled={session !== null || index === day.stops.length - 1}
+                      disabled={
+                        session !== null || swapStopIdActive !== null || index === day.stops.length - 1
+                      }
                       aria-label={`下移${describeStop(stop, index)}`}
                     >
                       下移
@@ -1239,13 +1307,24 @@ export default function TripDraftEditor({
                     <Button
                       variant="ghost"
                       onClick={() => handleRemove(stop, index)}
-                      disabled={session !== null}
+                      disabled={session !== null || swapStopIdActive !== null}
                       aria-label={`删除${describeStop(stop, index)}（可撤销）`}
                     >
                       删除
                     </Button>
                   </div>
                   {isEditing && session && renderStopForm(session)}
+                  {swapStopIdActive === stop.id && (
+                    <StopSwapPanel
+                      draft={draft}
+                      dayNumber={day.day}
+                      stop={stop}
+                      onDraftChange={onDraftChange}
+                      candidates={candidates}
+                      poiCards={poiCards}
+                      onClose={closeSwap}
+                    />
+                  )}
                 </li>
               )
             })}

@@ -4,6 +4,7 @@ import {
   buildTripPlanConstraintsWire,
   PlanningConstraintsError,
 } from './planningConstraintsApi'
+import type { PlanInterest } from './interests'
 import type { ConstraintsV1 } from './workspaceTypes'
 
 export type TravelMode = 'walking' | 'driving'
@@ -74,6 +75,12 @@ export interface PlanRequest {
    * 后端缺省按 balanced。
    */
   pace?: 'relaxed' | 'balanced' | 'packed'
+  /**
+   * 个性化兴趣（五期 S6）：结构化兴趣标签。
+   * 可选字段：不传时请求体与旧版逐字一致（字段整个不存在，不会是 null / []）。
+   * 只表达偏好，不承诺一定安排到。
+   */
+  interests?: PlanInterest[]
 }
 
 export type ApiErrorKind =

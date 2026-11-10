@@ -115,6 +115,33 @@ describe('api client', () => {
     expect(JSON.parse(paceInit.body)).toMatchObject({ pace: 'packed' })
   })
 
+  it('S6：payload 不带 interests 时请求体不含 interests 键（旧请求逐字节兼容）', async () => {
+    const legacy = {
+      destination: '杭州', days: 3, departure_date: null, travelers: 2,
+      preferences: '', travel_mode: 'walking' as const,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(MOCK_TRIP))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await planTrip({ ...legacy })
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(init.body)).not.toHaveProperty('interests')
+    expect(init.body).toBe(JSON.stringify(legacy))
+    expect(init.body).not.toContain('interests')
+  })
+
+  it('S6：带 interests 时原样透传（数组，不转成字符串）', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(MOCK_TRIP))
+    vi.stubGlobal('fetch', fetchMock)
+    await planTrip({
+      destination: '杭州', days: 3, departure_date: null, travelers: 2,
+      preferences: '', travel_mode: 'walking',
+      interests: ['history', 'food'],
+    })
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(init.body)).toMatchObject({ interests: ['history', 'food'] })
+  })
+
   it('网络失败抛 ApiError(network)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
     const err = await fetchExampleTrip().catch((e) => e)
