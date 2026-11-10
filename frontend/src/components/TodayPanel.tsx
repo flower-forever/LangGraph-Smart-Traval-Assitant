@@ -17,6 +17,12 @@ import type { ChecklistItemV1, ConstraintItemV1 } from '../lib/workspaceTypes'
 import { displayTime } from '../lib/format'
 import { fetchDayWeather, type WeatherAdapter } from '../lib/weatherApi'
 import { collectWeatherStations, formatWeatherMetric, isCalendarDate, readWeatherField, weatherCodeText } from '../lib/weather'
+import {
+  SPEECH_RATE_OPTIONS,
+  buildStopNarration,
+  speechNotice,
+  useSpeechNarration,
+} from '../lib/speech'
 import StopFactBadge from './StopFactBadge'
 
 /**
@@ -102,6 +108,12 @@ export default function TodayPanel({
   /* ── 天气（按需一次；结果绑定当前天，切天自动回落 idle） ── */
   // hooks 无条件调用：day 为 null 时以空 key 挂着，随后统一早退
   const dayKey = day === null ? '' : `${day.day}|${day.date ?? ''}`
+  /* ── S7 连续语音讲解：显式点击才播放；换天 / 卸载自动停止 ── */
+  const speech = useSpeechNarration()
+  useEffect(() => {
+    // 换天时停止本日朗读，避免继续读另一天的站点；stop 是稳定回调
+    speech.stop()
+  }, [dayKey, speech.stop])
   const [weather, setWeather] = useState<{ key: string; view: WeatherView }>({ key: '', view: { phase: 'idle' } })
   const weatherView: WeatherView = weather.key === dayKey ? weather.view : { phase: 'idle' }
   const seqRef = useRef(0)
@@ -171,6 +183,30 @@ export default function TodayPanel({
         ? `行程第 ${day.day} 天（日期未匹配）`
         : `行程第 ${day.day} 天（日期未知）`
   const clockText = localDateKey(nowMs) === '' ? null : minutesToHhMm(minutesOfDay(nowMs))
+
+  /* ── S7 本日连续讲解 ── */
+  const narrationItems = day.stops.map((stop, index) => ({
+    id: stop.id,
+    text: buildStopNarration(stop, { index }),
+  }))
+  const speechBlocked = !speech.supported || speech.voiceStatus === 'missing'
+  const speakingDay =
+    speech.status !== 'idle' && narrationItems.some((item) => item.id === speech.currentId)
+  const speechNoticeText = speechNotice(speech.supported, speech.voiceStatus, speech.failure)
+  const speechStatusText = speechNoticeText
+    ? speechNoticeText
+    : speakingDay
+      ? `正在朗读第 ${(speech.index ?? 0) + 1} 站 / 共 ${narrationItems.length} 站${speech.status === 'paused' ? '（已暂停）' : ''}`
+      : '按站点顺序朗读本日讲解；只在点击后播放，不上传文本'
+  const handleListenDay = () => {
+    if (speechBlocked) return
+    if (speakingDay) {
+      if (speech.status === 'paused') speech.resume()
+      else speech.pause()
+      return
+    }
+    speech.play(narrationItems)
+  }
 
   return (
     <div data-testid="today-panel" data-today-kind={pick.kind} className={CARD}>
@@ -261,6 +297,60 @@ export default function TodayPanel({
             ))}
           </ul>
         )}
+      </div>
+
+      <div
+        className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3"
+        data-testid="today-speech"
+      >
+        <button
+          type="button"
+          className={ACTION}
+          onClick={handleListenDay}
+          disabled={speechBlocked || narrationItems.length === 0}
+          aria-pressed={speakingDay}
+          data-testid="today-listen-day"
+        >
+          {speakingDay
+            ? speech.status === 'paused'
+              ? '继续本日讲解'
+              : '暂停本日讲解'
+            : '连续播放本日讲解'}
+        </button>
+        {speakingDay && (
+          <button
+            type="button"
+            className={ACTION}
+            onClick={() => speech.stop()}
+            data-testid="today-speech-stop"
+          >
+            停止
+          </button>
+        )}
+        {speech.supported && speech.voiceStatus !== 'missing' && (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            语速
+            <select
+              className="min-h-9 rounded-[6px] border border-border bg-background px-1.5 text-xs"
+              data-testid="today-speech-rate"
+              value={String(speech.rate)}
+              onChange={(event) => speech.setRate(Number(event.target.value))}
+            >
+              {SPEECH_RATE_OPTIONS.map((rate) => (
+                <option key={rate} value={rate}>
+                  {rate}x
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <span
+          className="text-xs text-muted-foreground"
+          aria-live="polite"
+          data-testid="today-speech-status"
+        >
+          {narrationItems.length === 0 ? '本日没有可讲解的站点' : speechStatusText}
+        </span>
       </div>
 
       {next.kind === 'upcoming' && next.stop !== null && (

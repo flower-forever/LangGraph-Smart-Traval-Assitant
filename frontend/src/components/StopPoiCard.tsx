@@ -1,6 +1,14 @@
+import { useEffect } from 'react'
+
 import type { TripStop } from '../lib/api'
 import { projectStopFacts, type StopFactField } from '../lib/stopFacts'
 import type { PoiCardsRecordV1 } from '../lib/poiCards'
+import {
+  SPEECH_RATE_OPTIONS,
+  buildStopNarration,
+  speechNotice,
+  useSpeechNarration,
+} from '../lib/speech'
 import StopFactBadge from './StopFactBadge'
 
 interface StopPoiCardProps {
@@ -51,6 +59,32 @@ export default function StopPoiCard({ stop, poiCards, onOpenPoiCardPanel, now = 
   const facts = projectStopFacts(stop, poiCards, now())
   const title = facts.matched ? `景点资料卡 · ${facts.cardName ?? stop.name}` : '景点信息 · 未知'
 
+  /* ── S7 语音讲解：只有显式点击才发声；切换站点 / 卸载自动停止 ── */
+  const speech = useSpeechNarration()
+  useEffect(() => {
+    // 同一张卡被复用到另一个站点时也要停掉上一站；stop 是稳定回调
+    speech.stop()
+  }, [stop.id, speech.stop])
+  const narration = buildStopNarration(stop)
+  const notice = speechNotice(speech.supported, speech.voiceStatus, speech.failure)
+  const speechBlocked = !speech.supported || speech.voiceStatus === 'missing'
+  const speakingThis = speech.status !== 'idle' && speech.currentId === stop.id
+  const listenLabel = speakingThis
+    ? speech.status === 'paused'
+      ? '继续讲解'
+      : '暂停讲解'
+    : '听讲解'
+
+  const handleListen = () => {
+    if (speechBlocked) return
+    if (speakingThis) {
+      if (speech.status === 'paused') speech.resume()
+      else speech.pause()
+      return
+    }
+    speech.play([{ id: stop.id, text: narration }])
+  }
+
   return (
     <div
       className="mt-3 rounded-[10px] border border-border bg-card p-3"
@@ -79,6 +113,52 @@ export default function StopPoiCard({ stop, poiCards, onOpenPoiCardPanel, now = 
           )}
         </p>
       )}
+
+      <div
+        className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3"
+        data-testid={`stop-speech-controls-${stop.id}`}
+      >
+        <button
+          type="button"
+          className="min-h-11 cursor-pointer rounded-[6px] border border-[color:var(--color-line-strong)] bg-background px-4 text-sm hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+          data-testid={`stop-listen-${stop.id}`}
+          onClick={handleListen}
+          disabled={speechBlocked}
+          aria-pressed={speakingThis}
+        >
+          {listenLabel}
+        </button>
+        {speakingThis && (
+          <button
+            type="button"
+            className="min-h-11 cursor-pointer rounded-[6px] border border-border bg-background px-4 text-sm hover:bg-secondary"
+            data-testid={`stop-speech-stop-${stop.id}`}
+            onClick={() => speech.stop()}
+          >
+            停止
+          </button>
+        )}
+        {speech.supported && speech.voiceStatus !== 'missing' && (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            语速
+            <select
+              className="min-h-9 rounded-[6px] border border-border bg-background px-1.5 text-xs"
+              data-testid={`stop-speech-rate-${stop.id}`}
+              value={String(speech.rate)}
+              onChange={(event) => speech.setRate(Number(event.target.value))}
+            >
+              {SPEECH_RATE_OPTIONS.map((rate) => (
+                <option key={rate} value={rate}>
+                  {rate}x
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <span className="text-xs text-muted-foreground" aria-live="polite" data-testid={`stop-speech-status-${stop.id}`}>
+          {notice ?? (speakingThis ? (speech.status === 'paused' ? '已暂停' : '正在朗读…') : '语音只在点击后播放，不上传文本')}
+        </span>
+      </div>
     </div>
   )
 }

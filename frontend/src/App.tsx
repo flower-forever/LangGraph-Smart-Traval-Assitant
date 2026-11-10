@@ -4,6 +4,7 @@ import IcsExportPanel from './components/IcsExportPanel'
 import PlanForm from './components/PlanForm'
 import ItineraryView from './components/ItineraryView'
 import RouteFlowHint from './components/RouteFlowHint'
+import RouteReplayPanel from './components/RouteReplayPanel'
 import ItineraryHealthCard from './components/ItineraryHealthCard'
 import InterestTag from './components/InterestTag'
 import type { PlanInterest } from './lib/interests'
@@ -695,6 +696,8 @@ export default function App() {
   const [budgetOpen, setBudgetOpen] = useState(false)
   /** 分享卡片面板是否展开（四期 S4）；只读预览，不写任何存储 */
   const [shareOpen, setShareOpen] = useState(false)
+  /** 路线回放面板是否展开（S7）；只读回放，不写任何存储，不影响行程数据 */
+  const [replayOpen, setReplayOpen] = useState(false)
   /** 显式收起费用面板的标记：置位后焦点回「费用估算」入口按钮；隐式隐藏不置位不抢焦点 */
   const budgetExplicitCloseRef = useRef(false)
   const budgetEntryRef = useRef<HTMLDivElement | null>(null)
@@ -4212,6 +4215,13 @@ export default function App() {
                     onOpenPoiCardPanel={handleStopFactSupplement}
                   />
                 )}
+                {currentDay && (
+                  <div className="mb-4 flex justify-end">
+                    <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={() => setReplayOpen(true)} data-testid="route-replay-entry">
+                      路线回放
+                    </Button>
+                  </div>
+                )}
               </div>
               <div className={MAP_PANE}>
                 {currentDay && (
@@ -4224,6 +4234,13 @@ export default function App() {
                 )}
               </div>
             </div>
+            {replayOpen && trip && currentDay && (
+              <RouteReplayPanel
+                days={draft ? draft.days : trip.days}
+                initialDay={activeDay}
+                onClose={() => setReplayOpen(false)}
+              />
+            )}
             {shareOpen && trip && currentDay && (
               <ShareCardPanel
                 trip={trip}
