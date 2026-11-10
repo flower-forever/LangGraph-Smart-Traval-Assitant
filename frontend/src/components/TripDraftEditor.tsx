@@ -49,6 +49,7 @@ import { Badge } from '@/components/ui/badge'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import StopSwapPanel from '@/components/StopSwapPanel'
+import { SWAP_ANIM_CLEAR_MS } from '../lib/motionMap'
 import type { PoiCardsRecordV1 } from '../lib/poiCards'
 import type { CandidateItemV1 } from '../lib/workspace'
 
@@ -293,6 +294,9 @@ export default function TripDraftEditor({
   const [session, setSession] = useState<EditorSession | null>(null)
   /** S6 · 换一个：正在展开替换面板的站点 id；同时最多一个。 */
   const [swapStopId, setSwapStopId] = useState<string | null>(null)
+  /** 六期 S2 · 翻卡：正在播放翻卡动画的站点行（data-swap-anim 的值）。 */
+  const [swapAnim, setSwapAnim] = useState<{ stopId: string; direction: 'forward' | 'backward' } | null>(null)
+  const swapAnimTimerRef = useRef<number | null>(null)
   const [focusRequest, setFocusRequest] = useState<FocusTarget | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -456,6 +460,25 @@ export default function TripDraftEditor({
   useEffect(() => {
     setSwapStopId(null)
   }, [dayNumber])
+
+  /* 六期 S2 · 翻卡：卸载时清掉标注清除计时器，避免对已卸载组件 setState。 */
+  useEffect(() => {
+    return () => {
+      if (swapAnimTimerRef.current !== null) window.clearTimeout(swapAnimTimerRef.current)
+    }
+  }, [])
+
+  /** 六期 S2 · 翻卡（纯装饰）：StopSwapPanel 确认/撤销后挂一行动画标注，
+   *  SWAP_ANIM_CLEAR_MS 后摘掉（app.css 的 keyframes 播完 neither 不留残态，
+   *  摘标注只是恢复无动画的普通行）。连点时新标注覆盖旧的，计时器重开。 */
+  function handleSwapAnimated(stopId: string, direction: 'forward' | 'backward') {
+    setSwapAnim({ stopId, direction })
+    if (swapAnimTimerRef.current !== null) window.clearTimeout(swapAnimTimerRef.current)
+    swapAnimTimerRef.current = window.setTimeout(() => {
+      swapAnimTimerRef.current = null
+      setSwapAnim(null)
+    }, SWAP_ANIM_CLEAR_MS)
+  }
 
   const inputDirty = session !== null && isFormDirty(session)
   const editing = session !== null
@@ -1245,6 +1268,11 @@ export default function TripDraftEditor({
                   className={`border-t border-t-border py-3 first:border-t-0 ${isEditing ? 'rounded-[10px] border-t-border bg-background pl-3 shadow-[inset_3px_0_0_var(--color-primary)]' : ''}`}
                   key={stop.id}
                   data-editing={isEditing || undefined}
+                  // 六期 S2 · 翻卡：确认替换（forward）/ 撤销（backward）后整行播放
+                  // 一次滑出滑入动画；纯装饰标注，SWAP_ANIM_CLEAR_MS 后由编辑器摘除。
+                  data-swap-anim={
+                    swapAnim !== null && swapAnim.stopId === stop.id ? swapAnim.direction : undefined
+                  }
                 >
                   <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                     <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">第 {index + 1} 站</span>
@@ -1333,6 +1361,7 @@ export default function TripDraftEditor({
                       poiCards={poiCards}
                       onClose={closeSwap}
                       returnFocusTo={swapReturnFocusRef}
+                      onSwapAnimated={(direction) => handleSwapAnimated(stop.id, direction)}
                     />
                   )}
                 </li>

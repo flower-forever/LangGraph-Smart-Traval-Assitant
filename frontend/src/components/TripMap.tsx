@@ -5,6 +5,8 @@ import type { TripDay } from '../lib/api'
 import { buildDayMapData, groupStopsByLocation, type DayMapData, type StopRef } from '../lib/mapData'
 import { osmSearchUrl, displayTime } from '../lib/format'
 import { createTileWatch, type TileState, type TileWatch } from '../lib/tileStatus'
+import { useReducedMotion } from '../lib/useReducedMotion'
+import { MAP_FLY_DURATION_S } from '../lib/motionMap'
 
 interface TripMapProps {
   day: TripDay
@@ -123,6 +125,8 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
   const onSelectRef = useRef(onSelectStop)
   const tileWatchRef = useRef<TileWatch | null>(null)
   const [tileState, setTileState] = useState<TileState>('loading')
+  // 六期 S2 · fly-to：选中联动的平滑飞行在 reduced-motion 下改 setView 直跳。
+  const reducedMotion = useReducedMotion()
 
   const data: DayMapData = useMemo(() => buildDayMapData(day), [day])
   /** 同坐标分组：一组对应一个 marker；组内是可单独访问的各站 */
@@ -273,9 +277,14 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
     const owningGroup = groups.find((g) => g.some((s) => s.stop.id === activeStopId))
     const marker = owningGroup ? markersRef.current.get(owningGroup[0].stop.id) : undefined
     if (!marker) return
-    map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 13), { duration: 0.6 })
+    // 六期 S2 · fly-to：平滑飞行（slow 档延长口径）；reduced-motion 改 setView 直跳
+    if (reducedMotion) {
+      map.setView(marker.getLatLng(), Math.max(map.getZoom(), 13), { animate: false })
+    } else {
+      map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 13), { duration: MAP_FLY_DURATION_S })
+    }
     marker.openPopup()
-  }, [activeStopId, activeGroupId, activeIsOnMap, groups])
+  }, [activeStopId, activeGroupId, activeIsOnMap, groups, reducedMotion])
 
   // 没有站点（空日）不能说「站点均无坐标」；有站点但一个坐标都没有才算缺坐标
   const hasStops = day.stops.length > 0

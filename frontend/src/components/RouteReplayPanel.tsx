@@ -36,6 +36,7 @@ import {
 import { cn } from '../lib/utils'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { useReducedMotion } from '../lib/useReducedMotion'
+import { REPLAY_FLY_DURATION_S } from '../lib/motionMap'
 
 export interface RouteReplayPanelProps {
   /** 行程的全部天；回放按天切换。 */
@@ -253,8 +254,10 @@ export default function RouteReplayPanel({
     if (!current.location) return
     const latlng: [number, number] = [current.location.lat, current.location.lng]
     const zoom = Math.max(map.getZoom(), 13)
+    // 六期 S2 · fly-to：时长统一走 lib/motionMap（slow 档延长口径）；换天 reset
+    // 后 stationIndex 归 0，同一 effect 平滑飞到第 1 站；reduced-motion 直跳不变。
     if (reducedMotion) map.setView(latlng, zoom, { animate: false })
-    else map.flyTo(latlng, zoom, { duration: 0.7 })
+    else map.flyTo(latlng, zoom, { duration: REPLAY_FLY_DURATION_S })
   }, [plan, state.stationIndex, state.phase, reducedMotion])
 
   /* 电影模式切换后容器尺寸变化，必须让 Leaflet 重新量一次 */

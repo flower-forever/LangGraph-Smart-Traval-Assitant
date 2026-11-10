@@ -56,6 +56,11 @@ export interface StopSwapPanelProps {
    * 移到 body；不传时退回挂载前记录的 activeElement。
    */
   returnFocusTo?: RefObject<HTMLElement | null> | null
+  /**
+   * 六期 S2 · 翻卡事件（纯装饰）：确认替换发 forward、撤销发 backward，
+   * 由父组件在站点行上挂动画标注。缺省 = 不发事件（行为与五期完全一致）。
+   */
+  onSwapAnimated?: (direction: 'forward' | 'backward') => void
 }
 
 interface AppliedState {
@@ -77,6 +82,7 @@ export default function StopSwapPanel({
   poiCards = null,
   onClose,
   returnFocusTo = null,
+  onSwapAnimated,
 }: StopSwapPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [preview, setPreview] = useState<SwapPreview | null>(null)
@@ -153,6 +159,8 @@ export default function StopSwapPanel({
     setApplied({ stopName: selected.name, revision: written.draft.revision })
     setPreview(null)
     setSelectedId(null)
+    // 六期 S2 · 翻卡：替换 = forward（旧卡左滑出、新卡右滑入）；纯装饰事件，失败不触发
+    onSwapAnimated?.('forward')
     setNotice(
       `已把第 ${dayNumber} 天的「${stop.name}」换成「${selected.name}」（只改内存草稿，未自动保存）。` +
         '被替换站点前后的路段已标为「路线待重取」，不沿用旧路线。',
@@ -173,6 +181,8 @@ export default function StopSwapPanel({
     }
     onDraftChange(result.draft)
     setApplied(null)
+    // 六期 S2 · 翻卡：撤销 = backward（与替换同一规格、方向镜像）
+    onSwapAnimated?.('backward')
     setNotice(`已撤销这次更换，「${applied.stopName}」的替换已回退（只改内存草稿，未自动保存）。`)
   }
 

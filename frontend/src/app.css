@@ -119,6 +119,54 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
 }
 
+/* ---------- 换一翻卡（六期 S2） ----------
+ * 替换确认 / 撤销时，被换站点整行做一次「旧卡滑出、新卡滑入」的装饰性翻卡。
+ * 三条红线：
+ * 1) 纯装饰：只动 transform / opacity，零 layout 属性；animation 用 neither——
+ *    播完不留残态，行内容（边框、内阴影、子元素布局）动画前后完全一致；
+ * 2) 方向对称：替换 = 旧卡向左滑出、新卡自右滑入（向前翻页）；撤销 = 镜像反向
+ *    （向右滑出、自左滑入，向后翻回）。单个序列 keyframes 实现：中点处透明度
+ *    为 0，此刻位移从 -24px 跳到 +24px 不可见——同元素双动画会在延迟期互相
+ *    覆盖 fill 态，故不用两段动画拼接；
+ * 3) reduced-motion：整段动画退化为瞬时（0.01ms），等价于直接切换内容。
+ * 总时长 = normal 档 ×2（滑出/滑入各占一个 normal 档 180ms），缓动引用
+ * --motion-ease-standard；不散落魔法数（除几何位移 24px，属形状参数）。
+ */
+@keyframes oc-swap-forward {
+  0% { opacity: 1; transform: translateX(0); }
+  45% { opacity: 0; transform: translateX(-24px); }
+  55% { opacity: 0; transform: translateX(24px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes oc-swap-backward {
+  0% { opacity: 1; transform: translateX(0); }
+  45% { opacity: 0; transform: translateX(24px); }
+  55% { opacity: 0; transform: translateX(-24px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+/* 挂载在站点 li 上：动画作用于整行容器（卡片即这一行的视觉整体），
+ * data-swap-anim 的值由 TripDraftEditor 按「替换 forward / 撤销 backward」写入，
+ * 动画结束后由组件清除（App 计时器，时长与 CSS calc 同源）。 */
+li[data-swap-anim='forward'] {
+  animation: oc-swap-forward calc(var(--motion-normal) * 2) var(--motion-ease-standard);
+}
+
+li[data-swap-anim='backward'] {
+  animation: oc-swap-backward calc(var(--motion-normal) * 2) var(--motion-ease-standard);
+}
+
+/* reduced-motion：翻卡整段瞬时完成（与全局 0.01ms 兜底双保险，显式声明降级分支）。 */
+@media (prefers-reduced-motion: reduce) {
+  li[data-swap-anim='forward'],
+  li[data-swap-anim='backward'] {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+
 /* ---------- 落印 StampSeal（六期 S1） ----------
  * 朱砂印章「行程既定」：规划成功时盖在行程区顶部右上，2.5s 后静默退场。
  * 三条红线：
