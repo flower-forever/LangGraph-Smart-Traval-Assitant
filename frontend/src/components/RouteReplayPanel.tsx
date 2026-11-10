@@ -35,6 +35,7 @@ import {
 } from '../lib/routeReplay'
 import { cn } from '../lib/utils'
 import { useDialogFocus } from '../lib/useDialogFocus'
+import { useReducedMotion } from '../lib/useReducedMotion'
 
 export interface RouteReplayPanelProps {
   /** 行程的全部天；回放按天切换。 */
@@ -51,26 +52,6 @@ const BTN =
 const SPEED_BTN =
   'min-h-9 cursor-pointer rounded-[6px] border border-border bg-background px-2.5 text-xs hover:bg-secondary aria-[pressed=true]:border-[color:var(--color-primary)] aria-[pressed=true]:bg-accent-surface aria-[pressed=true]:text-[color:var(--color-accent-foreground)]'
 const MUTED = 'text-xs text-[color:var(--color-faint)]'
-
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  })
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const onChange = () => setReduced(query.matches)
-    if (typeof query.addEventListener === 'function') {
-      query.addEventListener('change', onChange)
-      return () => query.removeEventListener('change', onChange)
-    }
-    return undefined
-  }, [])
-
-  return reduced
-}
 
 function replayIcon(index: number, active: boolean): L.DivIcon {
   return L.divIcon({
@@ -114,7 +95,7 @@ export default function RouteReplayPanel({
   const day = days[safeDayIndex] ?? null
   const plan: ReplayDayPlan = useMemo(() => (day ? buildReplayDay(day) : EMPTY_REPLAY_PLAN), [day])
 
-  const systemReducedMotion = usePrefersReducedMotion()
+  const systemReducedMotion = useReducedMotion()
   const reducedMotion = reducedMotionOverride ?? systemReducedMotion
 
   const reducer = useCallback(
@@ -379,7 +360,7 @@ export default function RouteReplayPanel({
 
   return (
     <div
-      className={cn('fixed inset-0 z-[1200] flex items-center justify-center bg-black/55', cinema ? 'p-0' : 'p-2 sm:p-4')}
+      className={cn('oc-overlay-enter fixed inset-0 z-[1200] flex items-center justify-center bg-black/55', cinema ? 'p-0' : 'p-2 sm:p-4')}
       data-testid="route-replay-overlay"
     >
       <div
@@ -389,7 +370,7 @@ export default function RouteReplayPanel({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          'flex w-full flex-col overflow-hidden border border-border bg-background shadow-xl',
+          'oc-panel-enter flex w-full flex-col overflow-hidden border border-border bg-background shadow-xl',
           cinema ? 'h-[100dvh] max-w-none rounded-none border-0' : 'h-[min(94vh,900px)] max-w-[1180px] rounded-[10px]',
         )}
         data-testid="route-replay-panel"

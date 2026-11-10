@@ -182,7 +182,7 @@ export default function StopSwapPanel({
     <section
       ref={panelRef}
       tabIndex={-1}
-      className="mt-3 grid gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-background p-4"
+      className="oc-panel-enter-fast mt-3 grid gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] bg-background p-4"
       aria-label={`更换第 ${dayNumber} 天的站点`}
       data-testid="stop-swap-panel"
     >

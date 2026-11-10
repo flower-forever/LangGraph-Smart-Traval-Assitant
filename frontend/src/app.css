@@ -68,6 +68,126 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
 }
 
+/* ---------- 六期 S1 · 动效基建（motion tokens 见 theme.css 设计刻度块） ----------
+ * 纪律（六期 §0.3 动效专属条款）：只动画 transform / opacity，不碰 layout；
+ * 时长/缓动只引用 --motion-* tokens，不散落魔法数；
+ * 每个动效都有 prefers-reduced-motion 降级分支（下方 media 查询）并被测试钉住。
+ */
+
+/* 弹层/卡片进出场：fade + slide（transform 位移 + opacity，零 layout 属性）。
+ * 进场方向统一「自下而上 8px」：面板从下方轻微浮起，与纸面手账的层次感一致。
+ * 挂载即播放（CSS animation 自动执行），卸载即消失——不做退出延迟，保证
+ * useDialogFocus 的焦点语义（首焦点 / Esc / 归还）与卸载时序完全不变。 */
+@keyframes oc-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.oc-panel-enter {
+  animation: oc-panel-in var(--motion-normal) var(--motion-ease-standard) both;
+}
+
+/* 面板内部的次级层（遮罩之后的卡体）用 fast 档轻微跟随，只动 transform/opacity */
+.oc-panel-enter-fast {
+  animation: oc-panel-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+}
+
+/* 模态遮罩淡入：只动 opacity；fixed 定位由原 overlay 类承担，这里不重复 */
+@keyframes oc-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.oc-overlay-enter {
+  animation: oc-overlay-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+}
+
+/* reduced-motion：全部微转场退化为瞬时（等价于无动画）；与全局 0.01ms 兜底双保险，
+ * 显式声明让测试与审查都能在源码里看到每个动效的降级分支。 */
+@media (prefers-reduced-motion: reduce) {
+  .oc-panel-enter,
+  .oc-panel-enter-fast,
+  .oc-overlay-enter {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ---------- 落印 StampSeal（六期 S1） ----------
+ * 朱砂印章「行程既定」：规划成功时盖在行程区顶部右上，2.5s 后静默退场。
+ * 三条红线：
+ * 1) 不阻塞交互：印章层 pointer-events: none，永不截住行程区的点击；
+ * 2) 零 layout：淡入 + 微震全部走 transform / opacity，位移用 translate 不改变文档流；
+ * 3) reduced-motion：仅淡入不震动（盖章 keyframes 里 data-reduced 分支去掉位移帧）。
+ * 时长引用 motion tokens（微震 --motion-duration-slow ≈ 300ms；退场 --motion-normal）。
+ */
+.oc-stamp-seal {
+  pointer-events: none;
+  position: absolute;
+  top: 6px;
+  right: 0;
+  z-index: 30;
+  animation:
+    oc-stamp-in var(--motion-duration-slow) var(--motion-ease-standard) both,
+    oc-stamp-jolt var(--motion-duration-slow) var(--motion-ease-standard) both,
+    oc-stamp-out var(--motion-normal) ease-in var(--motion-dwell-stamp) forwards;
+}
+
+@keyframes oc-stamp-in {
+  from { opacity: 0; transform: scale(1.12); }
+  60% { opacity: 1; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* 纸面微震：印章落下时整枚印章做 ±1px 的 transform 位移（不是 layout 抖动），
+ * 三帧快速往返，视觉上是「盖下去压了压纸」。 */
+@keyframes oc-stamp-jolt {
+  0% { transform: translate(0, 0); }
+  30% { transform: translate(-1px, 1px); }
+  60% { transform: translate(1px, -0.5px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* 2.5s 后静默退场：只淡出，不缩放不位移（forwards 保持隐藏，随后组件卸载）。
+ * 延迟用 --motion-dwell-stamp（规格驻留 2.5s），淡出时长 --motion-normal。 */
+@keyframes oc-stamp-out {
+  to { opacity: 0; }
+}
+
+/* reduced-motion：仅淡入不震动——jolt 动画整个不跑，in/out 退化为瞬时。 */
+@media (prefers-reduced-motion: reduce) {
+  .oc-stamp-seal {
+    animation:
+      oc-stamp-in 0.01ms linear both,
+      oc-stamp-out var(--motion-normal) ease-in var(--motion-dwell-stamp) forwards;
+  }
+}
+
+/* 印章面：朱砂 + 纸面卡色，方章带圆角；字号克制，不抢行程标题的视觉层级。
+ * 颜色全部走主题语义变量（--primary / --card），六主题（含深色）自动适配。 */
+.stamp-seal-face {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 2px solid var(--primary);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--primary);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  /* 两枚小圆孔 + 微斜，是「盖章」的手工感；只影响自身绘制，不碰布局 */
+  transform: rotate(-2deg);
+  box-shadow: var(--shadow-1);
+}
+
 /* ---------- Leaflet 覆写（地图内部样式，不迁移：UI_DESIGN §6 纪律 7） ---------- */
 .leaflet-container {
   font-family: var(--font-body);

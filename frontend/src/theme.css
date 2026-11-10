@@ -101,6 +101,17 @@
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 
+  /* Motion tokens（六期 S1）：全站动效统一时长/缓动，新动效只引用这些名字。
+   * 与主题解耦：六主题（含下方 .dark）不携带动效值，本组 token 只在这里定义一次。
+   * 命名按六期任务书口径（--motion-normal 不带 duration 后缀）。
+   * --motion-dwell-stamp 是落印的展示驻留（产品行为参数，非动效时长）：
+   * 规格为「2.5s 后静默退场」，token 化让 CSS 退场延迟与 App 卸载计时器共用一个数。 */
+  --motion-duration-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-duration-slow: 300ms;
+  --motion-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-dwell-stamp: 2.5s;
+
   /* 阴影（克制，纸面感） */
   --shadow-1: 0 1px 2px oklch(24% 0.018 150 / 0.06);
   --shadow-2: 0 2px 10px oklch(24% 0.018 150 / 0.08);

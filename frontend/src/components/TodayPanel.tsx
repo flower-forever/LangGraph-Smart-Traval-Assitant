@@ -24,6 +24,7 @@ import {
   useSpeechNarration,
 } from '../lib/speech'
 import StopFactBadge from './StopFactBadge'
+import { cn } from '../lib/utils'
 
 /**
  * S4 · 一日跟随：「今天」卡（五期计划 §5）。
@@ -209,7 +210,7 @@ export default function TodayPanel({
   }
 
   return (
-    <div data-testid="today-panel" data-today-kind={pick.kind} className={CARD}>
+    <div data-testid="today-panel" data-today-kind={pick.kind} className={cn(CARD, 'oc-panel-enter-fast')}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className={LABEL} data-testid="today-day-label">{dayLabel}</p>
         {clockText !== null && (

@@ -8,6 +8,8 @@ import ItineraryHealthCard from './components/ItineraryHealthCard'
 import InterestTag from './components/InterestTag'
 import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
+import StampSeal from './components/StampSeal'
+import { useReducedMotion } from './lib/useReducedMotion'
 import { projectStopFacts } from './lib/stopFacts'
 import { paceLabelOf, type HealthPace } from './lib/itineraryHealth'
 import SavedTripsPanel from './components/SavedTripsPanel'
@@ -686,6 +688,32 @@ export default function App() {
     tripRevisionRef.current += 1
     setTripRevision(tripRevisionRef.current)
   }, [])
+
+  /* ───────── 六期 S1 · 落印（规划成功彩蛋）状态 ───────── */
+
+  /**
+   * 落印驻留时长（规格：2.5s 后静默退场）+ CSS 淡出收尾（--motion-normal 180ms），
+   * 与 theme.css 的 --motion-dwell-stamp（2.5s）对应：App 计时器在淡出完成后卸载，
+   * 晚于淡出是安全顺序（forwards 保持隐藏）。同 REPLAY_DWELL_MS 的常量先例。
+   */
+  const STAMP_UNMOUNT_MS = 2700
+
+  /**
+   * 落印会话号：每次规划成功 +1，stampKey 换值让 <StampSeal key={stampKey}>
+   * 重新挂载——同一会话里重复规划也每次盖一枚，恢复 / 导入 / 示例不触发。
+   * null = 没有落印。计时器只在挂载期间走，卸载/重挂自动清零。
+   */
+  const stampSeqRef = useRef(0)
+  const [stampKey, setStampKey] = useState<number | null>(null)
+  /** 落印 reduced-motion 公共通道（仅传给 data-reduced 标注，样式降级在 CSS） */
+  const reducedMotion = useReducedMotion()
+
+  // 落印驻留计时：挂载起 2.5s+淡出 后静默卸载；换 key 重挂时 effect 重新计时
+  useEffect(() => {
+    if (stampKey === null) return
+    const timer = window.setTimeout(() => setStampKey(null), STAMP_UNMOUNT_MS)
+    return () => window.clearTimeout(timer)
+  }, [stampKey])
 
   /** 最新行程的同步引用：AI 候选应用必须以当前页面为准，不能读闭包里的旧值 */
   const tripRef = useRef<Trip | null>(null)
@@ -2151,6 +2179,10 @@ export default function App() {
       }
       setTrip(t)
       bumpTripRevision()
+      // 六期 S1 落印：仅真实规划成功（新 Trip 从规划加载完成）触发一次；
+      // 恢复 / 导入 / 示例路径不经过这里。stampKey 换值让印章组件重新挂载。
+      stampSeqRef.current += 1
+      setStampKey(stampSeqRef.current)
       setPhase('ready')
       setRestoredAt(null)
       setOpenedFromFile(false)
@@ -3409,7 +3441,13 @@ export default function App() {
 
         <div ref={itineraryTopRef} id="trip-section" />
         {trip && (
-          <section aria-label="行程安排" data-trip-revision={tripRevision}>
+          <section aria-label="行程安排" data-trip-revision={tripRevision} className="relative">
+            {/* 六期 S1 落印：仅规划成功（stampKey 会话号）时盖在行程区顶部；
+                key 换值重新挂载，App 计时器 2.5s+淡出 后静默卸载。pointer-events:none，
+                不截点击；aria-hidden 不进读屏与 tab 序。 */}
+            {stampKey !== null && (
+              <StampSeal key={stampKey} reducedMotion={reducedMotion} />
+            )}
             <header className={TRIP_HEADER}>
               <div className={TRIP_HEAD_ROW}>
                 <span className={TRIP_SOURCE_TAG} data-source={trip.source}>

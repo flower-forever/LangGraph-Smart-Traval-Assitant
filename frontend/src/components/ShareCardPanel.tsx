@@ -272,7 +272,7 @@ export default function ShareCardPanel({
 
   return (
     <div
-      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/55 p-3 sm:p-6"
+      className="oc-overlay-enter fixed inset-0 z-[1200] flex items-center justify-center bg-black/55 p-3 sm:p-6"
       data-testid="share-card-overlay"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) handleClose()
@@ -284,7 +284,7 @@ export default function ShareCardPanel({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-[10px] border border-border bg-background p-4 shadow-xl sm:p-6"
+        className="oc-panel-enter max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-[10px] border border-border bg-background p-4 shadow-xl sm:p-6"
       >
         <div className="grid min-w-0 gap-5">
           <div className="grid min-w-0 gap-1.5">
