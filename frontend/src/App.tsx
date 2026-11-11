@@ -8,6 +8,7 @@ import ItineraryHealthCard from './components/ItineraryHealthCard'
 import InterestTag from './components/InterestTag'
 import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
+import CityProfileCard from './components/CityProfileCard'
 import StampSeal from './components/StampSeal'
 import { useReducedMotion } from './lib/useReducedMotion'
 import { projectStopFacts } from './lib/stopFacts'
@@ -4258,6 +4259,7 @@ export default function App() {
 
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
+                {trip?.cityProfile && <CityProfileCard cityProfile={trip.cityProfile} />}
                 {currentDay && trip && (
                   <TodayPanel
                     days={trip.days}

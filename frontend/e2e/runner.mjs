@@ -53,6 +53,11 @@ import {
   runS8SmokeNarrow,
   setS8AppOrigin,
 } from './s8SmokeScenarios.mjs'
+import {
+  runS4CityProfileAppearance,
+  runS4CityProfileCollapse,
+  runS4CityProfileDegraded,
+} from './s4CityProfileScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1135,6 +1140,56 @@ async function scenarioS8SmokeNarrow() {
   }
 }
 
+/** ───────────────────────── 场景 20–22：六期 S4 城市导览卡（出现 / 折叠 / 降级） ───────────────────────── */
+
+async function scenarioS4CityProfileAppearance() {
+  const { context, page } = await newOfflineContext('s4CityProfileAppearance')
+  const rec = makeStepRecorder('s4CityProfileAppearance', 'desktop-1440')
+  try {
+    await runS4CityProfileAppearance({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s4CityProfileAppearance = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS4CityProfileCollapse() {
+  const { context, page } = await newOfflineContext('s4CityProfileCollapse')
+  const rec = makeStepRecorder('s4CityProfileCollapse', 'desktop-1440')
+  try {
+    await runS4CityProfileCollapse({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s4CityProfileCollapse = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS4CityProfileDegraded() {
+  const { context, page } = await newOfflineContext('s4CityProfileDegraded')
+  const rec = makeStepRecorder('s4CityProfileDegraded', 'desktop-1440')
+  try {
+    await runS4CityProfileDegraded({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s4CityProfileDegraded = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1209,6 +1264,9 @@ try {
   setS8AppOrigin(appOrigin)
   await scenarioS8SmokeDesktop()
   await scenarioS8SmokeNarrow()
+  await scenarioS4CityProfileAppearance()
+  await scenarioS4CityProfileCollapse()
+  await scenarioS4CityProfileDegraded()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

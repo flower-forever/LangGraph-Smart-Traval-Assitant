@@ -279,6 +279,67 @@ class DayPlan(BaseModel):
             raise ValueError("date 必须是 YYYY-MM-DD 或 null") from exc
 
 
+# 六期 S4 城市导览：规划响应里的可选稳定知识块。
+# 只装城市印象 / 片区 / 季节贴士 / 经典清单这类稳定内容；
+# 营业时间、票价、预约政策等易变事实不在模型生成范围（见 _CITY_PROFILE_VOLATILE_RE）。
+MAX_CITY_PROFILE_DISTRICTS = 6
+MAX_CITY_PROFILE_CLASSICS = 15
+CITY_PROFILE_SOURCE = "model_generated"
+
+
+class CityProfileTextBlock(BaseModel):
+    """一句话文本块；source 固定标注 AI 生成。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    text: str = Field(min_length=1, max_length=120)
+    source: Literal["model_generated"] = CITY_PROFILE_SOURCE
+
+
+class CityProfileSuggestedDays(BaseModel):
+    """建议游玩天数区间。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    min: int = Field(ge=MIN_DAYS, le=MAX_DAYS)
+    max: int = Field(ge=MIN_DAYS, le=MAX_DAYS)
+    source: Literal["model_generated"] = CITY_PROFILE_SOURCE
+
+
+class CityProfileDistrict(BaseModel):
+    """城市片区：名称 + 一句话 + 代表景点名称 2-3 个。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    name: str = Field(min_length=1, max_length=40)
+    summary: str = Field(default="", max_length=120)
+    attractions: list[str] = Field(default_factory=list, max_length=3)
+    source: Literal["model_generated"] = CITY_PROFILE_SOURCE
+
+
+class CityProfileClassicItem(BaseModel):
+    """经典清单条目：名称 + 一句话理由（供 S6 充分度对比）。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    name: str = Field(min_length=1, max_length=60)
+    reason: str = Field(default="", max_length=120)
+    source: Literal["model_generated"] = CITY_PROFILE_SOURCE
+
+
+class CityProfile(BaseModel):
+    """城市导览块：所有子块可选；模型没把握的块直接缺省，不编造。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    source: Literal["model_generated"] = CITY_PROFILE_SOURCE
+    oneLineImpression: CityProfileTextBlock | None = None
+    suggestedDays: CityProfileSuggestedDays | None = None
+    districts: list[CityProfileDistrict] | None = None
+    seasonTips: CityProfileTextBlock | None = None
+    classicList: list[CityProfileClassicItem] | None = None
+
+
 class TripPlan(BaseModel):
     """完整行程。example 与 agent 两种来源共用此结构。"""
 
@@ -292,6 +353,8 @@ class TripPlan(BaseModel):
     map_coordinate_system: Literal["WGS84"] = "WGS84"
     warnings: list[str] = Field(default_factory=list, max_length=MAX_TRIP_WARNINGS)
     days: list[DayPlan] = Field(min_length=1, max_length=MAX_DAYS)
+    # 六期 S4：可选城市导览；旧行程 / 旧备份没有该字段时为 None。
+    cityProfile: CityProfile | None = None
 
     # 归一化阶段的站点时间来源（stop_id -> model / placeholder）。私有属性：
     # 不进 JSON schema、model_dump 或响应体，model_copy / deepcopy 会保留。
@@ -1145,6 +1208,18 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "{\n"
         '  "title": "行程标题",\n'
         '  "summary": "2-3 句行程概述",\n'
+        '  "cityProfile": {\n'
+        '    "oneLineImpression": {"text": "一句话城市印象", "source": "model_generated"},\n'
+        '    "suggestedDays": {"min": 2, "max": 4, "source": "model_generated"},\n'
+        '    "districts": [\n'
+        '      {"name": "片区名", "summary": "一句话片区特点", '
+        '"attractions": ["代表景点1", "代表景点2"], "source": "model_generated"}\n'
+        "    ],\n"
+        '    "seasonTips": {"text": "当季一句话贴士", "source": "model_generated"},\n'
+        '    "classicList": [\n'
+        '      {"name": "经典景点名", "reason": "一句话理由", "source": "model_generated"}\n'
+        "    ]\n"
+        "  },\n"
         '  "days": [\n'
         "    {\n"
         '      "day": 1,\n'
@@ -1174,6 +1249,13 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "8. 午餐（11:30-13:30）与晚餐（17:30-19:30）窗口内至少各留 45 分钟用餐时间；"
         "不确认沿途是否有餐馆时不要编造用餐地点。\n"
         "9. 只输出 JSON，不要包含 ``` 标记。\n"
+        "10. cityProfile 是城市稳定知识概览：一句话印象、建议天数、3-6 个片区、当季贴士、"
+        "8-15 条经典清单。全部字段可选；没把握的块直接省略，不要编造。\n"
+        "11. cityProfile 中禁止输出营业时间、票价、预约政策等易变具体信息，"
+        "也不要输出具体时间表或价格数字。\n"
+        "12. cityProfile 字数软约束：oneLineImpression / seasonTips 各不超过 40 字；"
+        "片区 summary 不超过 40 字；每条经典清单 reason 不超过 30 字；"
+        "district.attractions 只写 2-3 个景点名称。\n"
         f"{constraints_rule}"
     )
 
@@ -1299,6 +1381,320 @@ def _unavailable_legs(stops: list[Stop], mode: str, description: str) -> list[Le
             )
         )
     return legs
+
+
+# 六期 S4 信息深度红线：模型不得生成营业时间 / 票价 / 预约政策等易变具体信息。
+# 这里做最后一道防呆：命中模式的城市导览文本不进入响应（宁可缺省，不展示未经核实的数字）。
+# 采用「构件检测」而非整句枚举：时刻（点/时/半/点整/am-pm/全角冒号）、金额（元/块/人民币）、
+# 票务与预约动词、开闭馆/入场动词、星期/时段与开放搭配；并对「一块草地」「两点建议」等
+# 正常量词/非时间用法做语境约束，避免误杀。
+_CITY_PROFILE_VOLATILE_RE = re.compile(
+    r"""
+    (
+        # ===== 固定词：营业/开放/票价/预约 =====
+        营业时间 | 开放时间 | 闭馆日? | 开放日 | 开馆日 | 开放时段 | 营业时段 |
+        票价 | 门票 | 预约 | 预订 |
+
+        # ===== 英文固定词 =====
+        opening\s+hours? | business\s+hours? | visiting\s+hours? | opening\s+days? |
+        closing\s+time | opening\s+time | last\s+entry | last\s+admission |
+        (?:open|closed)\s+on\s+(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\b |
+        (?:open|closed)\s+on\s+(?:weekdays?|weekends?|holidays?)\b |
+        (?:open|closed)\s+(?:weekdays?|weekends?|holidays?)\b |
+        (?:open|closed)\s+(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\b |
+        open\s+daily\b | closed\s+daily\b |
+        open(?:s)?\s+at\s+\d{1,2} | open\s+from\s+\d{1,2} | open\s+until\s+\d{1,2} |
+        open\s+till\s+\d{1,2} | open\s+late\b | open\s+until\s+(?:late|midnight)\b |
+        open(?:s)?\s+(?:[5-9]|1\d|2[0-3])\s*[-–—~～〜]\s*(?:[0-9]|1\d|2[0-3]) |
+        (?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\s*(?:-|–|—|to|through|thru|until)\s*
+            (?:mon|tue|wed|thu|fri|sat|sun)(?:day)? |
+        (?:[5-9]|1\d|2[0-3])\s*[-–—~～〜]\s*(?:[0-9]|1\d|2[0-3])\s*(?:daily|weekdays?|weekends?|holidays?) |
+        (?:[5-9]|1\d|2[0-3])\s*(?:to|until|till)\s*(?:[0-9]|1\d|2[0-3])\s*(?:daily|weekdays?|weekends?|holidays?) |
+        (?:daily|weekdays?|weekends?|holidays?)\s*(?:[5-9]|1\d|2[0-3])\s*[-–—~～〜]\s*(?:[0-9]|1\d|2[0-3]) |
+        \bhours?\s*[:：]\s*(?:[5-9]|1\d|2[0-3])\s*(?:[-–—~～〜]|(?:to|until|till)\b|a\.?m\.?|p\.?m\.?) |
+        24/7 | 24-hour\s+(?:service|opening|operation|access|营业|store|restaurant|facility) |
+        24\s*小时营业 | open\s+24\s*(?:hours?|h)\b |
+        box\s+office | entry\s+fee | free\s+entry\b | free\s+of\s+charge |
+        paid\s+(?:entry|admission) | half\s+price | full\s+price |
+        student\s+discount | senior\s+discount | discount |
+        tickets? | admission | reservation | booking |
+        book\s+(?:online|ahead|in\s+advance|now) |
+        reserve\s+(?:online|ahead|in\s+advance|now) |
+        ID\s+required\b | valid\s+ID\b | bring\s+(?:your\s+)?ID\b | passport\s+required\b |
+
+        # ===== 金额：货币符号 / 数字+货币 =====
+        [¥￥$€£]\s*\d+(?:\.\d+)? |
+        \d+(?:\.\d+)?\s*(?:元|块钱|人民币|美元|欧元|英镑|日元|港币|新台币|韩元|
+            rmb|cny|usd|eur|gbp|jpy|hkd|dollars?|euros?|(?-i:yuan)|(?-i:yen)) |
+        (?:rmb|cny|usd|eur|gbp|jpy|hkd)\s*\d+(?:\.\d+)? |
+        人民币\s*(?:\d+(?:\.\d+)?|[零〇一二三四五六七八九十百千万亿两]+) |
+        (?:\d+(?:\.\d+)?|[零〇一二三四五六七八九十百千万亿两]+)\s*人民币 |
+        [零〇一二三四五六七八九十百千万亿两]+\s*
+            (?:元(?!路|里|桥|巷|街|复始|二次)|块钱|美元|欧元|英镑|日元|港币|新台币|韩元) |
+        [零〇一二三四五六七八九十百千万亿两]+\s*(?:毛钱|角钱) |
+        \d+(?:\.\d+)?\s*(?:毛钱|角钱) |
+
+        # ===== 金额：数字+块，必须有强金额语境词（避免「一块草地」「三块礁石」） =====
+        (?:人均|每人|门票|票价|收费|花费|价格|定价|花(?:了|费)?)\s*
+            (?:约|大约|近|不到|超过)?\s*
+            (?:[零〇一二三四五六七八九十百千万亿两]{1,4}|\d+(?:\.\d+)?)\s*块 |
+
+        # ===== 票务/预约/优惠动词 =====
+        购票 | 买票 | 订票 | 取票 | 售票 | 票务 | 免票 | 半票 | 付费 | 收费 | 免费 |
+        预定 | 需订 | 须订 | 订座 |
+        成人票 | 儿童票 | 老人票 | 学生票 | 优惠票 | 套票 | 联票 | 年票 | 通票 |
+        半价 | 全价 | 学生价 | 优惠价 | 折扣 | 打折 |
+        入场费 | 参观费 | 讲解费 | 导览费 | 停车费 | 服务费 | 最低消费 |
+        凭(?:身份证|有效证件|学生证|老年证|工作证|军官证|残疾证|证件|票) |
+
+        # ===== 开闭馆/入场/限流动词 =====
+        开馆 | 闭馆 | 休馆 | 开园 | 闭园 | 开市 | 闭市 | 打烊 | 歇业 | 停业 |
+        开门(?!见山|红|大吉) | 关门(?!弟子) | 停止入场 | 停止参观 | 停止售票 | 停止入馆 | 停止营业 |
+        暂停开放 | 暂停营业 | 谢绝参观 | 游客止步 | 禁止入内 | 入场时间 | 清场 | 限流 |
+        营业中(?!心) | 营业状态 | 营业日(?!常) |
+        (?:临时|暂停|停止|全天|永久)\s*关闭 |
+        (?:景区|公园|场馆|展馆|景点|博物馆|园区)\s*关闭 |
+
+        # ===== 开放/营业需搭配时间/星期/节假日语境 =====
+        (?:每日|每天|天天|全天|正常|照常|全年|常年|季节性|旺季|淡季|假期|暑假|寒假|
+           春节|国庆|五一|十一|元旦|清明|端午|中秋|节假日|工作日|周末|白天|夜间|
+           (?:周|週|星期|礼拜)[一二三四五六日天])
+        [^，。；;]{0,8}
+        (?:开放(?!式|包容|性|心态|平台)|营业|无休) |
+
+        # ===== 星期范围 / 星期+开闭馆或钟点 =====
+        (?:周|週|星期|礼拜)[一二三四五六日天]\s*(?:至|到|—|–|-|~|～|〜)\s*
+            (?:周|週|星期|礼拜)[一二三四五六日天] |
+        (?:周|週|星期|礼拜)[一二三四五六日天][^，。；;]{0,12}
+            (?:开馆|闭馆|休馆|开园|闭园|开市|闭市|打烊|歇业|停业|
+               开放(?!式|包容|性|心态|平台)|停止入场|停止参观|停止营业|
+               暂停开放|暂停营业|开门|关门|营业|点|时|[:：]\d{2}|半价|免费|票价|门票) |
+        (?:周末|週末)[^，。；;]{0,8}
+            (?:开放(?!式|包容|性|心态|平台)|开馆|闭馆|开园|闭园|开市|闭市|
+               打烊|歇业|停业|营业|停止入场|暂停开放|暂停营业|停止营业|限流) |
+
+        # ===== 时刻：中文/数字 + 点/时，带时间前缀、时间后缀或开闭馆动词 =====
+        (?:凌晨|清晨|早上|早晨|上午|中午|午后|下午|傍晚|晚上|夜里|夜间|午夜|今晚|明晚|
+           每晚|每日|每天|全天)
+        [^，。；;]{0,8}
+        [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*(?:点|时) |
+        [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*
+            (?:
+                点(?:半|整|正|钟(?!方向)|一刻|三刻|至|到|后|前|左右|以后|之前|起|开始|结束|[-–—~～〜]) |
+                时(?:半(?!会|刻)|整|正|钟(?!方向)|一刻|三刻|至|到|后|前|左右|以后|之前|起|开始|结束|[-–—~～〜])
+            ) |
+        [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*(?:点|时)\s*
+            (?:[0-9]{1,2}|[零〇一二三四五六七八九十]{1,3})\s*分 |
+        [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*(?:点|时)[^，。；;]{0,4}
+            (?:开馆|闭馆|休馆|开园|闭园|开市|闭市|打烊|歇业|停业|
+               开放|停止入场|停止参观|停止营业|暂停开放|暂停营业|开门|关门|迎客|入场) |
+
+        # ===== 数字钟点（含全角冒号）与 12 小时制单点 =====
+        (?:[01]?\d|2[0-3])[:：][0-5]\d |
+        \d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)\b |
+
+        # ===== 24 小时制/12 小时制时间区间 =====
+        (?:[01]?\d|2[0-3])[:：][0-5]\d\s*[-–—~～〜至到]\s*
+            (?:[01]?\d|2[0-3])[:：][0-5]\d |
+        \d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)\s*[-–—~～〜至到]\s*
+            \d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)
+
+        # ===== V6 补丁：只增不改，追加构件分支 =====
+        # ① 时间前缀扩展：正午/黄昏/深夜/晚间/半夜/拂晓/早/晚/工作日/周末/节假日/周X
+        #    早/晚排除「早一点/晚一点/早点儿/晚些」；建议类名词不误杀
+        | (?:正午|黄昏|深夜|晚间|半夜|拂晓|早(?!一点|一点儿|点儿|些)|晚(?!一点|一点儿|点儿|些)|
+             工作日|周末|节假日|(?:周|週|星期|礼拜)[一二三四五六日天])
+          [^，。；;]{0,8}
+          [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*(?:点|时)
+          (?!建议|注意事项|想法|意见|看法|心得|体会|忠告|提示|说明|要求|内容|事项|理由|优势|缺点|特点)
+        # ② 点/时后缀扩展：之后/截止
+        | [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*(?:点|时)(?:之后|截止)
+        # ③ 英文裸区间：9 till 5 / 10 to 6（排除 people/km/hours 等数量）
+        | (?:[5-9]|1\d|2[0-3])\s*(?:to|until|till)\s*(?:[0-9]|1\d|2[0-3])(?!\d)
+          (?!\s*(?:people|persons?|guests?|visitors?|km|kilometers?|kilometres?|meters?|metres?|miles?|hours?|days?|minutes?|mins?|years?|months?|weeks?|
+                       人|位|名|个|座|层|米|厘米|毫米|公里|千米|里|步|平方米|平方公里|立方米|
+                       分钟|分|小时|天|日|周|月|年|岁|只|条|件|套|张|本|支|双|对|份|
+                       瓶|杯|碗|盘|串|块|元|块钱|美元|欧元|英镑|日元|港币|万|千|百|%|％|倍|
+                       次|回|遍|趟|场|间|台|辆|艘|架|头|匹|棵|株|片|粒|颗|克|千克|公斤|斤|吨|升|毫升|度|秒|级|
+                       的|便利店|超市|商店|门店|店))
+        # ④ public holidays
+        | (?:public|bank|national|statutory)\s+holidays?
+        # ⑤ 证件类裸词（含携带/需要/证件查验等变体）
+        | 身份证|有效证件|证件照|证件原件|证件号码|携带[^，。；;]{0,4}证件|需要[^，。；;]{0,4}证件|证件(?:查验|核验|验证|要求)
+        # ⑥ 扫码/刷码 + 入场
+        | (?:扫码|刷码|刷证|刷脸)[^，。；;]{0,4}(?:入场|进馆|入园|入内|参观|游览)
+        # ⑦ 查验 + 证件
+        | (?:查验|核验|验证)[^，。；;]{0,4}证件
+        # ⑧ 裸数字小时区间（(?!\d) 必留；量词负向断言防 5-10 人 / 8-10 米高）
+        | (?:0?[5-9]|1\d|2[0-3])\s*[-–—~～〜至到]\s*\d{1,2}(?!\d)
+          (?!\s*(?:人|位|名|个|座|层|米|厘米|毫米|公里|千米|里|步|平方米|平方公里|立方米|
+                       分钟|分|小时|天|日|周|月|年|岁|只|条|件|套|张|本|支|双|对|份|
+                       瓶|杯|碗|盘|串|块|元|块钱|美元|欧元|英镑|日元|港币|万|千|百|%|％|倍|
+                       次|回|遍|趟|场|间|台|辆|艘|架|头|匹|棵|株|片|粒|颗|克|千克|公斤|斤|吨|升|毫升|度|秒|级|
+                       的|便利店|超市|商店|门店|店))
+    )
+    # ===== V8 并联追加：body + "|(...)"，不触碰既有分支 =====
+    | (?:
+        # ① 开/闭馆 + 服务动词兄弟词
+        开张|关张|收摊|开摊|闭摊|开闸|闭闸|封馆|封园|封场|闭门谢客|
+        停止接待|暂停接待|取消当日开放|停止开放|暂停开放|取消开放|
+        停止营业|暂停营业|停止服务|暂停服务|清场
+        # ② 票务/预约流程动词
+        | 实名(?:制|登记|核验|预约|购票)?|核销|换票|退票|改签|验票|检票|查票
+        # ③ 准入/会员/通行证政策（英）
+        | membership|member\s+card|member\s+pass|annual\s+pass|season\s+pass|
+          day\s+pass|city\s+pass|tourist\s+pass|pass\s+required|entry\s+permit|
+          permit\s+required|visitor\s+pass|access\s+pass
+        # ④ 准入/会员（中）
+        | 会员卡|会员制|会员费|会员价|会员日|年卡|季卡|月卡|年票|季票|月票|
+          联票|套票|通票|通行证|入园卡|需持卡入场|需购买会员
+        # ⑤ 12h 前置 am/pm 区间
+        | (?:am|pm)\s*\d{1,2}(?::\d{2})?\s*(?:to|until|till|[-–—~])\s*
+          (?:am|pm)?\s*\d{1,2}(?::\d{2})?
+        # ⑥ 英文节假日专名
+        | closed\s+(?:on|during|for)\s+(?:the\s+)?(?:
+            (?:mid[-\s]?)?autumn\s+festival|chinese\s+new\s+year|
+            spring\s+festival|lantern\s+festival|national\s+day|
+            dragon\s+boat\s+festival|qingming\s+festival|double\s+ninth\s+festival|
+            labour\s+day|labor\s+day|may\s+day|new\s+year(?:'|’)?s\s+(?:day|eve)|
+            christmas(?:\s+day)?|thanksgiving(?:\s+day)?|easter(?:\s+sunday|\s+monday)?)
+        # ⑦ 裸钟点 + 泛化尾巴（保留红线尾巴；不收「人最多/有演出」两条 gray，守住 88 条 0 误杀）
+        | [0-9零〇一二三四五六七八九十百千万亿两]{1,4}\s*(?:点|时)
+          [^，。；;]{0,4}
+          (?:人(?:流|潮|不多|山人海)|最挤|最安静|最热闹|
+             有(?:表演|夜市|市集|潮汐|日落|灯光秀|乐队|船)|
+             才(?:开张|开门|开馆|开园|营业|开放|收摊)|开始排队)
+        # ⑧ 费用词 + 数字（补年费 1200 / membership fee 30）
+        | (?:年费|月费|会费|会员费|年卡费|季卡费|月卡费|门票钱|入场费|参观费|
+             讲解费|导览费|服务费|手续费|预订费|预约费|押金|定金|订金|停车费|
+             船票|车票|机票|全价|半价|学生价|优惠价|成人价|儿童价|老人价|会员价)
+          \s*(?:为|是|约|大概|大约|[:：])?\s*
+          (?:[0-9]+(?:\.[0-9]+)?|[零〇一二三四五六七八九十百千万亿两]+)
+          \s*(?:元|块|块钱|人民币|美元|欧元|英镑|日元|港币|RMB|CNY|USD|EUR|GBP|JPY|HKD)?
+        | \b(?:admission|entry|membership|annual|monthly|joining|service|booking|reservation)\s+fees?\b
+        | \bfees?\s+(?:required|applies|apply|charged)\b
+        | \bfees?\s*[:：]?\s*(?:[$€£¥]\s*)?[0-9]+(?:\.[0-9]+)?
+          \s*(?:RMB|CNY|USD|EUR|GBP|JPY|HKD|yuan|dollars?|euros?|pounds?)?
+      )
+    # ===== V9 收敛补丁（只增不改）：五家族残余兄弟词一次性收口 =====
+    | (售罄|售完|售光|卖完|卖光|余票紧张|票源紧张|票已售光|当日售罄|早场售罄|sold[\s\-]*out|sell[\s\-]*out|sells?[\s\-]*out|tickets?\s+(?:are\s+)?selling\s+fast|tickets?\s+often\s+sell\s+out|不可退改|不可退|不能退|过期不退|作废不退|不退不换|可退改|退改(?:规则|政策|规定)|退票(?:规则|政策|规定)|改签(?:规则|政策|规定)|退票手续费|no\s+refund|non[-\s]?refundable|refundable\s+within|free\s+cancellation|cancellation\s+(?:fee|policy)|no\s+cancellation|抢购|代订|补票|取票机|购票渠道|早鸟票|团购票|拼团票|两日票|夜游票|团购价|拼团价格|拼团票价|night\s+pass|combo\s+ticket|multi[-\s]day\s+ticket|book\s+via|线上购票|公众号购票|自助机购票|第三方[^，。；;]{0,2}购票|加收|另收|附加费|溢价|加价|价格上浮|票价上浮|浮动价|surcharge|sur[\s\-]?charges?|peak[\s\-]?season\s+(?:rates?|prices?|surcharge|fee)s?|extra\s+(?:charge|fees?)|additional\s+(?:fee|charge)s?|(?:service|cover)\s+charge(?!\s*s?(?:\s*(?:is|are)\s+|,\s*)?(?:不常见|很少见|罕见|不存在|没有|not\s+common|rare|uncommon))|deposit\s+(?:required|needed|refundable)|ID\s+deposit|行李寄存费|电瓶车费|观光车费|摆渡费|游船费|船票费|索道费|缆车费|滑道费|保险费|开瓶费|餐具费|清洁费|超时费|资源费|换桌费|租船费|露营费|入园费|入馆费|检票费|行李费|摄影费|租伞费|租衣费|储物费|导游费|观光费|[百千万亿]+块(?![钱币石礁米砖瓦])|歇市|收市|休市|闭门(?![造车羹弟子])|开始营业|结束营业|恢复营业|继续营业|照常营业|停止迎宾|暂停迎宾|换季关闭|closed\s+(?:for|during)\s+(?:the\s+)?holidays?|holiday\s+closures?|closed\s+for\s+maintenance|seasonal\s+closures?|under\s+renovation|(?:指纹|人脸)(?:识别|核验|验证)?(?:入场|进馆|入园|入内|通关|通行)|(?:需|须|必须|只能|只可|方可)[^，。；;]{0,4}(?:指纹|人脸|刷脸|刷证)|门禁(?!系统)|(?:闸机|按号|凭号|排号|取号)(?:入场|进馆|入园|入内|参观)|只对持卡人开放|仅对持卡人开放|持卡人(?:方可|才能|才可|才需)|需刷卡入场|刷卡入场|刷卡进馆|刷卡入园|(?:ID|identity|passport)\s+check(?:ed)?\b|fingerprint\s+(?:entry|scan|access)|facial\s+recognition\s+(?:entry|required|needed)|face\s+recognition\s+required|每日限额|限额|名额(?:已满|有限|限制|不开放)|抽签(?:入场|参观|资格)|摇号(?:参观|入场|预约)|先到先得|先抢先得|appointment\s+only|no\s+appointment|card\s+only|cards\s+only|credit\s+card\s+only|cash\s+only|only\s+cash\s+accepted|仅收现金|只接受现金|只支持刷卡|仅限刷卡|仅接受银行卡|儿童[^，。；;]{0,4}成人陪同[^，。；;]{0,4}(?:入园|入馆|入场|参观)|(?:促销|优惠|特惠|限时|闪购|秒杀|团购|拼团|预售)[^，。；;、\s]{0,4}(?:持续|有效|限时|仅限|限|为期|活动期|期间)?[^，。；;]{0,4}\d+\s*(?:个)?\s*(?:天|日|周|个月|月|小时)|(?:限时|仅限|截止|有效期|营业期)[^，。；;]{0,6}\d+\s*(?:天|日|周|个月|月|小时)|\d+\s*(?:天|日|周)\s*(?:内)?(?:有效|限时|特惠|优惠)|(?:有效|可用)\s*\d+\s*(?:天|日|周)|(?:有效期|有效期为|限\s*\d+))
+    # ===== V10 收敛补丁（只增不改）：第六轮残余兄弟词一次性收口 =====
+    | ((?:票|券|场次|场|票种)?\s*不再补售|不再补售|停止补售|不再售卖[^，。；;]{0,6}票|(?:余票|当日票|早场|夜场|上午场|下午场|晚场)[^，。；;]{0,4}停售|停售|现场[^，。；;]{0,4}无票可补|无票可补|不再接受[^，。；;]{0,6}补票|(?:售完|售罄|售光)[^，。；;]{0,4}即止|售完即止|已停售|暂停售卖|停止售卖|(?:只|仅|须|需|要)[^，。；;]{0,4}现场(?:发售|销售|出售|购买|买|购|有售|可购)|现场(?:发售|销售|出售|有售|可购|售票处购买|才能买到)|线上[^，。；;]{0,2}不售[^，。；;]{0,4}现场|仅现场有售|只在现场售出|(?:团体|团队)[^，。；;]{0,6}票[^，。；;]{0,8}(?:整团|一起|统一|不可拆|需一次|成团|凑够|一并)|(?:团体|团队)[^，。；;]{0,6}(?:整团|一起|统一|不可拆|一次购买|成团|凑够)|散客票[^，。；;]{0,6}单人购买|散客[^，。；;]{0,4}需[^，。；;]{0,4}购买|十人成团|成团[^，。；;]{0,4}购|拼团[^，。；;]{0,6}人数不足|整修[^，。；;]{0,6}(?:暂停|暂不|不开放|停止开放|不接待)|(?:维修|维护|保养|翻修|改造|施工|装修)[^，。；;]{0,6}(?:暂停开放|暂不开放|不开放|停止开放|停止接待|不接待|暂停接待|闭馆)|(?:内部|馆内|园区)?[^，。；;]{0,2}(?:整修|翻修|改造|装修)[^，。；;]{0,6}(?:暂停对外|暂不对外|不对外|不开放)|暂停对外开放|(?:shuts?\s*down|shutdown|closed\s+down|suspend(?:ed)?|suspension)\s+for\s+(?:a\s+|the\s+|annual\s+|scheduled\s+)?maintenance|under\s+maintenance|maintenance\s+shutdown|maintenance\s+shuts?\s*down|shut\s+for\s+maintenance|closed\s+for\s+maintenance|seasonal\s+(?:shuts?\s*down|shutdown)|(?:under|for)\s+(?:renovation|repairs?)\s+(?:until|for)|closed\s+(?:for|during)\s+(?:the\s+)?holidays?|holiday\s+closures?|(?:部分|新馆|东侧|西侧|新园区|部分展厅|部分区域)[^，。；;]{0,6}(?:尚未|还未|暂未|暂不|未)[^，。；;]{0,4}(?:开放|对外开放|正式开放)|尚未正式对外开放|仍在建设|处于试营业|试营业(?:阶段|中|期间)|(?:尚未|还未|暂未|暂不)[^，。；;]{0,6}开放|(?:每日|每天|当日|单日|日)[^，。；;]{0,8}?(?:上限|限流|限额|限量|配额|最多|至多|不超过|期限|限|承载量)[^，。；;]{0,4}?[0-9零〇一二三四五六七八九十百千万两]+\s*(?:人|位|名|张)|(?:must|need|needs|should|require|requires|required|have)\s+(?:to\s+)?(?:carry|bring|have|show\s+(?:a\s+|an\s+|your\s+|the\s+)?)?(?:a\s+|an\s+|your\s+|the\s+)?(?:printed\s+|valid\s+|original\s+|physical\s+|photo\s+)?(?:id|identification|passport)(?:\s+card)?\b|(?:carry|bring|show)\s+(?:a\s+|an\s+|your\s+|the\s+)?(?:printed\s+|valid\s+|original\s+|physical\s+|photo\s+)?(?:id|identification|passport)(?:\s+card)?\b|(?:id|identification|passport)\s+(?:is\s+)?(?:required|mandatory|needed)|printed\s+id\s+required|physical\s+id|(?:无法|不支持|不接受|不受理|暂不受理|不可)[^，。；;]{0,4}电子[^，。；;]{0,4}(?:证件|身份凭证|身份证)|电子[^，。；;]{0,4}(?:证件|身份凭证|身份证)[^，。；;]{0,4}(?:不可用|不支持|不接受|不受理|需换取|暂停)|仅(?:接受|支持)[^，。；;]{0,4}(?:实体|纸质|原件|实体证件)|(?:仅|只)(?:接受|支持)[^，。；;]{0,4}(?:实体|纸质)证件|[一二两三四]寸[^，。；;]{0,6}(?:白底|免冠|照片|证件照)|(?:证件照|免冠照|证件照片|照片)[^，。；;]{0,8}(?:白底|[一二两三四]寸|近三个月|近期|规格|不能戴帽)|(?:需|须|需要|提交|上传)[^，。；;]{0,6}(?:近期|近三个月|白底|免冠|[一二两三四]寸)[^，。；;]{0,4}(?:照片|免冠照|证件照)|照片[^，。；;]{0,4}(?:规格|需)[^，。；;]{0,4}[一二两三四]寸|(?:散客|个人|散客游客)[^，。；;]{0,8}(?:与|和|同)?(?:团队|团体)[^，。；;]{0,10}(?:分|各)(?:开|别)?[^，。；;]{0,4}(?:入口|通道|排队|入场|进场)|(?:团队|团体)[^，。；;]{0,4}(?:走|请走|使用|走专用|专用)[^，。；;]{0,2}(?:通道|入口)|(?:散客|团体)[^，。；;]{0,4}(?:入口|通道)[^，。；;]{0,6}(?:在|位于|分设)|分流通道[^，。；;]{0,6}(?:按|依|根据)[^，。；;]{0,6}(?:团队|散客)|两个入口[^，。；;]{0,8}(?:分别|各)|(?:团队|团体)[^，。；;]{0,4}与[^，。；;]{0,4}(?:散客|个人)[^，。；;]{0,6}(?:分开|分别|各走|各用)|(?:按|依|根据)[^，。；;]{0,4}(?:散客|团队|团体)[^，。；;]{0,4}(?:分流|分开|分别)|(?:散客|个人|散客游客)[^，。；;]{0,4}(?:与|和|同)?(?:团队|团体)[^，。；;]{0,6}(?:分开|分别|各走|各用|分流)|(?:团体|团队|旅游团|每队|每团)[^，。；;]{0,8}(?:需|须|必须|应)[^，。；;]{0,4}(?:配备|配置|安排|有|带)[^，。；;]{0,6}(?:领队|负责人|联络人|持证导游|导游)|领队[^，。；;]{0,8}(?:需|须|必须)[^，。；;]{0,4}(?:持证|有证|具备|拥有|有)[^，。；;]{0,6}(?:上岗|资格|资质|证)|需(?:有|具备|拥有)[^，。；;]{0,4}(?:旅行社|领队|持证导游)[^，。；;]{0,4}资质|(?:无|没有)[^，。；;]{0,4}领队[^，。；;]{0,4}不予[^，。；;]{0,4}(?:接待|接团|入场)|团体活动[^，。；;]{0,8}需提前报备|(?:三十|二十|五十|四十|十)?人以上[^，。；;]{0,6}需配领队|(?:必须|强制|务必)[^，。；;]{0,6}(?:购买|投保)[^，。；;]{0,4}(?:人身意外|意外伤害|意外|旅游)?险|(?:需|须|应)[^，。；;]{0,4}(?:自行)?(?:购买|投保)[^，。；;]{0,4}(?:人身意外|意外伤害|意外|旅游)?险|(?:不|未)(?:投保|购买保险)[^，。；;]{0,4}不予[^，。；;]{0,4}(?:入园|入场|进入|接待)|意外险[^，。；;]{0,4}(?:为|是)[^，。；;]{0,2}(?:强制|必须)|入园前[^，。；;]{0,4}(?:须|需|必须)[^，。；;]{0,2}买|保险[^，。；;]{0,2}由[^，。；;]{0,4}自行购买|投保(?:意外险)?[^，。；;]{0,4}后方可|(?:购买|投保)[^，。；;]{0,4}(?:人身意外|意外伤害|意外|旅游)[^，。；;]{0,2}(?:保险|险)|(?:必须|强制|务必)[^，。；;]{0,4}(?:购买|投保)[^，。；;]{0,6}(?:人身意外|意外伤害|意外|旅游)[^，。；;]{0,2}(?:保险|险)|(?:每逢|每到|每年)(?:冬季|夏天|夏季|春天|春季|秋天|秋季|雨季|淡季|旺季)[^，。；;]{0,8}(?:保养|维护|检修|养护|整修|维修|施工|改造)|(?:冬|夏|春|秋)(?:季|天)[^，。；;]{0,8}(?:进行|实施|开展|安排)[^，。；;]{0,6}(?:设备|绿化|景观)?(?:保养|维护|检修|养护|整修|维修)|(?:通常|一般|常规)[^，。；;]{0,6}(?:进行|实施|开展)[^，。；;]{0,6}(?:设备)?(?:保养|维护|检修|养护)|(?:高峰|节假日常?|周末|客流)[^，。；;]{0,6}(?:会|将|常)?(?:启动|实行|实施)[^，。；;]{0,6}(?:单向通行|分段放行|分批放行|限时放行|限流)|(?:单向通行|分段放行|分批放行|限时放行)[^，。；;]{0,6}(?:管理|措施)|(?:每场|每晚|每天|每场次|每班)[^，。；;]{0,4}(?:限带|限收|限乘|限客)?[^，。；;]{0,2}[0-9零〇一二三四五六七八九十百千万两]+\s*(?:人|位|名|场|班|趟)|讲解[^，。；;]{0,6}(?:每天|每晚|每日)[^，。；;]{0,4}[0-9零〇一二三四五六七八九十百千万两]+\s*场|(?:班车|摆渡|渡船|地铁|公交)[^，。；;]{0,8}每[^，。；;]{0,4}(?:分钟|小时|分)[^，。；;]{0,2}(?:一班|一趟|班)|每[^，。；;]{0,2}[0-9零〇一二三四五六七八九十百千万两]+\s*(?:分钟|小时)[^，。；;]{0,3}(?:一班|一趟|一班)|(?:商业|专业)[^，。；;]{0,4}拍摄[^，。；;]{0,8}(?:需|须|应|需要)[^，。；;]{0,4}(?:另行)?(?:申请|报批|报备|许可)|拍摄[^，。；;]{0,8}(?:需|须)[^，。；;]{0,4}(?:另行)?(?:申请|报批)|(?:禁止|严禁|不得)[^，。；;]{0,4}(?:使用|携带|架设|放飞)[^，。；;]{0,4}(?:三脚架|无人机|航拍|闪光灯|明火|宠物|自行车)|电子票[^，。；;]{0,6}(?:换取|兑换|换)[^，。；;]{0,4}(?:纸质|实体|纸)票|(?:纸质|实体)票[^，。；;]{0,6}(?:换取|兑换|换)|特殊票种[^，。；;]{0,8}(?:单独|专用|独立)[^，。；;]{0,4}(?:通道|入口)[^，。；;]{0,4}(?:购买|购|买)|(?:单独|专用|独立)[^，。；;]{0,4}通道[^，。；;]{0,4}(?:购买|购|买)|(?:设备|系统|场馆|设施)[^，。；;]{0,6}升级[^，。；;]{0,6}(?:暂停|停止|暂不|不)[^，。；;]{0,4}(?:使用|开放|开放|接待|入场)|升级[^，。；;]{0,6}(?:期间|当中)[^，。；;]{0,6}(?:暂停|停止|暂不)[^，。；;]{0,4}(?:使用|开放|接待|入场)|(?:外籍|外国|港澳台|海外)[^，。；;]{0,6}(?:游客|旅客|访客)?[^，。；;]{0,4}(?:需|须|必须|应)[^，。；;]{0,4}(?:提前)?[^，。；;]{0,4}(?:登记|报备|申报|备案)|(?:外籍|外国|海外)[^，。；;]{0,4}护照[^，。；;]{0,6}(?:需|须|必须)[^，。；;]{0,4}(?:提前)?[^，。；;]{0,4}(?:登记|报备|申报)|(?:宠物|动物|犬|狗)[^，。；;]{0,4}(?:不可|不能|不得|禁止|不允许)[^，。；;]{0,4}(?:进入|入内|带入|入园|入场)|(?:不可|不能|不得|禁止)[^，。；;]{0,4}(?:携带|带入)[^，。；;]{0,4}(?:宠物|动物|犬|狗)|(?:核心区|主景区|展区|馆区|园区)[^，。；;]{0,4}(?:不可|不能|不得|禁止)[^，。；;]{0,4}(?:进入|入内|带入)[^，。；;]{0,4}(?:宠物|动物|犬|狗)?|(?:观光车|电瓶车|游船|渡船|摆渡车|摆渡|班车|地铁|公交)[^，。；;]{0,6}[0-9零〇一二三四五六七八九十百千万两]+\s*(?:分钟|小时)[^，。；;]{0,3}(?:一班|一趟|一班|一艘|一车)|(?:需|须|要|需另)[^，。；;]{0,2}另购[^，。；;]{0,4}(?:票|券)|另购[^，。；;]{0,4}(?:夜场票|早场票|加场票|套票))
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _city_profile_text(value: Any, *, max_length: int) -> tuple[str, bool]:
+    """清洗城市导览文本；命中易变事实模式时返回空串并标记，调用方决定丢弃粒度。"""
+
+    if isinstance(value, dict):
+        value = value.get("text")
+    if not isinstance(value, str):
+        return "", False
+    text = _sanitize_text(value, max_length=max_length, allow_newlines=False)
+    if not text:
+        return "", False
+    if _CITY_PROFILE_VOLATILE_RE.search(text):
+        return "", True
+    return text, False
+
+
+def _parse_city_profile(value: Any) -> tuple[CityProfile | None, bool]:
+    """把模型给的 cityProfile 约束成可选展示块。
+
+    - 坏块 / 缺字段逐块丢弃，绝不让整趟行程失败（城市导览只是附加信息）。
+    - 模型自报的 source 不可信，统一强制为 model_generated。
+    - 命中易变事实的文本被省略，并用第二个返回值提示调用方补一条 warning。
+    """
+
+    if not isinstance(value, dict):
+        return None, False
+
+    dropped = False
+
+    def text_block(raw: Any, max_length: int) -> CityProfileTextBlock | None:
+        nonlocal dropped
+        text, hit = _city_profile_text(raw, max_length=max_length)
+        dropped = dropped or hit
+        return CityProfileTextBlock(text=text) if text else None
+
+    one_line = text_block(value.get("oneLineImpression"), 120)
+    season_tips = text_block(value.get("seasonTips"), 120)
+
+    suggested: CityProfileSuggestedDays | None = None
+    raw_days = value.get("suggestedDays")
+    if isinstance(raw_days, dict):
+        low = raw_days.get("min")
+        high = raw_days.get("max")
+        if (
+            isinstance(low, int)
+            and not isinstance(low, bool)
+            and isinstance(high, int)
+            and not isinstance(high, bool)
+            and MIN_DAYS <= low <= high <= MAX_DAYS
+        ):
+            suggested = CityProfileSuggestedDays(min=low, max=high)
+
+    districts: list[CityProfileDistrict] | None = None
+    raw_districts = value.get("districts")
+    if isinstance(raw_districts, list):
+        parsed_districts: list[CityProfileDistrict] = []
+        for entry in raw_districts[:MAX_CITY_PROFILE_DISTRICTS]:
+            if not isinstance(entry, dict):
+                continue
+            name, hit = _city_profile_text(entry.get("name"), max_length=40)
+            dropped = dropped or hit
+            if not name:
+                continue
+            summary, hit = _city_profile_text(entry.get("summary"), max_length=120)
+            dropped = dropped or hit
+            attractions: list[str] = []
+            raw_attractions = entry.get("attractions")
+            if isinstance(raw_attractions, list):
+                for item in raw_attractions[:3]:
+                    attraction, hit = _city_profile_text(item, max_length=40)
+                    dropped = dropped or hit
+                    if attraction and attraction not in attractions:
+                        attractions.append(attraction)
+            parsed_districts.append(
+                CityProfileDistrict(name=name, summary=summary, attractions=attractions)
+            )
+        if parsed_districts:
+            districts = parsed_districts
+
+    classics: list[CityProfileClassicItem] | None = None
+    raw_classics = value.get("classicList")
+    if isinstance(raw_classics, list):
+        parsed_classics: list[CityProfileClassicItem] = []
+        seen_names: set[str] = set()
+        for entry in raw_classics[:MAX_CITY_PROFILE_CLASSICS]:
+            if not isinstance(entry, dict):
+                continue
+            name, hit = _city_profile_text(entry.get("name"), max_length=60)
+            dropped = dropped or hit
+            if not name or name in seen_names:
+                continue
+            reason, hit = _city_profile_text(entry.get("reason"), max_length=120)
+            dropped = dropped or hit
+            seen_names.add(name)
+            parsed_classics.append(CityProfileClassicItem(name=name, reason=reason))
+        if parsed_classics:
+            classics = parsed_classics
+
+    if not any((one_line, suggested, districts, season_tips, classics)):
+        return None, dropped
+
+    return (
+        CityProfile(
+            oneLineImpression=one_line,
+            suggestedDays=suggested,
+            districts=districts,
+            seasonTips=season_tips,
+            classicList=classics,
+        ),
+        dropped,
+    )
 
 
 def normalize_agent_payload(
@@ -1438,6 +1834,17 @@ def normalize_agent_payload(
         )
     )
 
+    # 六期 S4：城市导览是附加展示块，坏块/缺块都不影响主行程。
+    raw_city_profile = data.get("cityProfile")
+    if raw_city_profile is None and data is not payload:
+        # 容忍模型把 cityProfile 放在 trip 包装层外面的形态。
+        raw_city_profile = payload.get("cityProfile")
+    city_profile, city_profile_dropped = _parse_city_profile(raw_city_profile)
+    if city_profile_dropped:
+        warnings.append(
+            "城市导览中有内容涉及营业时间、票价或预约等易变信息，已省略；请以官方渠道为准。"
+        )
+
     trip = TripPlan(
         id=stable_trip_id(request),
         source="agent",
@@ -1447,6 +1854,7 @@ def normalize_agent_payload(
         map_coordinate_system="WGS84",
         warnings=dedupe_warnings(warnings),
         days=days,
+        cityProfile=city_profile,
     )
     # 私有来源记录：地图增强重算冲突时用来区分真实时刻与占位时间。
     trip._time_origins = time_origins

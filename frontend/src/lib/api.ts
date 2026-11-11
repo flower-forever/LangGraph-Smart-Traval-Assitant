@@ -49,6 +49,43 @@ export interface TripDay {
   legs: TripLeg[]
 }
 
+/** 六期 S4 城市导览：所有子块可选；旧行程没有 cityProfile 时整块缺省。 */
+export type CityProfileSource = 'model_generated'
+
+export interface CityProfileTextBlock {
+  text: string
+  source: CityProfileSource
+}
+
+export interface CityProfileSuggestedDays {
+  min: number
+  max: number
+  source: CityProfileSource
+}
+
+export interface CityProfileDistrict {
+  name: string
+  summary: string
+  /** 代表景点名称 2-3 个 */
+  attractions: string[]
+  source: CityProfileSource
+}
+
+export interface CityProfileClassicItem {
+  name: string
+  reason: string
+  source: CityProfileSource
+}
+
+export interface CityProfile {
+  source: CityProfileSource
+  oneLineImpression?: CityProfileTextBlock | null
+  suggestedDays?: CityProfileSuggestedDays | null
+  districts?: CityProfileDistrict[] | null
+  seasonTips?: CityProfileTextBlock | null
+  classicList?: CityProfileClassicItem[] | null
+}
+
 export interface Trip {
   id: string
   source: 'example' | 'agent'
@@ -58,6 +95,8 @@ export interface Trip {
   map_coordinate_system: 'WGS84'
   warnings: string[]
   days: TripDay[]
+  /** 六期 S4：可选城市导览；旧行程 / 旧备份没有该字段。 */
+  cityProfile?: CityProfile | null
 }
 
 export interface PlanRequest {
@@ -453,6 +492,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * 六期 S4：cityProfile 是可选展示块，只做最浅守卫（必须是对象）。
+ * 块内字段交给 CityProfileCard 的投影逐块降级——一个坏的可选块
+ * 不应该让整份行程被判为非法；旧行程没有该字段时照常通过。
+ */
+function isCityProfileLike(value: unknown): boolean {
+  return isRecord(value)
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
@@ -540,7 +588,10 @@ export function isTripLike(value: unknown): value is Trip {
     value.warnings.every(isPlainString) &&
     Array.isArray(value.days) &&
     value.days.length > 0 &&
-    value.days.every(isDayLike)
+    value.days.every(isDayLike) &&
+    (value.cityProfile === undefined ||
+      value.cityProfile === null ||
+      isCityProfileLike(value.cityProfile))
   )
 }
 
