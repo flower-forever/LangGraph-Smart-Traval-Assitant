@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { TripDay } from '../lib/api'
 import type { StopFacts } from '../lib/stopFacts'
 import { inspectDayHealth, type HealthItem, type HealthPace } from '../lib/itineraryHealth'
+import HealthActionEntry from './HealthActionEntry'
 
 /**
  * 行程体检卡（五期 S3 规格 B）：只读展示当日体检结果。
@@ -16,6 +17,10 @@ interface ItineraryHealthCardProps {
   pace: HealthPace
   /** 每站的可信字段查询（S2 投影结果，与 day.stops 等长对齐）。 */
   factsByStop: ReadonlyArray<StopFacts | null>
+  /** 六期 S8：条目级「建议顺延」入口；缺省 = 该条目不显示入口。 */
+  onSuggestPostpone?: (item: HealthItem) => void
+  /** 六期 S8：条目级「补一餐」入口；缺省 = 该条目不显示入口。 */
+  onSuggestMeal?: (item: HealthItem) => void
 }
 
 const LEVEL_BADGE: Partial<Record<HealthItem['level'], { label: string; tone: string }>> = {
@@ -24,7 +29,13 @@ const LEVEL_BADGE: Partial<Record<HealthItem['level'], { label: string; tone: st
   unknown: { label: '无法核对', tone: 'text-[color:var(--color-faint)]' },
 }
 
-export default function ItineraryHealthCard({ day, pace, factsByStop }: ItineraryHealthCardProps) {
+export default function ItineraryHealthCard({
+  day,
+  pace,
+  factsByStop,
+  onSuggestPostpone,
+  onSuggestMeal,
+}: ItineraryHealthCardProps) {
   const [open, setOpen] = useState(false)
   const report = inspectDayHealth(day, pace, factsByStop)
   const { counts } = report
@@ -103,6 +114,11 @@ export default function ItineraryHealthCard({ day, pace, factsByStop }: Itinerar
                   {item.suggestion !== null && (
                     <p className="m-0 mt-1 text-xs">{item.suggestion}</p>
                   )}
+                  <HealthActionEntry
+                    item={item}
+                    onSuggestPostpone={onSuggestPostpone}
+                    onSuggestMeal={onSuggestMeal}
+                  />
                 </li>
               )
             })

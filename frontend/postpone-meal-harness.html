@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>顺延 / 补餐 · E2E 挂载页</title>
+  </head>
+  <body>
+    <!--
+      六期 S8 离线浏览器验收专用挂载页。
+      只被 e2e/s8PostponeMealScenarios.mjs 引用：不进主包（无任何主包 import），
+      不进构建产物（vite build 默认只构建 index.html）。
+      体检卡与两个面板的真实挂载点是 App.tsx 行程区（PM 接线项）；本页用同一批组件 +
+      同款「无草稿时 createTripDraft、有草稿时 onDraftChange」父级状态做验收。
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/dev/postponeMealHarness.tsx"></script>
+  </body>
+</html>

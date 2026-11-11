@@ -106,7 +106,7 @@ import {
 } from './lib/workspaceSessionRestore'
 import { ApiError, fetchExampleTrip, planTrip, probeBackendCapabilities } from './lib/api'
 import { Button } from '@/components/ui/button'
-import { createTripDraft, type DraftApplySuccess, type TripDraft } from './lib/tripDraft'
+import { createTripDraft, type DraftApplySuccess, type DraftCreateResult, type TripDraft } from './lib/tripDraft'
 import {
   MAX_REPLAN_WARNINGS,
   applyDayReplan,
@@ -150,6 +150,10 @@ import type { AmapAvailability, BackendCapabilities, PlanRequest, PlannerAvailab
 /** 五期 S8：两个重面板按需加载；打开前不进入首屏 chunk。 */
 const RouteReplayPanel = lazy(() => import('./components/RouteReplayPanel'))
 const ShareCardPanel = lazy(() => import('./components/ShareCardPanel'))
+
+/** 六期 S8：体检条目级「建议顺延 / 补一餐」两个操作面板，同样按需加载。 */
+const PostponePanel = lazy(() => import('./components/PostponePanel'))
+const MealSuggestPanel = lazy(() => import('./components/MealSuggestPanel'))
 
 function PanelLoadingFallback({ label }: { label: string }) {
   return (
@@ -472,6 +476,8 @@ export default function App() {
    * 草稿只存在于内存：不写 localStorage、不发请求；「应用」后才成为当前行程。
    */
   const [draft, setDraft] = useState<TripDraft | null>(null)
+  /** 六期 S8：体检条目级操作面板（顺延 / 补一餐）；null = 关闭。 */
+  const [healthAction, setHealthAction] = useState<'postpone' | 'meal' | null>(null)
   /** 新建相邻路段的出行方式，进入编辑前由用户显式选择，不猜、不混用 */
   const [draftMode, setDraftMode] = useState<TravelMode>('walking')
   /** 编辑草稿时出错的提示（创建草稿失败等），只在编辑区显示 */
@@ -930,6 +936,7 @@ export default function App() {
   // 日切换时清除选中站点
   useEffect(() => {
     setActiveStopId(null)
+    setHealthAction(null)
   }, [activeDay])
 
   /** 当前日：编辑时优先取草稿天数组，否则用当前行程；日签仍是唯一的导航事实 */
@@ -2483,6 +2490,44 @@ export default function App() {
     },
     [handleStartEditing],
   )
+
+  /**
+   * 六期 S8：体检条目级操作入口门禁。已有草稿时面板直接以草稿为基准；
+   * 无草稿要 fork 时必须避开一切在途加载 / AI / 地图竞争
+   * （phase==='ready' 同时挡住示例行程在途加载——验收 I3-1）。
+   */
+  const healthActionAllowed = draft !== null || (!aiOpen && !mapOpen && !planLoading && phase === 'ready')
+
+  /**
+   * 六期 S8：无草稿时的 fork 基准（面板确认写入才调用）。
+   * 与 handleStartEditing 同口径捕获 workspace 快照（验收 I3-3：不捕获则
+   * apply 时 commitInternalTripFork 收到显式 null，语义不等价于回退运行时快照）
+   * 并收起资料 / 网网页面板（验收 I3-2：与进入编辑器一致，避免只读面板继续渲染旧天）。
+   */
+  const createHealthDraft = useCallback((): DraftCreateResult => {
+    if (!trip) {
+      return { ok: false, reason: 'invalid_base', message: '当前没有行程，无法创建草稿。' }
+    }
+    draftWorkspaceCaptureRef.current = workspaceController.getRuntime()?.capture ?? null
+    setPoiSourcesOpen(false)
+    setWebSourcesOpen(false)
+    return createTripDraft(trip, { forkTripId: newUuid(), newLegMode: draftMode })
+  }, [trip, draftMode, workspaceController])
+
+  const openPostponePanel = useCallback(() => {
+    setHealthAction('postpone')
+  }, [])
+
+  /** 打开补餐面板：候选库只读加载（不写）+ 收起资料/网页面板。 */
+  const openMealSuggest = useCallback(() => {
+    setPoiSourcesOpen(false)
+    setWebSourcesOpen(false)
+    if (candidatesRecord === null) {
+      const read = loadCandidatesRecord(storageRef.current)
+      if (read.record !== null) setCandidatesRecord(read.record)
+    }
+    setHealthAction('meal')
+  }, [candidatesRecord])
 
   /** 编辑期间用户换了出行方式：对未打开的草稿没有影响；草稿打开后选择被禁用 */
   const handleDraftModeChange = useCallback((mode: TravelMode) => {
@@ -4395,7 +4440,37 @@ export default function App() {
                     factsByStop={currentDay.stops.map(
                       (stop) => (poiCardsReadRef.current ? projectStopFacts(stop, poiCardsRecord, Date.now()) : null),
                     )}
+                    onSuggestPostpone={healthActionAllowed ? openPostponePanel : undefined}
+                    onSuggestMeal={healthActionAllowed ? openMealSuggest : undefined}
                   />
+                )}
+                {healthAction === 'postpone' && currentDay && (
+                  <Suspense fallback={<PanelLoadingFallback label="正在加载顺延面板…" />}>
+                    <PostponePanel
+                      baseDay={currentDay}
+                      pace={lastPlannedPace ?? 'balanced'}
+                      draft={draft}
+                      onCreateDraft={createHealthDraft}
+                      onDraftChange={setDraft}
+                      onClose={() => setHealthAction(null)}
+                      onHealthRecheck={bumpTripRevision}
+                    />
+                  </Suspense>
+                )}
+                {healthAction === 'meal' && currentDay && (
+                  <Suspense fallback={<PanelLoadingFallback label="正在加载补餐面板…" />}>
+                    <MealSuggestPanel
+                      baseDay={currentDay}
+                      draft={draft}
+                      onCreateDraft={createHealthDraft}
+                      onDraftChange={setDraft}
+                      candidates={candidatesRecord?.items ?? null}
+                      poiCards={poiCardsRecord}
+                      createStopId={newUuid}
+                      onClose={() => setHealthAction(null)}
+                      onHealthRecheck={bumpTripRevision}
+                    />
+                  </Suspense>
                 )}
                 {currentDay && <RouteFlowHint day={currentDay} />}
                 {currentDay && (

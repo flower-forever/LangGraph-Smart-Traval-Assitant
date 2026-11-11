@@ -70,6 +70,10 @@ import {
   runS7DetourAdjustAndThresholds,
   runS7DetourKeep,
 } from './s7DetourScenarios.mjs'
+import {
+  runS8PostponeSequence,
+  runS8MealSequence,
+} from './s8PostponeMealScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1304,6 +1308,40 @@ async function scenarioS7DetourAdjustAndThresholds() {
   }
 }
 
+/** ─────────────── 时刻顺延 + 用餐补推荐（S8，追加在 S7 之后） ─────────────── */
+
+async function scenarioS8PostponeMeal() {
+  const { context, page } = await newOfflineContext('s8PostponeMeal')
+  const rec = makeStepRecorder('s8PostponeMeal', 'desktop-1440')
+  try {
+    await runS8PostponeSequence({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s8PostponeMeal = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS8MealSuggest() {
+  const { context, page } = await newOfflineContext('s8MealSuggest')
+  const rec = makeStepRecorder('s8MealSuggest', 'desktop-1440')
+  try {
+    await runS8MealSequence({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s8MealSuggest = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1387,6 +1425,8 @@ try {
   await scenarioS6CoveragePoolSmoke()
   await scenarioS7DetourKeep()
   await scenarioS7DetourAdjustAndThresholds()
+  await scenarioS8PostponeMeal()
+  await scenarioS8MealSuggest()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))
