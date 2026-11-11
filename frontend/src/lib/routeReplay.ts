@@ -248,11 +248,45 @@ export const REPLAY_LEG_MS = 2600
 export const REPLAY_STRAIGHT_MS = 1800
 export const REPLAY_UNAVAILABLE_MS = 1200
 
+/** 六期 S9：1 分钟行程时长 → 80ms 回放时长（固定演示节奏 → 按时长比例）。 */
+export const REPLAY_MS_PER_MINUTE = 80
+export const REPLAY_DWELL_MIN_MS = 1200
+export const REPLAY_DWELL_MAX_MS = 4000
+export const REPLAY_LEG_MIN_MS = 1000
+export const REPLAY_LEG_MAX_MS = 4000
+
 export interface ReplayContext {
   stationCount: number
   /** 每个站点的入站路段类型；index 0 不使用 */
   legKinds: readonly ReplayRouteKind[]
   reducedMotion: boolean
+  /** 每站停留时长（ms，已按 duration_minutes 换算）；缺省 / 缺项回退 REPLAY_DWELL_MS。 */
+  dwellMs?: readonly number[]
+  /** 每个入站路段时长（ms）；缺省 / 缺项回退按路线类型的现状默认。 */
+  legMs?: readonly number[]
+}
+
+function clampMs(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+/** 站点停留：有 duration_minutes 按比例换算并夹在 [1200, 4000]；缺失用现状默认。 */
+export function replayDwellMs(minutes: number | null | undefined): number {
+  if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) {
+    return REPLAY_DWELL_MS
+  }
+  return clampMs(minutes * REPLAY_MS_PER_MINUTE, REPLAY_DWELL_MIN_MS, REPLAY_DWELL_MAX_MS)
+}
+
+/** 路段时长：有 duration_minutes 按比例换算并夹在 [1000, 4000]；缺失按路线类型默认。 */
+export function replayLegMs(
+  minutes: number | null | undefined,
+  kind: ReplayRouteKind | undefined,
+): number {
+  if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) {
+    return legDurationMs(kind)
+  }
+  return clampMs(minutes * REPLAY_MS_PER_MINUTE, REPLAY_LEG_MIN_MS, REPLAY_LEG_MAX_MS)
 }
 
 export type ReplayAction =
@@ -290,9 +324,10 @@ function legDurationMs(kind: ReplayRouteKind | undefined): number {
 /**
  * 回放状态机（纯函数）。
  *
- * 时间轴：第 i 站停留 REPLAY_DWELL_MS → （非 reduced-motion）进入 leg 阶段，
- * 用 leg 时长把第 i+1 站入站路段画完 → 到第 i+1 站停留。最后一站停留结束后
- * 进入 finished。reduced-motion 时跳过 leg 阶段，停留结束直接翻到下一站。
+ * 时间轴：第 i 站停留（按 duration_minutes 换算，缺省 REPLAY_DWELL_MS）→
+ * （非 reduced-motion）进入 leg 阶段，用该段时长（按 duration_minutes 换算，
+ * 缺省按路线类型取固定值）把第 i+1 站入站路段画完 → 到第 i+1 站停留。最后一站
+ * 停留结束后进入 finished。reduced-motion 时跳过 leg 阶段，停留结束直接翻到下一站。
  */
 export function reduceReplay(
   state: ReplayState,
@@ -345,7 +380,9 @@ export function reduceReplay(
       const speed = state.speed
 
       if (state.phase === 'station') {
-        const dwell = REPLAY_DWELL_MS / speed
+        // 六期 S9：停留时长按本站 duration_minutes 比例分配；缺省回退旧固定值。
+        // reduced-motion 仍只影响「是否进入 leg 阶段」，不改变计时口径。
+        const dwell = (context.dwellMs?.[state.stationIndex] ?? REPLAY_DWELL_MS) / speed
         const progress = state.progress + delta / dwell
         if (progress < 1) return { ...state, progress }
         if (state.stationIndex >= lastIndex) {
@@ -359,7 +396,9 @@ export function reduceReplay(
 
       // phase === 'leg'：正在画进入 stationIndex + 1 的那一段
       const targetIndex = Math.min(lastIndex, state.stationIndex + 1)
-      const duration = legDurationMs(context.legKinds[targetIndex]) / speed
+      const duration =
+        (context.legMs?.[targetIndex] ??
+          legDurationMs(context.legKinds[targetIndex])) / speed
       const progress = state.progress + delta / duration
       if (progress < 1) return { ...state, progress }
       return { ...state, stationIndex: targetIndex, phase: 'station', progress: 0 }

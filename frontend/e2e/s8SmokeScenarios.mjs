@@ -41,7 +41,7 @@ const sel = {
   shareSource: '[data-testid="share-source"]',
   shareDraftRadio: '[data-testid="share-source"] input[value="draft"]',
   shareDraftBadge: '[data-testid="share-draft-badge"]',
-  roadbookButton: 'button:has-text("下载离线路书 (.html)")',
+  roadbookButton: 'button:has-text("预览离线路书 (.html)")',
   roadbookPreview: '[data-testid="roadbook-preview"]',
   roadbookConfirm: 'button:has-text("确认下载 .html")',
   replayEntry: '[data-testid="route-replay-entry"]',

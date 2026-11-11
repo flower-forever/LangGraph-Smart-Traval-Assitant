@@ -11,12 +11,18 @@ import type { TripDay } from '../lib/api'
 import {
   INITIAL_REPLAY_STATE,
   MAX_REPLAY_GEOMETRY_POINTS,
+  REPLAY_DWELL_MAX_MS,
+  REPLAY_DWELL_MIN_MS,
   REPLAY_DWELL_MS,
+  REPLAY_LEG_MAX_MS,
+  REPLAY_LEG_MIN_MS,
   REPLAY_LEG_MS,
   REPLAY_STRAIGHT_MS,
   buildReplayDay,
   normalizeReplaySpeed,
   reduceReplay,
+  replayDwellMs,
+  replayLegMs,
   replayRouteLabel,
   replayStayLabel,
   replayTimeLabel,
@@ -327,6 +333,69 @@ describe('prefers-reduced-motion · 逐站翻页', () => {
     state = play(state, REDUCED_CONTEXT)
     state = tick(state, REPLAY_DWELL_MS, REDUCED_CONTEXT)
     expect(state.phase).toBe('finished')
+  })
+})
+
+describe('六期 S9 · 按时长比例分配回放节奏', () => {
+  it('停留按 duration_minutes 换算并夹在上下限；缺失回退现状默认', () => {
+    expect(replayDwellMs(40)).toBe(3200)
+    expect(replayDwellMs(1)).toBe(REPLAY_DWELL_MIN_MS)
+    expect(replayDwellMs(90)).toBe(REPLAY_DWELL_MAX_MS)
+    expect(replayDwellMs(null)).toBe(REPLAY_DWELL_MS)
+    expect(replayDwellMs(undefined)).toBe(REPLAY_DWELL_MS)
+    expect(replayDwellMs(Number.NaN)).toBe(REPLAY_DWELL_MS)
+  })
+
+  it('路段按 duration_minutes 换算；缺失按路线类型回退旧默认', () => {
+    expect(replayLegMs(15, 'navigation')).toBe(1200)
+    expect(replayLegMs(12, 'straight_line')).toBe(REPLAY_LEG_MIN_MS)
+    expect(replayLegMs(1, 'navigation')).toBe(REPLAY_LEG_MIN_MS)
+    expect(replayLegMs(90, 'navigation')).toBe(REPLAY_LEG_MAX_MS)
+    expect(replayLegMs(null, 'navigation')).toBe(REPLAY_LEG_MS)
+    expect(replayLegMs(null, 'straight_line')).toBe(REPLAY_STRAIGHT_MS)
+    expect(replayLegMs(undefined, 'unavailable')).toBe(1200)
+  })
+
+  it('状态机使用 context 的每站/每段时长，不再走固定 2500/2600', () => {
+    const context: ReplayContext = {
+      ...CONTEXT,
+      dwellMs: [1000, 2000, 3000, 4000, 5000],
+      legMs: [0, 800, 1600, 2400, 3200],
+    }
+    let state = play(INITIAL_REPLAY_STATE, context)
+    state = tick(state, 999, context)
+    expect(state.phase).toBe('station')
+    state = tick(state, 1, context)
+    expect(state.phase).toBe('leg')
+    state = tick(state, 799, context)
+    expect(state.stationIndex).toBe(0)
+    state = tick(state, 1, context)
+    expect(state.stationIndex).toBe(1)
+    expect(state.phase).toBe('station')
+
+    // 第 2 站停留 2000ms；leg 1600ms 与第 1 站不同，证明确实按站取值
+    state = tick(state, 2000, context)
+    expect(state.phase).toBe('leg')
+    state = tick(state, 1599, context)
+    expect(state.stationIndex).toBe(1)
+    state = tick(state, 1, context)
+    expect(state.stationIndex).toBe(2)
+  })
+
+  it('reduced-motion 仍按站翻页，只受停留时长影响、不进入 leg', () => {
+    const context: ReplayContext = {
+      ...CONTEXT,
+      dwellMs: [1000, 1000, 1000, 1000, 1000],
+      legMs: [0, 9000, 9000, 9000, 9000],
+      reducedMotion: true,
+    }
+    let state = play(INITIAL_REPLAY_STATE, context)
+    state = tick(state, 1000, context)
+    expect(state.stationIndex).toBe(1)
+    expect(state.phase).toBe('station')
+    state = tick(state, 1000, context)
+    expect(state.stationIndex).toBe(2)
+    expect(state.phase).toBe('station')
   })
 })
 

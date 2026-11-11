@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { TripDay } from '../lib/api'
-import { buildShareCardData, renderShareCard } from '../lib/shareCard'
+import { buildShareCardData, renderShareCard, shareCardThemeColors } from '../lib/shareCard'
 import {
   appendMiniMapToShareCard,
   buildShareMiniMap,
@@ -130,5 +130,31 @@ describe('appendMiniMapToShareCard · 统一尾部块', () => {
     const card = renderShareCard('xuanzhi', buildShareCardData(MOCK_TRIP, day))
     const empty = buildShareMiniMap(MOCK_TRIP_NO_COORD.days[0])
     expect(appendMiniMapToShareCard(card, empty)).toBe(card)
+  })
+
+  it('组合块底色与标题色跟随所传模板（midnight 深色卡无浅色边带、标题不是深底深字）', () => {
+    const day = locatedDay()
+    const map = buildShareMiniMap(day)
+    const midnight = renderShareCard('midnight', buildShareCardData(MOCK_TRIP, day))
+    const composed = appendMiniMapToShareCard(midnight, map, {
+      label: '路线小地图',
+      ...shareCardThemeColors('midnight'),
+    })
+    expect(shareCardThemeColors('midnight')).toEqual({
+      background: '#0A111F',
+      ink: '#F2EAD8',
+      muted: '#8E97A8',
+    })
+    expect(composed).toContain('fill="#0A111F"')
+    expect(composed).toContain('fill="#F2EAD8"')
+    expect(composed).not.toContain('fill="#fbf8f1"')
+    expect(composed).not.toContain('fill="#3f3a30"')
+
+    const xuanzhi = appendMiniMapToShareCard(
+      renderShareCard('xuanzhi', buildShareCardData(MOCK_TRIP, day)),
+      map,
+      { ...shareCardThemeColors('xuanzhi') },
+    )
+    expect(xuanzhi).toContain('fill="#F5EFE1"')
   })
 })

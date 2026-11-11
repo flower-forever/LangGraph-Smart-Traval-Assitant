@@ -20,6 +20,7 @@ import {
   SHARE_CARD_STYLES,
   buildShareCardData,
   renderShareCard,
+  shareCardThemeColors,
   type ShareCardStyle,
 } from '../lib/shareCard'
 import type { RasterizeOutcome } from '../lib/shareCardPng'
@@ -132,10 +133,12 @@ export default function ShareCardPanel({
   )
   const svg = useMemo(() => {
     if (!includeMiniMap || miniMap.svg === null || cardSvg === '') return cardSvg
+    const colors = shareCardThemeColors(style)
     return appendMiniMapToShareCard(cardSvg, miniMap, {
       label: data ? `${data.tripTitle} · 第 ${data.dayNumber} 天 · 路线小地图` : '路线小地图',
+      ...colors,
     })
-  }, [cardSvg, data, includeMiniMap, miniMap])
+  }, [cardSvg, data, includeMiniMap, miniMap, style])
 
   const handleClose = useCallback(() => {
     pngSeqRef.current += 1
@@ -508,7 +511,7 @@ export default function ShareCardPanel({
                     disabled={roadbookBusy}
                     aria-busy={roadbookBusy || undefined}
                   >
-                    {roadbookBusy ? '正在准备离线路书…' : '下载离线路书 (.html)'}
+                    {roadbookBusy ? '正在准备离线路书…' : '预览离线路书 (.html)'}
                   </Button>
                 </div>
                 {roadbookError ? (

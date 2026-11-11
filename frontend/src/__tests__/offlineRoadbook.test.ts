@@ -21,7 +21,7 @@ function cloneTrip(): Trip {
   return JSON.parse(JSON.stringify(MOCK_TRIP)) as Trip
 }
 
-function poiRecord(): PoiCardsRecordV1 {
+function poiRecord(introRecordedAt: number = NOW - 1000): PoiCardsRecordV1 {
   return {
     format: POI_CARDS_FORMAT,
     version: POI_CARDS_VERSION,
@@ -35,7 +35,7 @@ function poiRecord(): PoiCardsRecordV1 {
         ticket: '免费',
         images: [],
         provenance: {
-          intro: { source: 'manual', detail: '手工粘贴', recordedAt: NOW - 1000 },
+          intro: { source: 'manual', detail: '手工粘贴', recordedAt: introRecordedAt },
           openingHours: null,
           ticket: { source: 'tavily', detail: '官网', recordedAt: NOW - 181 * DAY_MS },
         },
@@ -123,6 +123,31 @@ describe('buildOfflineRoadbook · 来源徽章', () => {
     if (!draft.ok) return
     expect(draft.html).toContain(ROADBOOK_DRAFT_BADGE)
     expect(buildOk()).not.toContain(ROADBOOK_DRAFT_BADGE)
+  })
+
+  it('「记录于」按本地时区取日期，不再使用 UTC 日期（北京时间 08:00 前不差一天）', () => {
+    // 2026-11-10T20:00Z = 北京时间 2026-11-11 04:00，旧实现会写成 11-10。
+    const recordedAt = Date.UTC(2026, 10, 10, 20, 0, 0)
+    const local = new Date(recordedAt)
+    const pad = (value: number) => String(value).padStart(2, '0')
+    const localDate = `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`
+    const result = buildOfflineRoadbook(MOCK_TRIP, {
+      now: recordedAt + 1000,
+      poiCards: poiRecord(recordedAt),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.html).toContain(`记录于 ${localDate}`)
+    const utcDate = local.toISOString().slice(0, 10)
+    if (utcDate !== localDate) {
+      expect(result.html).not.toContain(`记录于 ${utcDate}`)
+    }
+  })
+
+  it('页脚不再宣称「不含资料卡原文」，明确只含三字段摘要', () => {
+    const html = buildOk()
+    expect(html).not.toContain('不含资料卡原文')
+    expect(html).toContain('资料卡三字段（介绍 / 开放时间 / 门票）摘要')
   })
 })
 

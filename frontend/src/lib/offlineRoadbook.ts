@@ -89,10 +89,12 @@ const FACT_FIELDS: ReadonlyArray<{ key: keyof Pick<StopFacts, 'intro' | 'opening
   { key: 'ticket', label: '门票' },
 ]
 
+/** recordedAt → 本地时区日期（与 StopFactBadge 同口径；不用 toISOString 的 UTC 日期）。 */
 function recordedDateLabel(timestamp: number): string {
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return '记录时间未知'
-  return date.toISOString().slice(0, 10)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 function factRow(label: string, fact: StopFactField): string {
@@ -355,7 +357,7 @@ export function buildOfflineRoadbook(
     (isDraft ? `<p class="draft-badge">${escapeHtml(ROADBOOK_DRAFT_BADGE)}</p>` : '') +
     '<p class="notice">本页是单文件离线页面：样式与脚本全部内联，不会发起任何网络请求；内容按记录原样整理，未联网核实营业、票务或交通。</p>' +
     `</header>${body}` +
-    '<footer>由 旅行助手 生成 · 本页只含这一份行程，不含资料卡原文、存储键值或密钥。</footer>' +
+    '<footer>由 旅行助手 生成 · 本页只含这一份行程与资料卡三字段（介绍 / 开放时间 / 门票）摘要，不含存储键值或密钥。</footer>' +
     `</div><noscript><style>.day[hidden]{display:block!important}</style></noscript>` +
     `<script>${SCRIPT}</script></body></html>`
 

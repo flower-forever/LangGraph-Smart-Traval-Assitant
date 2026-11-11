@@ -9,6 +9,7 @@ import {
   SHARE_CARD_STYLES,
   buildShareCardData,
   renderShareCard,
+  shareCardBackground,
 } from '../lib/shareCard'
 import { MOCK_TRIP } from './fixtures/trip'
 
@@ -21,6 +22,15 @@ function dayWith(overrides: Partial<TripDay>): TripDay {
 function tripWith(day: TripDay): Trip {
   return { ...MOCK_TRIP, days: [day] }
 }
+
+describe('shareCardBackground · 组合卡底色', () => {
+  it('六个模板各自返回自己的底色，深色 midnight 不再是浅色', () => {
+    const backgrounds = SHARE_CARD_STYLES.map((item) => shareCardBackground(item.id))
+    expect(new Set(backgrounds).size).toBe(SHARE_CARD_STYLES.length)
+    expect(shareCardBackground('midnight')).toBe('#0A111F')
+    expect(shareCardBackground(DEFAULT_SHARE_CARD_STYLE)).toBe('#F5EFE1')
+  })
+})
 
 describe('buildShareCardData · 数据管道', () => {
   it('取行程/日标题、日期与有序站名，时刻折叠秒并保留缺失为「时间未知」', () => {

@@ -30,6 +30,8 @@ import {
   INITIAL_REPLAY_STATE,
   buildReplayDay,
   reduceReplay,
+  replayDwellMs,
+  replayLegMs,
   replayRouteLabel,
   replayStayLabel,
   replayTimeLabel,
@@ -132,6 +134,11 @@ export default function RouteReplayPanel({
         stationCount: plan.stations.length,
         legKinds: plan.stations.map((station) => station.inbound?.kind ?? 'unavailable'),
         reducedMotion,
+        // 六期 S9：每站停留 / 每段路线按 duration_minutes 比例分配（缺失回退旧默认）。
+        dwellMs: plan.stations.map((station) => replayDwellMs(station.stop.duration_minutes)),
+        legMs: plan.stations.map((station) =>
+          replayLegMs(station.inbound?.durationMinutes, station.inbound?.kind),
+        ),
       }),
     [plan, reducedMotion],
   )
@@ -206,17 +213,29 @@ export default function RouteReplayPanel({
   useEffect(() => {
     const element = mapElRef.current
     if (!element) return
+    /* 六期 S9：初始视野直接落在当日首站（旧实现从 [35,110] zoom 5 起飞到 zoom 13，
+     * 一次开面板就会沿途加载大量低缩放瓦片）。无坐标站时保留全国视野。 */
+    const points = plan.stations
+      .map((station) => station.location)
+      .filter((location): location is NonNullable<typeof location> => location !== null)
+    const first = points[0]
     const map = L.map(element, {
-      center: [35, 110],
-      zoom: 5,
+      center: first ? [first.lat, first.lng] : [35, 110],
+      zoom: first ? 13 : 5,
+      maxZoom: 15,
       zoomControl: true,
       attributionControl: true,
       scrollWheelZoom: true,
     })
     mapRef.current = map
     layerRef.current = L.layerGroup().addTo(map)
+    /* 六期 S9：回放期间限制瓦片加载——不保留屏幕外缓冲、不在缩放动画中途加载、
+     * 移动停下来再取瓦片；大幅减少一次回放的 OSM 请求数。 */
     const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
+      keepBuffer: 0,
+      updateWhenIdle: true,
+      updateWhenZooming: false,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> 贡献者',
     })
     tiles.addTo(map)
@@ -329,7 +348,7 @@ export default function RouteReplayPanel({
       if (leg && leg.geometry.length >= 2) {
         map.fitBounds(
           L.latLngBounds(leg.geometry.map((point) => [point.lat, point.lng] as [number, number])),
-          { padding: [48, 48], maxZoom: 14, animate: !reducedMotion },
+          { padding: [48, 48], maxZoom: 13, animate: !reducedMotion },
         )
         return
       }
@@ -479,8 +498,12 @@ export default function RouteReplayPanel({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          'oc-panel-enter flex w-full flex-col overflow-hidden border border-border bg-background shadow-xl',
-          cinema ? 'h-[100dvh] max-w-none rounded-none border-0' : 'h-[min(94vh,900px)] max-w-[1180px] rounded-[10px]',
+          'oc-panel-enter flex w-full flex-col border border-border bg-background shadow-xl',
+          cinema
+            ? 'h-[100dvh] max-w-none overflow-hidden rounded-none border-0'
+            : /* 六期 S9：375 窄屏整体可滚动，站卡不再被 300px 地图 + 控制条挤成 83px；
+                 * 桌面仍保持内容区独立滚动（lg:overflow-hidden）。 */
+              'h-[min(94vh,900px)] max-w-[1180px] overflow-y-auto overflow-x-hidden rounded-[10px] lg:overflow-hidden',
         )}
         data-testid="route-replay-panel"
         data-phase={effectivePhase}
@@ -494,7 +517,7 @@ export default function RouteReplayPanel({
       >
         {cinema && <h2 id={titleId} className="sr-only">路线回放</h2>}
         {!cinema && (
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <h2 id={titleId} className="m-0 font-display text-lg font-bold">
                 路线回放{day ? ` · 第 ${day.day} 天${day.title ? ` · ${day.title}` : ''}` : ''}
@@ -536,8 +559,8 @@ export default function RouteReplayPanel({
           />
         )}
 
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <div className="relative min-h-[300px] flex-1 bg-[color:var(--color-map-water)]">
+        <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:flex-row">
+          <div className="relative h-[300px] flex-none bg-[color:var(--color-map-water)] lg:h-auto lg:min-h-[300px] lg:flex-1">
             <div
               ref={mapElRef}
               className="absolute inset-0 h-full w-full"
@@ -553,13 +576,13 @@ export default function RouteReplayPanel({
             )}
           </div>
           {!cinema && (
-            <aside className="min-h-0 overflow-y-auto border-t border-border bg-card p-3 lg:w-[340px] lg:border-l lg:border-t-0 lg:p-4">
+            <aside className="border-t border-border bg-card p-3 lg:min-h-0 lg:w-[340px] lg:overflow-y-auto lg:border-l lg:border-t-0 lg:p-4">
               {stationCard}
             </aside>
           )}
         </div>
 
-        <div className="border-t border-border bg-card px-3 py-2" data-testid="replay-controls">
+        <div className="shrink-0 border-t border-border bg-card px-3 py-2" data-testid="replay-controls">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

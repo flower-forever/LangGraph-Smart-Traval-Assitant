@@ -229,7 +229,7 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
     const before = snapshotStorage()
     renderPanel()
 
-    await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await user.click(screen.getByRole('button', { name: '预览离线路书 (.html)' }))
     const frame = await screen.findByTestId('roadbook-preview')
     const html = frame.getAttribute('srcdoc') ?? ''
     expect(html).toContain('<!doctype html>')
@@ -242,7 +242,7 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
     expect(screen.queryByTestId('roadbook-preview')).toBeNull()
     expect(createObjectURL).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await user.click(screen.getByRole('button', { name: '预览离线路书 (.html)' }))
     await screen.findByTestId('roadbook-preview')
     await user.click(screen.getByRole('button', { name: '确认下载 .html' }))
     await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1))
@@ -259,7 +259,7 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
     const before = snapshotStorage()
     renderPanel({ trip: huge })
 
-    await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await user.click(screen.getByRole('button', { name: '预览离线路书 (.html)' }))
     const alert = await screen.findByTestId('roadbook-error')
     expect(alert).toHaveTextContent('超过 2 MiB 上限')
     expect(alert).toHaveTextContent('未生成任何文件')
@@ -271,7 +271,7 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
   it('路书预览复用 S2 三态来源徽章', async () => {
     const user = userEvent.setup()
     renderPanel({ poiCards: poiRecord() })
-    await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await user.click(screen.getByRole('button', { name: '预览离线路书 (.html)' }))
     const html = screen.getByTestId('roadbook-preview').getAttribute('srcdoc') ?? ''
     expect(html).toContain('有来源（待核对）')
     expect(html).toContain('未核实')
@@ -282,7 +282,7 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
     const user = userEvent.setup()
     renderPanel({ draftTrip: draftTrip() })
     await user.click(screen.getByRole('radio', { name: '当前草稿（未应用）' }))
-    await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await user.click(screen.getByRole('button', { name: '预览离线路书 (.html)' }))
     const html = screen.getByTestId('roadbook-preview').getAttribute('srcdoc') ?? ''
     expect(html).toContain('草稿未应用，分享的是草稿')
     expect(html).toContain('草稿新站')
@@ -291,12 +291,12 @@ describe('ShareCardPanel · S5 离线 HTML 路书', () => {
   it('切换日期会清掉旧路书预览，避免下载与当前选择不符', async () => {
     const user = userEvent.setup()
     renderPanel()
-    await user.click(screen.getByRole('button', { name: '下载离线路书 (.html)' }))
+    await user.click(screen.getByRole('button', { name: '预览离线路书 (.html)' }))
     expect(screen.getByTestId('roadbook-preview')).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('选择日期'), '2')
     expect(screen.queryByTestId('roadbook-preview')).toBeNull()
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: '下载离线路书 (.html)' })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: '预览离线路书 (.html)' })).toBeEnabled(),
     )
   })
 })

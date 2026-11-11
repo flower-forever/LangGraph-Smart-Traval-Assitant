@@ -74,6 +74,11 @@ import {
   runS8PostponeSequence,
   runS8MealSequence,
 } from './s8PostponeMealScenarios.mjs'
+import {
+  runS9NarrowKeyboard,
+  runS9SwapFocus,
+  setS9AppOrigin,
+} from './s9NarrowKeyboardScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1342,6 +1347,30 @@ async function scenarioS8MealSuggest() {
   }
 }
 
+/** ───────────────────────── 六期 S9 · 五期收编（375 三面板键盘 / 换一焦点落点） ───────────────────────── */
+
+async function scenarioS9NarrowKeyboard() {
+  const { context, page } = await newOfflineContext('s9NarrowKeyboard', { width: 375, height: 812 })
+  const rec = makeStepRecorder('s9NarrowKeyboard', 'mobile-375')
+  try {
+    await runS9NarrowKeyboard({ page, rec })
+  } finally {
+    report.scenarios.s9NarrowKeyboard = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS9SwapFocus() {
+  const { context, page } = await newOfflineContext('s9SwapFocus', { width: 375, height: 812 })
+  const rec = makeStepRecorder('s9SwapFocus', 'mobile-375')
+  try {
+    await runS9SwapFocus({ page, rec })
+  } finally {
+    report.scenarios.s9SwapFocus = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1427,6 +1456,9 @@ try {
   await scenarioS7DetourAdjustAndThresholds()
   await scenarioS8PostponeMeal()
   await scenarioS8MealSuggest()
+  setS9AppOrigin(appOrigin)
+  await scenarioS9NarrowKeyboard()
+  await scenarioS9SwapFocus()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

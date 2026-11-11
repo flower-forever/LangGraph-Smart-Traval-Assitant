@@ -283,6 +283,15 @@ function svgInner(svg: string): string | null {
 export interface ShareCardMiniMapOptions {
   /** 组合块的无障碍标题；缺省「路线小地图」。 */
   label?: string
+  /**
+   * 组合块底色；传所选卡片的模板背景（shareCardThemeColors），深色卡不会在
+   * 两侧露出浅色边带。缺省沿用旧底色（仅调用方未传时）。
+   */
+  background?: string
+  /** 组合块正文色（标题）；缺省沿用旧深棕色。 */
+  ink?: string
+  /** 组合块弱化文字色（位置未知提示、分隔线）；缺省沿用旧灰棕色。 */
+  muted?: string
 }
 
 /**
@@ -309,21 +318,26 @@ export function appendMiniMapToShareCard(
       : `位置未知：${unknown.slice(0, 3).join('、')}` +
         (unknown.length > 3 ? ` 等 ${unknown.length} 处` : '')
   const label = options.label ?? '路线小地图'
+  const hexOr = (value: string | undefined, fallback: string) =>
+    value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback
+  const background = hexOr(options.background, '#fbf8f1')
+  const ink = hexOr(options.ink, '#3f3a30')
+  const muted = hexOr(options.muted, '#6b6355')
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}"` +
     ` width="${CARD_WIDTH}" height="${CARD_HEIGHT}" role="img"` +
     ` aria-label="${escapeXml(`${label} · 分享卡`)}" data-share-minimap="true">` +
-    `<rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="#fbf8f1"/>` +
+    `<rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${background}"/>` +
     `<g transform="translate(151.2 0) scale(0.72)">${cardInner}</g>` +
-    `<line x1="48" y1="1052" x2="1032" y2="1052" stroke="#d8cfba" stroke-width="1.5"/>` +
+    `<line x1="48" y1="1052" x2="1032" y2="1052" stroke="${muted}" stroke-opacity="0.55" stroke-width="1.5"/>` +
     `<text x="540" y="1086" text-anchor="middle" font-family="system-ui, sans-serif"` +
-    ` font-size="28" font-weight="700" fill="#3f3a30">${escapeXml(label)}</text>` +
+    ` font-size="28" font-weight="700" fill="${ink}">${escapeXml(label)}</text>` +
     `<g transform="translate(60 1100)">${mapInner}</g>` +
     (unknownText === ''
       ? ''
       : `<text x="540" y="1432" text-anchor="middle" font-family="system-ui, sans-serif"` +
-        ` font-size="15" fill="#6b6355">${escapeXml(unknownText)}</text>`) +
+        ` font-size="15" fill="${muted}">${escapeXml(unknownText)}</text>`) +
     `</svg>`
   )
 }

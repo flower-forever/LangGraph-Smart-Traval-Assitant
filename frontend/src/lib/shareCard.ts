@@ -462,6 +462,26 @@ const STYLE_TOKENS: Record<ShareCardStyle, StyleTokens> = {
   },
 }
 
+/**
+ * 组合卡配色：背景与正文/弱化文字取自所选模板，深色卡（midnight 等）
+ * 不会在两侧露出浅色边带，标题与脚注也不会变成深底深字。
+ */
+export interface ShareCardThemeColors {
+  background: string
+  ink: string
+  muted: string
+}
+
+export function shareCardThemeColors(style: ShareCardStyle): ShareCardThemeColors {
+  const tokens = STYLE_TOKENS[style] ?? STYLE_TOKENS[DEFAULT_SHARE_CARD_STYLE]
+  return { background: tokens.background, ink: tokens.ink, muted: tokens.muted }
+}
+
+/** 只取组合卡底色（保留给只需要背景的调用方）。 */
+export function shareCardBackground(style: ShareCardStyle): string {
+  return shareCardThemeColors(style).background
+}
+
 /* ────────────────────────────── 模板 1 · 宣纸雅集 ────────────────────────────── */
 
 function renderXuanzhi(data: ShareCardData): string {
