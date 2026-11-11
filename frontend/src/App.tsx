@@ -10,6 +10,7 @@ import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
 import CityProfileCard from './components/CityProfileCard'
 import CoverageCard from './components/CoverageCard'
+import DetourInterceptCard from './components/DetourInterceptCard'
 import StampSeal from './components/StampSeal'
 import { useReducedMotion } from './lib/useReducedMotion'
 import { projectStopFacts } from './lib/stopFacts'
@@ -396,6 +397,13 @@ export default function App() {
   const [backend, setBackend] = useState<BackendState>(BACKEND_INITIAL)
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
+  /**
+   * S7 绕行拦截的会话内抑制（选择「保留原样」的行程）：零写入，
+   * 刷新后重新判定属合理行为；同 trip.id 重新规划不重弹。
+   */
+  const [detourSuppressedTripIds, setDetourSuppressedTripIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  )
   /**
    * 最近一次规划用的节奏档位（S3）：null = 本页行程不是 pace 请求生成的
    * （示例 / 恢复 / 文件导入），结果页不显示节奏标注。
@@ -2454,6 +2462,28 @@ export default function App() {
     setDraft(result.draft)
   }, [trip, draft, aiOpen, draftMode])
 
+  /**
+   * S7 绕行拦截：「保留原样」只做会话内抑制（按 trip.id，零写入）；
+   * 体检卡里仍可查全部命中路段。
+   */
+  const handleDetourKeep = useCallback(() => {
+    if (!trip) return
+    setDetourSuppressedTripIds((prev) => {
+      const next = new Set(prev)
+      next.add(trip.id)
+      return next
+    })
+  }, [trip])
+
+  /** S7 绕行拦截：「去调整」选中命中天并进入编辑器（编辑器沿 currentDay 切天）。 */
+  const handleDetourGoAdjust = useCallback(
+    (day: number) => {
+      setActiveDay(day)
+      handleStartEditing()
+    },
+    [handleStartEditing],
+  )
+
   /** 编辑期间用户换了出行方式：对未打开的草稿没有影响；草稿打开后选择被禁用 */
   const handleDraftModeChange = useCallback((mode: TravelMode) => {
     setDraftMode(mode)
@@ -4338,6 +4368,13 @@ export default function App() {
 
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
+                {!editingDraft && !aiOpen && !mapOpen && trip && !detourSuppressedTripIds.has(trip.id) && (
+                  <DetourInterceptCard
+                    trip={trip}
+                    onKeep={handleDetourKeep}
+                    onGoAdjust={handleDetourGoAdjust}
+                  />
+                )}
                 {trip?.cityProfile && <CityProfileCard cityProfile={trip.cityProfile} />}
                 {trip && <CoverageCard trip={trip} onAddToPool={handleCoverageAddToPool} />}
                 {currentDay && trip && (

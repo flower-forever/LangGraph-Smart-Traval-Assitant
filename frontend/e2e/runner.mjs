@@ -66,6 +66,10 @@ import {
   runS6CoverageCard,
   runS6CoveragePoolSmoke,
 } from './s6CoverageScenarios.mjs'
+import {
+  runS7DetourAdjustAndThresholds,
+  runS7DetourKeep,
+} from './s7DetourScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1266,6 +1270,40 @@ async function scenarioS6CoveragePoolSmoke() {
   }
 }
 
+/** ───────────────────────── 绕行拦截（S7） ───────────────────────── */
+
+async function scenarioS7DetourKeep() {
+  const { context, page } = await newOfflineContext('s7DetourKeep')
+  const rec = makeStepRecorder('s7DetourKeep', 'desktop-1440')
+  try {
+    await runS7DetourKeep({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s7DetourKeep = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS7DetourAdjustAndThresholds() {
+  const { context, page } = await newOfflineContext('s7DetourAdjustAndThresholds')
+  const rec = makeStepRecorder('s7DetourAdjustAndThresholds', 'desktop-1440')
+  try {
+    await runS7DetourAdjustAndThresholds({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s7DetourAdjustAndThresholds = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1347,6 +1385,8 @@ try {
   await scenarioS5StopDepthDegraded()
   await scenarioS6CoverageCard()
   await scenarioS6CoveragePoolSmoke()
+  await scenarioS7DetourKeep()
+  await scenarioS7DetourAdjustAndThresholds()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

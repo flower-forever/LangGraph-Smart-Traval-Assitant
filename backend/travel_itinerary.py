@@ -1347,6 +1347,8 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "也不要输出具体时间表或价格数字。\n"
         "15. 深度字段字数软约束：highlights / tips 每条不超过 40 字；"
         "建议停留取 15 分钟粒度，不要给精确到分钟的时刻安排。\n"
+        "16. 同一天相邻站点尽量就近安排，避免长距离折返；"
+        "确实需要跨城区或跨景区转移时，在 description 里简要说明理由。\n"
         f"{constraints_rule}"
     )
 

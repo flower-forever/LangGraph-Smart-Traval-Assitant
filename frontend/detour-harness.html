@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>绕行拦截卡 · E2E 挂载页</title>
+  </head>
+  <body>
+    <!--
+      六期 S7 离线浏览器验收专用挂载页。
+      只被 e2e/s7DetourScenarios.mjs 引用：不进主包（无任何主包 import），
+      不进构建产物（vite build 默认只构建 index.html）。
+      绕行拦截卡的真实挂载点是 App.tsx 行程区顶部（PM 接线项）；本页用同一组件 +
+      同款「按 trip id 的会话内抑制集合」做拦截、保留、去调整与体检仍可查验收。
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/dev/detourHarness.tsx"></script>
+  </body>
+</html>
