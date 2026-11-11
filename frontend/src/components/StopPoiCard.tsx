@@ -10,6 +10,7 @@ import {
   useSpeechNarration,
 } from '../lib/speech'
 import StopFactBadge from './StopFactBadge'
+import StopDepthCard from './StopDepthCard'
 
 interface StopPoiCardProps {
   stop: TripStop
@@ -93,6 +94,7 @@ export default function StopPoiCard({ stop, poiCards, onOpenPoiCardPanel, now = 
       aria-label={`景点信息可信卡：${stop.name}`}
     >
       <p className="m-0 mb-1 text-sm font-semibold text-foreground">{title}</p>
+      <StopDepthCard stop={stop} />
       <FactRow label="介绍" fact={facts.intro} detailLabel={`介绍来源：${stop.name}`} />
       <FactRow label="开放时间" fact={facts.openingHours} detailLabel={`开放时间来源：${stop.name}`} />
       <FactRow label="门票" fact={facts.ticket} detailLabel={`门票来源：${stop.name}`} />

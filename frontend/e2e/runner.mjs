@@ -58,6 +58,10 @@ import {
   runS4CityProfileCollapse,
   runS4CityProfileDegraded,
 } from './s4CityProfileScenarios.mjs'
+import {
+  runS5StopDepthCard,
+  runS5StopDepthDegraded,
+} from './s5StopDepthScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1190,6 +1194,40 @@ async function scenarioS4CityProfileDegraded() {
   }
 }
 
+/** ───────────────────────── 场景 23–24：六期 S5 景点深度卡（渲染 / 缺字段降级） ───────────────────────── */
+
+async function scenarioS5StopDepthCard() {
+  const { context, page } = await newOfflineContext('s5StopDepthCard')
+  const rec = makeStepRecorder('s5StopDepthCard', 'desktop-1440')
+  try {
+    await runS5StopDepthCard({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s5StopDepthCard = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS5StopDepthDegraded() {
+  const { context, page } = await newOfflineContext('s5StopDepthDegraded')
+  const rec = makeStepRecorder('s5StopDepthDegraded', 'desktop-1440')
+  try {
+    await runS5StopDepthDegraded({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s5StopDepthDegraded = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1267,6 +1305,8 @@ try {
   await scenarioS4CityProfileAppearance()
   await scenarioS4CityProfileCollapse()
   await scenarioS4CityProfileDegraded()
+  await scenarioS5StopDepthCard()
+  await scenarioS5StopDepthDegraded()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

@@ -358,6 +358,12 @@ def test_volatile_facts_are_stripped_and_flagged():
         "9 till 5",
         "10 to 6",
         "closed on public holidays",
+        # S5 返修：24 小时「开放」搭配 / 英文星期复数（与 S5 深度文本共用同一正则）
+        "园区 24 小时开放",
+        "24小时开放",
+        "closed on Mondays",
+        "open on Mondays",
+        "closed on Sundays",
     ],
 )
 def test_volatile_variants_are_filtered(text):
@@ -687,6 +693,8 @@ def test_v10_gap_variants_are_filtered(text):
         "cover charge is rare",
         "service charge is uncommon",
         "service charge 不常见",
+        # S5 返修：24 小时搭配「热水供应」等非营业语境不得误杀
+        "24 小时热水供应",
     ],
 )
 def test_safe_city_profile_text_is_not_over_filtered(text):

@@ -18,6 +18,34 @@ export interface TripLocation {
   lat: number
 }
 
+/** 六期 S5 景点深度：站点级可选稳定知识块；每块自带 AI 生成标注。 */
+export type StopDepthSource = 'model_generated'
+
+export interface StopDepthHighlights {
+  /** 看点 2-3 条，每条一句话 */
+  items: string[]
+  source: StopDepthSource
+}
+
+export interface StopDepthSuitableFor {
+  /** 沿用五期兴趣枚举：history / food / nature / photo / family / elder_friendly */
+  tags: string[]
+  source: StopDepthSource
+}
+
+export interface StopDepthStayMinutes {
+  /** 建议停留分钟区间；min <= max */
+  min: number
+  max: number
+  source: StopDepthSource
+}
+
+export interface StopDepthTips {
+  /** 游玩贴士 1-3 条 */
+  items: string[]
+  source: StopDepthSource
+}
+
 export interface TripStop {
   id: string
   name: string
@@ -26,6 +54,14 @@ export interface TripStop {
   description: string
   address: string
   location: TripLocation | null
+  /**
+   * 六期 S5：可选深度字段，逐字段可缺。
+   * 旧行程 / 旧备份没有这些字段；深度内容一律由 `source: 'model_generated'` 标注。
+   */
+  highlights?: StopDepthHighlights | null
+  suitableFor?: StopDepthSuitableFor | null
+  suggestedStayMinutes?: StopDepthStayMinutes | null
+  tips?: StopDepthTips | null
 }
 
 export interface TripLeg {
@@ -535,8 +571,21 @@ function isStopLike(value: unknown): boolean {
     isNullableNumber(value.duration_minutes) &&
     isPlainString(value.description) &&
     isPlainString(value.address) &&
-    (value.location === null || isLocationLike(value.location))
+    (value.location === null || isLocationLike(value.location)) &&
+    isStopDepthLike(value.highlights) &&
+    isStopDepthLike(value.suitableFor) &&
+    isStopDepthLike(value.suggestedStayMinutes) &&
+    isStopDepthLike(value.tips)
   )
+}
+
+/**
+ * 六期 S5：深度块可选，只做最浅守卫（对象 / 数组 / 空）。
+ * 块内字段交给 `lib/stopDepth.ts` 逐块降级——一个坏的可选块
+ * 不应该让整份行程被判为非法；旧行程没有这些字段时照常通过。
+ */
+function isStopDepthLike(value: unknown): boolean {
+  return value === undefined || value === null || Array.isArray(value) || isRecord(value)
 }
 
 function isLegLike(value: unknown): boolean {

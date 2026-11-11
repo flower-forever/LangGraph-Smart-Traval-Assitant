@@ -1025,6 +1025,11 @@ def test_time_source_record_is_not_serialized_in_contract():
         "description",
         "address",
         "location",
+        # 六期 S5：站点深度字段一律可选，旧行程为 None。
+        "highlights",
+        "suitableFor",
+        "suggestedStayMinutes",
+        "tips",
     }
 
 
@@ -1146,6 +1151,11 @@ def test_api_map_timeout_keeps_placeholder_caveat(client, monkeypatch):
         "description",
         "address",
         "location",
+        # 六期 S5：站点深度字段一律可选，旧行程为 None。
+        "highlights",
+        "suitableFor",
+        "suggestedStayMinutes",
+        "tips",
     }
 
     trip = travel_itinerary.TripPlan.model_validate(body)
@@ -1498,4 +1508,9 @@ def test_openapi_does_not_expose_private_time_origin(client):
             "description",
             "address",
             "location",
+            # 六期 S5：站点深度字段一律可选，旧行程为 None。
+            "highlights",
+            "suitableFor",
+            "suggestedStayMinutes",
+            "tips",
         }

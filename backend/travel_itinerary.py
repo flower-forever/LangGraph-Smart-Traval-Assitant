@@ -227,6 +227,77 @@ class Coordinate(BaseModel):
     lat: float = Field(ge=-90, le=90)
 
 
+# 六期 S5 景点深度卡：站点级可选稳定知识块。
+# 只看点 / 适合谁 / 建议停留 / 游玩贴士这类稳定内容；营业时间、票价、
+# 预约政策等易变事实仍走 S2 三态核实，模型不得生成（沿用同一套过滤器）。
+STOP_DEPTH_SOURCE = "model_generated"
+MAX_STOP_DEPTH_ITEMS = 3
+MAX_STOP_DEPTH_TEXT = 80
+MIN_STOP_STAY_MINUTES = 5
+MAX_STOP_STAY_MINUTES = 1440
+# 适合标签沿用五期兴趣枚举的 canonical token（英文），前端负责映射中文。
+STOP_DEPTH_SUITABLE_FOR = (
+    "history",
+    "food",
+    "nature",
+    "photo",
+    "family",
+    "elder_friendly",
+)
+# 模型偶尔会把标签写成中文；收进来时归一成同一枚举，避免同义值进响应。
+_STOP_DEPTH_TAG_ALIASES = {
+    "历史": "history",
+    "美食": "food",
+    "自然": "nature",
+    "拍照": "photo",
+    "亲子": "family",
+    "老人友好": "elder_friendly",
+}
+
+
+class TripStopHighlights(BaseModel):
+    """看点 2-3 条，每条一句话。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    items: list[str] = Field(min_length=1, max_length=MAX_STOP_DEPTH_ITEMS)
+    source: Literal["model_generated"] = STOP_DEPTH_SOURCE
+
+
+class TripStopSuitableFor(BaseModel):
+    """适合谁标签；取值沿用五期兴趣枚举。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    tags: list[str] = Field(min_length=1, max_length=len(STOP_DEPTH_SUITABLE_FOR))
+    source: Literal["model_generated"] = STOP_DEPTH_SOURCE
+
+
+class TripStopStayMinutes(BaseModel):
+    """建议停留分钟区间；只给区间，不给具体时刻表。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    min: int = Field(ge=MIN_STOP_STAY_MINUTES, le=MAX_STOP_STAY_MINUTES)
+    max: int = Field(ge=MIN_STOP_STAY_MINUTES, le=MAX_STOP_STAY_MINUTES)
+    source: Literal["model_generated"] = STOP_DEPTH_SOURCE
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "TripStopStayMinutes":
+        if self.min > self.max:
+            raise ValueError("suggestedStayMinutes 的 min 不能大于 max")
+        return self
+
+
+class TripStopTips(BaseModel):
+    """游玩贴士 1-3 条。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    items: list[str] = Field(min_length=1, max_length=MAX_STOP_DEPTH_ITEMS)
+    source: Literal["model_generated"] = STOP_DEPTH_SOURCE
+
+
 class Stop(BaseModel):
     """单个站点。"""
 
@@ -239,6 +310,12 @@ class Stop(BaseModel):
     description: str = Field(default="", max_length=1000)
     address: str = Field(default="", max_length=300)
     location: Coordinate | None = None
+    # 六期 S5 景点深度：全部可选、逐字段可缺；旧行程 / 旧备份没有这些字段。
+    # 只装稳定知识；营业时间、票价、预约政策等易变事实仍走 S2 三态核实。
+    highlights: TripStopHighlights | None = None
+    suitableFor: TripStopSuitableFor | None = None
+    suggestedStayMinutes: TripStopStayMinutes | None = None
+    tips: TripStopTips | None = None
 
 
 class Leg(BaseModel):
@@ -1231,7 +1308,11 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         '          "time": "09:00",\n'
         '          "duration_minutes": 90,\n'
         '          "description": "为什么值得去、游览重点",\n'
-        '          "address": "尽量具体的地址或所在区域"\n'
+        '          "address": "尽量具体的地址或所在区域",\n'
+        '          "highlights": {"items": ["看点1", "看点2"], "source": "model_generated"},\n'
+        '          "suitableFor": {"tags": ["history", "photo"], "source": "model_generated"},\n'
+        '          "suggestedStayMinutes": {"min": 60, "max": 90, "source": "model_generated"},\n'
+        '          "tips": {"items": ["贴士1"], "source": "model_generated"}\n'
         "        }\n"
         "      ]\n"
         "    }\n"
@@ -1256,6 +1337,16 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "12. cityProfile 字数软约束：oneLineImpression / seasonTips 各不超过 40 字；"
         "片区 summary 不超过 40 字；每条经典清单 reason 不超过 30 字；"
         "district.attractions 只写 2-3 个景点名称。\n"
+        "13. 每个 stop 可选附带深度信息：highlights（2-3 条看点，每条一句话）、"
+        "suitableFor（适合标签，只能取 history / food / nature / photo / family / "
+        "elder_friendly）、suggestedStayMinutes（建议停留分钟区间，形如 {min, max}）、"
+        "tips（1-3 条游玩贴士）；每块都带 source=model_generated，全部可选，"
+        "没把握的块直接省略，不要编造。\n"
+        "14. 景点深度字段只写稳定知识（看点、适合谁、停留建议、游玩贴士）；"
+        "禁止输出营业时间、票价、预约政策等易变具体信息，"
+        "也不要输出具体时间表或价格数字。\n"
+        "15. 深度字段字数软约束：highlights / tips 每条不超过 40 字；"
+        "建议停留取 15 分钟粒度，不要给精确到分钟的时刻安排。\n"
         f"{constraints_rule}"
     )
 
@@ -1399,6 +1490,7 @@ _CITY_PROFILE_VOLATILE_RE = re.compile(
         opening\s+hours? | business\s+hours? | visiting\s+hours? | opening\s+days? |
         closing\s+time | opening\s+time | last\s+entry | last\s+admission |
         (?:open|closed)\s+on\s+(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\b |
+        (?:open|closed)\s+on\s+(?:mon|tues?|wednes?|thur?s?|fri|satur?|sun)(?:day)?s?\b |
         (?:open|closed)\s+on\s+(?:weekdays?|weekends?|holidays?)\b |
         (?:open|closed)\s+(?:weekdays?|weekends?|holidays?)\b |
         (?:open|closed)\s+(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\b |
@@ -1414,6 +1506,7 @@ _CITY_PROFILE_VOLATILE_RE = re.compile(
         \bhours?\s*[:：]\s*(?:[5-9]|1\d|2[0-3])\s*(?:[-–—~～〜]|(?:to|until|till)\b|a\.?m\.?|p\.?m\.?) |
         24/7 | 24-hour\s+(?:service|opening|operation|access|营业|store|restaurant|facility) |
         24\s*小时营业 | open\s+24\s*(?:hours?|h)\b |
+        24\s*小时\s*(?:开放|营业|迎客|接待|对外营业|对外开放|对外接待) |
         box\s+office | entry\s+fee | free\s+entry\b | free\s+of\s+charge |
         paid\s+(?:entry|admission) | half\s+price | full\s+price |
         student\s+discount | senior\s+discount | discount |
@@ -1697,6 +1790,80 @@ def _parse_city_profile(value: Any) -> tuple[CityProfile | None, bool]:
     )
 
 
+def _stop_depth_items(value: Any) -> tuple[list[str], bool]:
+    """深度列表块兼容 `{ items: [...] }` 与裸数组；返回清洗后的条目与易变命中标记。"""
+
+    raw_items = value.get("items") if isinstance(value, dict) else value
+    if not isinstance(raw_items, list):
+        return [], False
+    items: list[str] = []
+    dropped = False
+    for item in raw_items[:MAX_STOP_DEPTH_ITEMS]:
+        text, hit = _city_profile_text(item, max_length=MAX_STOP_DEPTH_TEXT)
+        dropped = dropped or hit
+        if text and text not in items:
+            items.append(text)
+    return items, dropped
+
+
+def _stop_depth_tags(value: Any) -> list[str]:
+    """适合标签兼容 `{ tags: [...] }` 与裸数组；未知值丢弃，中文别名归一。"""
+
+    raw_tags = value.get("tags") if isinstance(value, dict) else value
+    if not isinstance(raw_tags, list):
+        return []
+    tags: list[str] = []
+    for tag in raw_tags[: len(STOP_DEPTH_SUITABLE_FOR)]:
+        if not isinstance(tag, str):
+            continue
+        text = tag.strip()
+        canonical = _STOP_DEPTH_TAG_ALIASES.get(text, text)
+        if canonical in STOP_DEPTH_SUITABLE_FOR and canonical not in tags:
+            tags.append(canonical)
+    return tags
+
+
+def _parse_stop_depth(raw_stop: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """把模型给的站点深度块约束成可选字段。
+
+    - 每块独立解析：坏块 / 缺块只丢自己，绝不让站点或整趟行程失败。
+    - 模型自报的 source 不可信，统一由模型强制为 model_generated。
+    - 深度文本过 S4 同一套易变事实过滤器；命中内容省略并提示调用方补 warning。
+    """
+
+    dropped = False
+
+    highlight_items, hit = _stop_depth_items(raw_stop.get("highlights"))
+    dropped = dropped or hit
+    tips_items, hit = _stop_depth_items(raw_stop.get("tips"))
+    dropped = dropped or hit
+    tags = _stop_depth_tags(raw_stop.get("suitableFor"))
+
+    stay: TripStopStayMinutes | None = None
+    raw_stay = raw_stop.get("suggestedStayMinutes")
+    if isinstance(raw_stay, dict):
+        low = raw_stay.get("min")
+        high = raw_stay.get("max")
+        if (
+            isinstance(low, int)
+            and not isinstance(low, bool)
+            and isinstance(high, int)
+            and not isinstance(high, bool)
+            and MIN_STOP_STAY_MINUTES <= low <= high <= MAX_STOP_STAY_MINUTES
+        ):
+            stay = TripStopStayMinutes(min=low, max=high)
+
+    fields: dict[str, Any] = {
+        "highlights": (
+            TripStopHighlights(items=highlight_items) if highlight_items else None
+        ),
+        "suitableFor": TripStopSuitableFor(tags=tags) if tags else None,
+        "suggestedStayMinutes": stay,
+        "tips": TripStopTips(items=tips_items) if tips_items else None,
+    }
+    return fields, dropped
+
+
 def normalize_agent_payload(
     payload: dict[str, Any],
     request: TripPlanRequest,
@@ -1727,6 +1894,8 @@ def normalize_agent_payload(
     # stop_id -> 时间来源；只放在 TripPlan 私有属性里，不写进站点字段或响应。
     time_origins: dict[str, str] = {}
     total_stops = 0
+    # 六期 S5：任一站点深度文本命中易变事实模式时，补一条行程级 warning。
+    depth_volatile = False
     days: list[DayPlan] = []
 
     for day_index in range(request.days):
@@ -1770,6 +1939,8 @@ def normalize_agent_payload(
                 )
             if stop_id not in time_origins:
                 time_origins[stop_id] = _TIME_SOURCE_MODEL
+            depth_fields, depth_dropped = _parse_stop_depth(raw_stop)
+            depth_volatile = depth_volatile or depth_dropped
             stops.append(
                 Stop(
                     id=stop_id,
@@ -1784,6 +1955,7 @@ def normalize_agent_payload(
                     ),
                     # 不信任模型给出的坐标：坐标只从高德或示例数据进入契约。
                     location=None,
+                    **depth_fields,
                 )
             )
 
@@ -1815,6 +1987,11 @@ def normalize_agent_payload(
         warnings.append(
             "部分站点 time 缺失或格式不是 HH:MM，已使用默认时间："
             f"{preview}。这些是占位时间，不是模型给出的真实时刻，请确认后调整。"
+        )
+    if depth_volatile:
+        warnings.append(
+            "景点深度介绍中有内容涉及营业时间、票价或预约等易变信息，已省略；"
+            "请以官方渠道为准。"
         )
 
     title = _sanitize_text(data.get("title"), max_length=160, allow_newlines=False)
