@@ -236,6 +236,173 @@ li[data-swap-anim='backward'] {
   box-shadow: var(--shadow-1);
 }
 
+/* 六期 S3 彩蛋②：节日问候小字（如「端午安康」）。印章面下方一行静态文字，
+ * 随印章整体淡入淡出（不引入独立动效）；不进 tab 序（aria-hidden 容器内）。 */
+.stamp-seal-festival {
+  display: block;
+  margin-top: 4px;
+  text-align: right;
+  color: var(--primary);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+
+/* ---------- 电影包装：片头标题卡 + 片尾 credits（六期 S3） ----------
+ * 纪律同全站动效：只动画 transform / opacity；时长引用 --motion-* tokens；
+ * credits 的滚动总时长（3.5s）是产品行为参数，与 lib/cinemaWrapper.ts 的
+ * CREDITS_SCROLL_DURATION_MS 同源——组件以 --cinema-credits-scroll 注入，
+ * CSS 不写死秒数（保持「参数在 lib、呈现引用参数」的单向关系）。
+ * reduced-motion：片头直显直隐、credits 不滚动改静态整页（下方降级分支）。
+ */
+
+.oc-cinema-title {
+  position: absolute;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 0;
+  padding: var(--space-4);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  cursor: pointer;
+  animation:
+    oc-cinema-title-in var(--motion-duration-slow) var(--motion-ease-standard) both;
+}
+
+/* 片头「推近感」：整卡淡入 + 轻微放大回正（只动 transform / opacity）。 */
+@keyframes oc-cinema-title-in {
+  from { opacity: 0; transform: scale(1.04); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.oc-cinema-title-destination {
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.oc-cinema-title-date {
+  color: var(--muted-foreground);
+  font-size: var(--text-base);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.oc-cinema-title-hint {
+  color: var(--color-faint);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+}
+
+/* 细边框画框感：纯装饰，不碰布局属性。 */
+.oc-cinema-title-frame {
+  position: absolute;
+  inset: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.oc-cinema-credits {
+  position: absolute;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  pointer-events: none;
+}
+
+/* credits 滚动：内容块从容器下方滚到居中偏上。滚动总时长由组件注入
+ * （--cinema-credits-scroll），线性缓动是「滚字幕」的诚实呈现；
+ * forwards 让 3.5s 后停在最终帧——即「定格尾帧」。 */
+.oc-cinema-credits-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-4);
+  text-align: center;
+  animation: oc-cinema-credits-roll var(--cinema-credits-scroll, 3.5s) linear forwards;
+}
+
+@keyframes oc-cinema-credits-roll {
+  from { opacity: 0.35; transform: translateY(56px); }
+  30% { opacity: 1; }
+  to { opacity: 1; transform: translateY(-18px); }
+}
+
+.oc-cinema-credits-brand {
+  margin: 0;
+  color: var(--color-faint);
+  font-size: var(--text-xs);
+  letter-spacing: 0.3em;
+}
+
+.oc-cinema-credits-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.oc-cinema-credits-subtitle {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+}
+
+.oc-cinema-credits-divider {
+  width: 56px;
+  border-top: 1px solid var(--border);
+}
+
+.oc-cinema-credits-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.oc-cinema-credits-quote {
+  margin: 6px 0 0;
+  color: var(--secondary-foreground);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+}
+
+/* reduced-motion：片头直显直隐（瞬时入场，无推近）；credits 不滚动改静态整页
+ * （滚动动画整段去掉，内容直接完整呈现，opacity 恢复全值）。 */
+@media (prefers-reduced-motion: reduce) {
+  .oc-cinema-title {
+    animation: oc-cinema-title-in 0.01ms linear both;
+  }
+
+  .oc-cinema-credits-scroll {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* ---------- Leaflet 覆写（地图内部样式，不迁移：UI_DESIGN §6 纪律 7） ---------- */
 .leaflet-container {
   font-family: var(--font-body);

@@ -8,6 +8,7 @@
  * - 每日 tab；站点含时间 / 停留 / 地址 / 到站交通；来源徽章复用 S2
  *   `projectStopFacts` 的三态（有来源（待核对）/ 未核实 / 未知），永不显示「已核实」。
  * - 路线小地图复用 lib/shareMiniMap.ts；缺坐标站点单列「位置未知」，不伪造坐标。
+ *   六期 S3 彩蛋①：目的地带「成都」时小地图角落追加淡色小熊猫剪影水印（纯装饰）。
  * - 所有用户文本按 HTML 文本 / 属性上下文完整转义；用户文本里的网址只显示为文本。
  * - 输出上限 2 MiB（UTF-8 实际字节）：超限 fail-closed，返回明确失败，不截断。
  * - 文件名安全化复用 lib/shareCardFile.ts 的同一口径（路径分隔符 / Windows 保留字符）。
@@ -158,8 +159,10 @@ function stopHtml(
   )
 }
 
-function miniMapHtml(day: TripDay): string {
-  const map = buildShareMiniMap(day)
+function miniMapHtml(day: TripDay, destination: string): string {
+  // 六期 S3 彩蛋①：目的地带「成都」时小地图角落追加淡色小熊猫剪影水印（纯装饰，
+  // 不影响几何 / 坐标分组）；非成都传空串无水印。
+  const map = buildShareMiniMap(day, { destination })
   const unknown = map.unknownStops.map((name) => (name.trim() === '' ? '未命名站点' : name))
   const unknownLine =
     unknown.length > 0
@@ -176,6 +179,7 @@ function dayHtml(
   index: number,
   poiCards: PoiCardsRecordV1 | null,
   now: number,
+  destination: string,
 ): string {
   const dayNumber = numberText(day.day)
   const walking = day.legs.filter((leg) => leg.mode === 'walking').length
@@ -198,7 +202,7 @@ function dayHtml(
     `<h2>第 ${dayNumber} 天 · ${textOr(day.title, '未命名的一天')}</h2>` +
     `<p class="day-meta">${textOr(day.date, '日期未知')} · ${day.stops.length} 个站点 · ${escapeHtml(transport)}</p>` +
     (summary === '' ? '' : `<p class="day-summary">${escapeHtml(summary)}</p>`) +
-    miniMapHtml(day) +
+    miniMapHtml(day, destination) +
     stops +
     `</section>`
   )
@@ -333,7 +337,7 @@ export function buildOfflineRoadbook(
     })
     .join('')
   const days = trip.days
-    .map((day, index) => dayHtml(day, index, poiCards, now))
+    .map((day, index) => dayHtml(day, index, poiCards, now, trip.destination))
     .join('')
   const body =
     trip.days.length === 0

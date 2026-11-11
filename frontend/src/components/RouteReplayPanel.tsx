@@ -11,6 +11,11 @@
  * - **prefers-reduced-motion**：跳过路线动画，改为逐站翻页（仍可手动上一站/下一站）。
  * - **电影模式**：隐藏页头与侧栏，只留地图 + 当前站卡 + 控制条；Esc 退出电影模式，
  *   非电影模式下 Esc 关闭面板。
+ * - **六期 S3 · 电影包装**：进入电影模式先放 1.5s 片头标题卡（目的地 + 日期，点击 /
+ *   按键可跳过），跳过或到时才开始正片；正片正常播完（非 Esc 提前退出）→ credits
+ *   滚动 3.5s（行程名 + 既有口径免责声明 + trip.id 确定性箴言），结束后定格尾帧。
+ *   包装层是纯装饰覆盖层（lib/cinemaWrapper.ts 状态机），不碰既有播放控制；
+ *   reduced-motion 下片头直显直隐、credits 静态整页。
  *
  * 入口挂载在 App.tsx，由 PM 接线（见交付报告）。
  */
@@ -33,10 +38,21 @@ import {
   type ReplayDayPlan,
   type ReplayStation,
 } from '../lib/routeReplay'
+import {
+  CREDITS_SCROLL_DURATION_MS,
+  INITIAL_CINEMA_STATE,
+  TITLE_CARD_DURATION_MS,
+  reduceCinema,
+  shouldEnterCredits,
+  titleSkipKey,
+} from '../lib/cinemaWrapper'
+import { travelQuoteFor } from '../lib/travelEasterEggs'
 import { cn } from '../lib/utils'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { useReducedMotion } from '../lib/useReducedMotion'
 import { REPLAY_FLY_DURATION_S } from '../lib/motionMap'
+import CinemaTitleCard from './CinemaTitleCard'
+import CinemaCredits from './CinemaCredits'
 
 export interface RouteReplayPanelProps {
   /** 行程的全部天；回放按天切换。 */
@@ -46,6 +62,14 @@ export interface RouteReplayPanelProps {
   onClose: () => void
   /** 测试 / 预览覆盖；默认跟随系统 prefers-reduced-motion。 */
   reducedMotion?: boolean
+  /**
+   * 六期 S3 · 电影包装上下文（纯装饰，缺省 = 无电影包装降级为旧标题文案）：
+   * 行程目的地（片头标题卡）与行程名（credits）；日期区间从 days 自行计算。
+   * tripId 只作 credits 箴言的确定性选择键（§4.2.3：按 trip.id，不按标题）。
+   */
+  tripId?: string
+  tripTitle?: string
+  destination?: string
 }
 
 const BTN =
@@ -79,6 +103,9 @@ export default function RouteReplayPanel({
   initialDay,
   onClose,
   reducedMotion: reducedMotionOverride,
+  tripId = '',
+  tripTitle = '路线回放',
+  destination = '',
 }: RouteReplayPanelProps) {
   const titleId = useId()
   const mapElRef = useRef<HTMLDivElement | null>(null)
@@ -112,12 +139,68 @@ export default function RouteReplayPanel({
 
   const [cinema, setCinema] = useState(false)
 
+  /* ── 六期 S3 · 电影包装（片头 / 片尾）状态机 ──
+   * 与既有播放状态机分层：cinema 只管包装层阶段；正片推进仍由 reduceReplay 负责。
+   * 挂载期间的两个定时器：片头 1.5s 自动推进、credits 3.5s 滚动完成；阶段不匹配时
+   * 定时器触发是幂等 no-op（reduceCinema 守卫），卸载 / 退电影模式自动清零。 */
+  const [cinemaState, dispatchCinema] = useReducer(reduceCinema, INITIAL_CINEMA_STATE)
+
+  const enterCinema = useCallback(() => {
+    setCinema(true)
+    dispatchCinema({ type: 'enter' })
+  }, [])
+
+  const exitCinema = useCallback(() => {
+    setCinema(false)
+    dispatchCinema({ type: 'exit' })
+  }, [])
+
+  // 片头标题卡：1.5s 自动推进（titleDone）；点击跳过走 titleSkip，同一守卫幂等。
+  useEffect(() => {
+    if (cinemaState.phase !== 'title') return
+    const timer = window.setTimeout(() => dispatchCinema({ type: 'titleDone' }), TITLE_CARD_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [cinemaState.phase])
+
+  // credits 滚动：3.5s 后定格尾帧（creditsDone）；Esc 中途退出时 effect 直接清理。
+  useEffect(() => {
+    if (cinemaState.phase !== 'credits') return
+    const timer = window.setTimeout(() => dispatchCinema({ type: 'creditsDone' }), CREDITS_SCROLL_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [cinemaState.phase])
+
+  /* 正片「正常播完」→ credits。判定条件：电影模式开着 + 包装层在 playing + 回放
+   * 状态机到 finished。Esc 退出（cinema=false）不会经过这里；提前手动拖到最后一站
+   * 属于「播完」语义之外的换站路径（finished 由 next/tick 到达），同样算正常播完。 */
+  useEffect(() => {
+    if (cinema && shouldEnterCredits(cinemaState.phase, effectiveFinished)) {
+      dispatchCinema({ type: 'replayFinished' })
+    }
+  })
+
   const dialogRef = useDialogFocus<HTMLDivElement>({
     onEscape: () => {
-      if (cinema) setCinema(false)
+      // Esc 语义沿用面板既有口径（六期 S3 不改它）：电影模式任何阶段（含片头 /
+      // credits）Esc = 退电影模式——「Esc 中途退出不进 credits」由退出语义自然满足；
+      // 非电影模式 Esc 关闭面板。片头跳过走点击 / 非 Esc 按键（下方 keydown）。
+      if (cinema) exitCinema()
       else onClose()
     },
   })
+
+  /* 片头标题卡：任意非 Esc 按键立即跳过（规格「点击 / 按键立即可跳过」）。
+   * 只在 title 阶段挂监听；Escape 显式放行给 useDialogFocus 的退出语义。 */
+  useEffect(() => {
+    if (cinemaState.phase !== 'title') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (titleSkipKey(event.key)) {
+        event.preventDefault()
+        dispatchCinema({ type: 'titleSkip' })
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [cinemaState.phase])
 
   /* ── 地图：只初始化一次；图层随 plan 重建 ── */
   useEffect(() => {
@@ -289,6 +372,8 @@ export default function RouteReplayPanel({
   }, [state.playing])
 
   const stationCount = plan.stations.length
+  /** 正片是否已播完（含空日）：电影包装 credits 的触发源。 */
+  const effectiveFinished = stationCount === 0 || state.phase === 'finished'
   const sliderMax = Math.max(0, stationCount - 1)
   const current = plan.stations[state.stationIndex] ?? null
   const next = plan.stations[state.stationIndex + 1] ?? null
@@ -310,6 +395,27 @@ export default function RouteReplayPanel({
     setDayIndex(index)
     dispatch({ type: 'reset' })
   }
+
+  /* ── 六期 S3 · 电影包装内容（纯派生，无副作用） ── */
+  // 片头副行 / credits 次行的日期区间：行程全部合法 day.date 的 min–max（YYYY-MM-DD）；
+  // 全部缺日期时写「日期未提供」（诚实降级，不编造）。字符串拼接，零存储零网络。
+  const tripDateRange = useMemo(() => {
+    const dates = days
+      .map((item) => item.date ?? '')
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+      .sort()
+    if (dates.length === 0) return '日期未提供'
+    const first = dates[0]
+    const last = dates[dates.length - 1]
+    return first === last ? first : `${first} ～ ${last}`
+  }, [days])
+
+  // credits 箴言：按 trip.id 确定性选句（§4.2.3），由 lib/travelEasterEggs 承担；
+  // tripTitle 只用于 credits 展示，不参与选句。tripId 缺省（空串）时依然确定。
+  const creditQuote = useMemo(() => travelQuoteFor(tripId), [tripId])
+
+  const cinemaTitleActive = cinema && cinemaState.phase === 'title'
+  const cinemaCreditsActive = cinemaState.phase === 'credits' || cinemaState.phase === 'end'
 
   const stationCard = current ? (
     <section
@@ -383,6 +489,7 @@ export default function RouteReplayPanel({
         data-playing={state.playing ? 'true' : 'false'}
         data-speed={state.speed}
         data-cinema={cinema ? 'true' : 'false'}
+        data-cinema-phase={cinemaState.phase}
         data-route-kind={current?.inbound?.kind ?? 'none'}
       >
         {cinema && <h2 id={titleId} className="sr-only">路线回放</h2>}
@@ -406,6 +513,27 @@ export default function RouteReplayPanel({
               退出回放
             </button>
           </div>
+        )}
+
+        {/* 六期 S3 · 电影包装覆盖层：片头标题卡 / 片尾 credits。
+            只在对应阶段挂载（卸载即消失，不残留 DOM）；aria-hidden 纯装饰，
+            不进 tab 序；点击片头卡 = 跳过。z-[1400] 压过站卡 z-[1000]。 */}
+        {cinemaTitleActive && (
+          <CinemaTitleCard
+            destination={destination || tripTitle}
+            dateRange={tripDateRange}
+            reducedMotion={reducedMotion}
+            onSkip={() => dispatchCinema({ type: 'titleSkip' })}
+          />
+        )}
+        {cinema && cinemaCreditsActive && (
+          <CinemaCredits
+            tripTitle={tripTitle}
+            subtitle={`${destination || tripTitle} · ${tripDateRange}`}
+            quote={creditQuote}
+            settled={cinemaState.phase === 'end'}
+            reducedMotion={reducedMotion}
+          />
         )}
 
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -520,7 +648,7 @@ export default function RouteReplayPanel({
             <button
               type="button"
               className={BTN}
-              onClick={() => setCinema((value) => !value)}
+              onClick={() => (cinema ? exitCinema() : enterCinema())}
               data-testid="replay-cinema-toggle"
             >
               {cinema ? '退出电影模式' : '电影模式'}

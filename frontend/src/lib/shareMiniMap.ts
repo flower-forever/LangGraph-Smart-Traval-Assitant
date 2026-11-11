@@ -16,6 +16,7 @@
 
 import type { RouteType, TripDay, TripLocation } from './api'
 import { validCoord } from './format'
+import { pandaWatermarkFor } from './travelEasterEggs'
 
 export const SHARE_MINI_MAP_WIDTH = 960
 export const SHARE_MINI_MAP_HEIGHT = 320
@@ -35,6 +36,12 @@ export interface ShareMiniMap {
   unknownStops: string[]
   /** 实际出现的路段类型，按首次出现顺序。 */
   routeTypes: RouteType[]
+}
+
+/** 成都暗号水印选项（六期 S3 彩蛋①）：传 destination 才可能触发。 */
+export interface ShareMiniMapOptions {
+  /** 行程目的地；含「成都」时小地图角落追加淡色小熊猫剪影水印（纯装饰）。 */
+  destination?: string
 }
 
 interface LocatedStop {
@@ -137,8 +144,12 @@ function buildProjection(points: Point[]): Projection {
 /**
  * 生成某一天的路线小地图。无任何可用坐标时返回 svg=null（调用方省略整块，
  * 而不是画一张空地图）。
+ *
+ * 六期 S3 彩蛋①（成都暗号）：options.destination 含「成都」时，SVG 末尾追加一枚
+ * 淡色小熊猫剪影水印（确定性输出、纯装饰）。水印在所有路线与站点之后绘制，
+ * 不改变几何、坐标分组、图例与既有断言的结构；非成都 / 不传 destination 无此块。
  */
-export function buildShareMiniMap(day: TripDay): ShareMiniMap {
+export function buildShareMiniMap(day: TripDay, options: ShareMiniMapOptions = {}): ShareMiniMap {
   const { located, unknownStops } = locatedStops(day)
   if (located.length === 0) {
     return { svg: null, unknownStops, routeTypes: [] }
@@ -240,6 +251,11 @@ export function buildShareMiniMap(day: TripDay): ShareMiniMap {
     `第 ${day.day} 天路线小地图：${located.length} 个可定位站点` +
     (unknownStops.length > 0 ? `，${unknownStops.length} 个位置未知` : '')
 
+  // 成都暗号（六期 S3 彩蛋①）：水印放最后（贴右下角），不遮版心的站点编号圆点；
+  // 确定性片段，不影响几何、图例与 aria。
+  const watermark = pandaWatermarkFor(options.destination ?? '')
+  const watermarkFragment = watermark === null ? '' : watermark.svgFragment
+
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SHARE_MINI_MAP_WIDTH} ${SHARE_MINI_MAP_HEIGHT}"` +
     ` width="${SHARE_MINI_MAP_WIDTH}" height="${SHARE_MINI_MAP_HEIGHT}" role="img"` +
@@ -251,6 +267,7 @@ export function buildShareMiniMap(day: TripDay): ShareMiniMap {
     straightLabels.join('') +
     dots.join('') +
     legend +
+    watermarkFragment +
     `</svg>`
 
   return { svg, unknownStops, routeTypes }

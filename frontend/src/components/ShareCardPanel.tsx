@@ -122,9 +122,9 @@ export default function ShareCardPanel({
   const miniMap = useMemo<ShareMiniMap>(
     () =>
       selectedDay
-        ? buildShareMiniMap(selectedDay)
+        ? buildShareMiniMap(selectedDay, { destination: activeTrip.destination })
         : { svg: null, unknownStops: [], routeTypes: [] },
-    [selectedDay],
+    [selectedDay, activeTrip.destination],
   )
   const cardSvg = useMemo(
     () => (data ? renderShareCard(style, data) : ''),

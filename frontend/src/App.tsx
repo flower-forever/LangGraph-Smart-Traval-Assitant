@@ -708,6 +708,14 @@ export default function App() {
   /** 落印 reduced-motion 公共通道（仅传给 data-reduced 标注，样式降级在 CSS） */
   const reducedMotion = useReducedMotion()
 
+  /**
+   * 六期 S3 彩蛋② · 节日印章：仅「规划成功盖的那枚印」显示问候小字。
+   * 用 stampKey 捕获当下行程的日期区间（规划完成时刻的 trip），与内置 2026–2027
+   * 节日表相交则给出问候语；恢复 / 导入 / 示例路径（stampKey 不变）不带问候。
+   * 纯装饰字符串（lib/travelEasterEggs.ts），零数据影响。
+   */
+  const [stampFestivalGreeting, setStampFestivalGreeting] = useState<string | null>(null)
+
   // 落印驻留计时：挂载起 2.5s+淡出 后静默卸载；换 key 重挂时 effect 重新计时
   useEffect(() => {
     if (stampKey === null) return
@@ -2183,6 +2191,16 @@ export default function App() {
       // 恢复 / 导入 / 示例路径不经过这里。stampKey 换值让印章组件重新挂载。
       stampSeqRef.current += 1
       setStampKey(stampSeqRef.current)
+      // 六期 S3 彩蛋②：本次规划行程的日期区间命中内置节日表 → 印章下问候小字；
+      // 未命中（含 2028 起过表）为 null，印章不带小字（旧行为）。纯装饰，零写入。
+      // 动态 import：节日表只在真实规划成功后加载（懒加载分片），主包不带回涨；
+      // 加载失败保持无问候（彩蛋永不阻塞主流程）。
+      void import('./lib/festivalCalendar')
+        .then((module) => {
+          const festival = module.festivalGreetingFor(t)
+          setStampFestivalGreeting(festival ? festival.greeting : null)
+        })
+        .catch(() => setStampFestivalGreeting(null))
       setPhase('ready')
       setRestoredAt(null)
       setOpenedFromFile(false)
@@ -3444,9 +3462,10 @@ export default function App() {
           <section aria-label="行程安排" data-trip-revision={tripRevision} className="relative">
             {/* 六期 S1 落印：仅规划成功（stampKey 会话号）时盖在行程区顶部；
                 key 换值重新挂载，App 计时器 2.5s+淡出 后静默卸载。pointer-events:none，
-                不截点击；aria-hidden 不进读屏与 tab 序。 */}
+                不截点击；aria-hidden 不进读屏与 tab 序。
+                六期 S3 彩蛋②：行程日期命中节日表时印章下带问候小字（纯装饰）。 */}
             {stampKey !== null && (
-              <StampSeal key={stampKey} reducedMotion={reducedMotion} />
+              <StampSeal key={stampKey} reducedMotion={reducedMotion} festivalGreeting={stampFestivalGreeting} />
             )}
             <header className={TRIP_HEADER}>
               <div className={TRIP_HEAD_ROW}>
@@ -4295,6 +4314,11 @@ export default function App() {
                   days={draft ? draft.days : trip.days}
                   initialDay={activeDay}
                   onClose={() => setReplayOpen(false)}
+                  // 六期 S3 电影包装：片头/片尾的行程名与目的地（纯装饰上下文）；
+                  // 尾帧箴言按 trip.id 确定性选择（§4.2.3），title 仅用于展示。
+                  tripId={trip.id}
+                  tripTitle={trip.title}
+                  destination={trip.destination}
                 />
               </Suspense>
             )}
