@@ -153,6 +153,16 @@ const ROUTE_TEXT: Record<TripDay['legs'][number]['route_type'], string> = {
   unavailable: '路线待获取',
 }
 
+const PANEL_NOTE =
+  'm-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const SECTION_TITLE =
+  'm-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]'
+const FIELD_LABEL = 'text-sm text-[color:var(--color-secondary-foreground)]'
+const SECTION_BOX = 'min-w-0 rounded-[6px] border border-border bg-background p-3'
+const NOTE_TEXT =
+  'm-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]'
+const INLINE_ACTIONS = 'flex flex-wrap items-center gap-3'
+
 function formatTime(value: string | null): string {
   return value ?? '待定'
 }
@@ -940,7 +950,7 @@ export default function DayReplanPanel({
       <fieldset className="m-0 grid min-w-0 gap-3 rounded-[10px] border border-border p-4 disabled:opacity-75" disabled={pending || plannerUnavailable}>
         <legend className="px-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">想怎么调整这一天</legend>
         <div className="grid min-w-0 gap-1" role="radiogroup" aria-labelledby={rangeGroupId}>
-          <span id={rangeGroupId} className="text-sm text-[color:var(--color-secondary-foreground)]">调整范围</span>
+          <span id={rangeGroupId} className={FIELD_LABEL}>调整范围</span>
           <label className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
             <input
               type="radio"
@@ -968,7 +978,7 @@ export default function DayReplanPanel({
         </div>
         {rangeMode === 'tail' ? (
           <div className="grid min-w-0 gap-1">
-            <label htmlFor={anchorSelectId} className="text-sm text-[color:var(--color-secondary-foreground)]">保留到哪一站（锚点）</label>
+            <label htmlFor={anchorSelectId} className={FIELD_LABEL}>保留到哪一站（锚点）</label>
             <Select
               id={anchorSelectId}
               value={anchorId}
@@ -984,16 +994,16 @@ export default function DayReplanPanel({
               ))}
             </Select>
             {day.stops.length >= 2 ? (
-              <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+              <p className={PANEL_NOTE}>
                 {`选中的锚点站及之前的 ${anchorId && anchorIndexSelected >= 0 ? anchorIndexSelected + 1 : 'N'} 站与站间路线会原样保留；之后的部分由 AI 候选替换，锚点到新后段第一站的衔接路线不会重算。`}
               </p>
             ) : (
-              <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{`这一天只有 ${day.stops.length} 个站点，没有可替换的后段；后段模式至少需要 2 个站点。`}</p>
+              <p className={PANEL_NOTE}>{`这一天只有 ${day.stops.length} 个站点，没有可替换的后段；后段模式至少需要 2 个站点。`}</p>
             )}
           </div>
         ) : null}
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={instructionId} className="text-sm text-[color:var(--color-secondary-foreground)]">调整指令（1–500 字）</label>
+          <label htmlFor={instructionId} className={FIELD_LABEL}>调整指令（1–500 字）</label>
           <Textarea
             id={instructionId}
             value={instruction}
@@ -1004,7 +1014,7 @@ export default function DayReplanPanel({
             aria-describedby={instructionTooLong ? instructionErrorId : undefined}
             aria-invalid={instructionTooLong || instructionEmpty ? true : undefined}
           />
-          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]" aria-live="polite">
+          <p className={PANEL_NOTE} aria-live="polite">
             {instruction.length}/500
             {instructionTooLong ? (
               <span id={instructionErrorId} className="text-[color:var(--color-accent-foreground)]"> 已超过 500 字，请删减后再生成。</span>
@@ -1012,7 +1022,7 @@ export default function DayReplanPanel({
           </p>
         </div>
         <div className="grid min-w-0 gap-1" role="radiogroup" aria-labelledby={modeGroupId}>
-          <span id={modeGroupId} className="text-sm text-[color:var(--color-secondary-foreground)]">出行方式</span>
+          <span id={modeGroupId} className={FIELD_LABEL}>出行方式</span>
           {(['walking', 'driving'] as const).map((value) => (
             <label key={value} className="mr-4 inline-flex min-h-6 items-center gap-2 text-sm">
               <input
@@ -1028,7 +1038,7 @@ export default function DayReplanPanel({
             </label>
           ))}
           {initialMode === '' ? (
-            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               {day.legs.length > 0
                 ? '本日现有路线包含多种方式，请选择这一次使用的方式。'
                 : '这一天还没有路段：请选择这一次希望使用的出行方式。'}
@@ -1036,7 +1046,7 @@ export default function DayReplanPanel({
           ) : null}
         </div>
         <div className="grid min-w-0 gap-1">
-          <label htmlFor={travelersId} className="text-sm text-[color:var(--color-secondary-foreground)]">同行人数（选填）</label>
+          <label htmlFor={travelersId} className={FIELD_LABEL}>同行人数（选填）</label>
           <Input
             id={travelersId}
             type="text"
@@ -1050,7 +1060,7 @@ export default function DayReplanPanel({
             disabled={pending || plannerUnavailable}
             className="max-w-[200px]"
           />
-          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <p className={PANEL_NOTE}>
             1–{MAX_REPLAN_TRAVELERS} 的整数；留空不会发送人数，也不会沿用规划表单里的旧人数。修改后需要重新生成候选。
           </p>
           {travelersInvalid ? (
@@ -1059,7 +1069,7 @@ export default function DayReplanPanel({
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={INLINE_ACTIONS}>
           <Button
             onClick={() => {
               void handleGenerate()
@@ -1069,15 +1079,15 @@ export default function DayReplanPanel({
             生成调整候选
           </Button>
         </div>
-        <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">点击生成才会请求一次 AI 调整；不会自动生成，也不会自动重试。</p>
+        <p className={PANEL_NOTE}>点击生成才会请求一次 AI 调整；不会自动生成，也不会自动重试。</p>
       </fieldset>
 
       {pending ? (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={INLINE_ACTIONS}>
           <Button variant="outline" onClick={stopWaiting}>
             停止等待
           </Button>
-          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">已提交的请求会继续在服务端处理，停止等待只是不再等它，不保证后端停止计算。</p>
+          <p className={PANEL_NOTE}>已提交的请求会继续在服务端处理，停止等待只是不再等它，不保证后端停止计算。</p>
         </div>
       ) : null}
 
@@ -1131,16 +1141,16 @@ export default function DayReplanPanel({
         <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] p-4" aria-label="候选预览">
           <h4 className="m-0 font-display text-md">候选预览（尚未应用到行程）</h4>
           <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
-            <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">当前方案</h5>
+            <div className={SECTION_BOX}>
+              <h5 className={SECTION_TITLE}>当前方案</h5>
               <StopTable day={day} />
             </div>
-            <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-              <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">AI 候选</h5>
+            <div className={SECTION_BOX}>
+              <h5 className={SECTION_TITLE}>AI 候选</h5>
               <StopTable day={currentCandidate.day} candidate />
             </div>
           </div>
-          <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
+          <p className={NOTE_TEXT}>
             <strong>地图数据：</strong>
             {MAP_STATUS_TEXT[currentCandidate.map_status]}
           </p>
@@ -1190,7 +1200,7 @@ export default function DayReplanPanel({
               放弃候选
             </Button>
           </div>
-          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">应用候选只替换这一天的全部安排，其余天不变；应用前当前行程不会被改动，也不会自动保存。</p>
+          <p className={PANEL_NOTE}>应用候选只替换这一天的全部安排，其余天不变；应用前当前行程不会被改动，也不会自动保存。</p>
         </div>
       ) : null}
     </section>
@@ -1199,7 +1209,7 @@ export default function DayReplanPanel({
 
 function StopTable({ day, candidate = false }: { day: TripDay; candidate?: boolean }) {
   if (day.stops.length === 0) {
-    return <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">这一天没有站点安排。</p>
+    return <p className={PANEL_NOTE}>这一天没有站点安排。</p>
   }
   return (
     <ol className="m-0 grid list-none gap-3 p-0">
@@ -1232,7 +1242,7 @@ function RouteSummary({ day }: { day: TripDay }) {
   const unavailable = day.legs.length - navigable.length
   if (day.legs.length === 0) return null
   return (
-    <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+    <p className={PANEL_NOTE}>
       路线概况：{day.legs.length} 段中 {navigable.length} 段有路线数据
       {unavailable > 0 ? `，${unavailable} 段待获取` : ''}。时刻与耗时为计划值，不代表实测交通或预约结果。
     </p>
@@ -1326,16 +1336,16 @@ function TailPreview({
   return (
     <div className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-line-strong)] p-4" aria-label="候选预览">
       <h4 className="m-0 font-display text-md">后段候选预览（尚未应用到行程）</h4>
-      <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+      <p className={PANEL_NOTE}>
         {`本日前 ${composed.keptCount} 站原样保留（冻结段），之后 ${composed.tailStopCount} 站来自 AI 候选（新后段）；下面的组合方案只用于预览，不代表已应用。`}
       </p>
       <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
-        <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
+        <div className={SECTION_BOX}>
+          <h5 className={SECTION_TITLE}>{`冻结保留（前 ${composed.keptCount} 站，原记录）`}</h5>
           <StopTable day={keptDay} />
         </div>
-        <div className="min-w-0 rounded-[6px] border border-border bg-background p-3">
-          <h5 className="m-0 mb-2 text-sm font-semibold text-[color:var(--color-secondary-foreground)]">组合方案（冻结段 + AI 新后段）</h5>
+        <div className={SECTION_BOX}>
+          <h5 className={SECTION_TITLE}>组合方案（冻结段 + AI 新后段）</h5>
           <StopTable day={composed.day} candidate />
         </div>
       </div>
@@ -1351,11 +1361,11 @@ function TailPreview({
           </AlertDescription>
         </Alert>
       ) : null}
-      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
+      <p className={NOTE_TEXT}>
         <strong>组合后地图数据：</strong>
         {MAP_STATUS_TEXT[composed.mapStatus]}
       </p>
-      <p className="m-0 text-sm leading-relaxed text-[color:var(--color-secondary-foreground)]">
+      <p className={NOTE_TEXT}>
         <strong>原始后段地图数据（AI 返回时）：</strong>
         {MAP_STATUS_TEXT[response.map_status]}
       </p>
@@ -1383,11 +1393,11 @@ function TailPreview({
 
       {/* ───────── 衔接路线查询（显式一次，无自动请求/重试） ───────── */}
       {boundaryPending ? (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={INLINE_ACTIONS}>
           <Button variant="outline" onClick={onStopBoundary}>
             停止等待衔接路线
           </Button>
-          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <p className={PANEL_NOTE}>
             已提交的衔接路线查询会继续在服务端处理；停止等待只是不再等它，不保证后端或上游已停止或不计费。
           </p>
         </div>
@@ -1403,7 +1413,7 @@ function TailPreview({
         </Alert>
       ) : null}
       {!hasBoundaryRoute && !boundaryPending ? (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={INLINE_ACTIONS}>
           <Button
             variant="outline"
             onClick={onQueryBoundary}
@@ -1412,12 +1422,12 @@ function TailPreview({
             获取衔接路线
           </Button>
           {!boundaryQueryReady ? (
-            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               锚点或新后段首站缺少记录坐标（或站点 id 无法用于衔接查询）：无法按固定端点查询衔接路线；不会按地址重新定位、不会改名或截断、不会把缺失补成
               0。仍可仅应用后段（衔接未知）。
             </p>
           ) : (
-            <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               按锚点与新后段首站记录的 WGS84 坐标向高德地图查询一次衔接路线（walking/driving
               与候选范围一致）；不会重新定位地址。不会自动查询或重试。
             </p>
@@ -1425,11 +1435,11 @@ function TailPreview({
         </div>
       ) : null}
       {hasBoundaryRoute ? (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={INLINE_ACTIONS}>
           <Button variant="outline" onClick={onDiscardBoundary}>
             舍弃衔接路线
           </Button>
-          <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">舍弃后回到「衔接路线未重算」的候选预览，可重新显式获取。</p>
+          <p className={PANEL_NOTE}>舍弃后回到「衔接路线未重算」的候选预览，可重新显式获取。</p>
         </div>
       ) : null}
 
@@ -1458,7 +1468,7 @@ function TailPreview({
           放弃候选
         </Button>
       </div>
-      <p className="m-0 max-w-[72ch] text-xs leading-relaxed text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+      <p className={PANEL_NOTE}>
         {hasBoundaryRoute
           ? '「应用后段与衔接路线」会把锚点到新后段首站的衔接路线一并应用：前段站点、时刻与站间路线原样保留，其它天不变；衔接路线按两端记录坐标取得，未核对地点身份。'
           : '「仅应用后段（衔接未知）」只替换锚点之后的部分：前段站点、时刻与站间路线原样保留，其它天不变；锚点衔接路线未重算。'}{' '}

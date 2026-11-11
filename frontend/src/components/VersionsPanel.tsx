@@ -73,6 +73,15 @@ const STATUS_TEXT: Record<VersionsLibraryStatusV1, string> = {
   unknown_version: '版本库版本无法识别；保留原样，未覆盖。',
 }
 
+const PANEL_NOTE =
+  'm-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const PANEL_NOTE_STRONG =
+  'm-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]'
+const SECTION_TITLE =
+  'm-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]'
+const PANEL_NOTE_PLAIN = 'm-0 text-sm leading-[1.6] [overflow-wrap:anywhere]'
+const META_LABEL = 'text-xs text-muted-foreground'
+
 function isWriteBlocked(status: VersionsLibraryStatusV1): boolean {
   return (
     status === 'unavailable' ||
@@ -135,42 +144,42 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
 
   return (
     <div className="grid min-w-0 gap-3">
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
+      <p className={PANEL_NOTE_STRONG}>
         站点：新增 {added.length} · 删除 {removed.length} · 跨日移动 {moved.length} · 同日变化{' '}
         {changed.length} · 未变化 {diff.stops.unchangedCount}
       </p>
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
+      <p className={PANEL_NOTE_STRONG}>
         预约：新增 {constraintsAdded.length} · 删除 {constraintsRemoved.length} · 变化{' '}
         {constraintsChanged.length} · 未变化 {diff.constraints.unchangedCount}
       </p>
 
       <dl className="m-0 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-x-4 gap-y-2 max-md:grid-cols-[minmax(0,1fr)]">
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">用时 · {diff.before.name}</dt>
-          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.time.before, '分钟')}</dd>
+          <dt className={META_LABEL}>用时 · {diff.before.name}</dt>
+          <dd className={PANEL_NOTE_PLAIN}>{formatMeasureSummary(diff.time.before, '分钟')}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">用时 · {diff.after.name}</dt>
-          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.time.after, '分钟')}</dd>
+          <dt className={META_LABEL}>用时 · {diff.after.name}</dt>
+          <dd className={PANEL_NOTE_PLAIN}>{formatMeasureSummary(diff.time.after, '分钟')}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">距离 · {diff.before.name}</dt>
-          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.distance.before, '米')}</dd>
+          <dt className={META_LABEL}>距离 · {diff.before.name}</dt>
+          <dd className={PANEL_NOTE_PLAIN}>{formatMeasureSummary(diff.distance.before, '米')}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">距离 · {diff.after.name}</dt>
-          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatMeasureSummary(diff.distance.after, '米')}</dd>
+          <dt className={META_LABEL}>距离 · {diff.after.name}</dt>
+          <dd className={PANEL_NOTE_PLAIN}>{formatMeasureSummary(diff.distance.after, '米')}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">费用 · {diff.before.name}</dt>
-          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatCostSummary(diff.cost.before)}</dd>
+          <dt className={META_LABEL}>费用 · {diff.before.name}</dt>
+          <dd className={PANEL_NOTE_PLAIN}>{formatCostSummary(diff.cost.before)}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">费用 · {diff.after.name}</dt>
-          <dd className="m-0 text-sm leading-[1.6] [overflow-wrap:anywhere]">{formatCostSummary(diff.cost.after)}</dd>
+          <dt className={META_LABEL}>费用 · {diff.after.name}</dt>
+          <dd className={PANEL_NOTE_PLAIN}>{formatCostSummary(diff.cost.after)}</dd>
         </div>
       </dl>
-      <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">{costChangeText(diff.cost)}</p>
+      <p className={PANEL_NOTE_STRONG}>{costChangeText(diff.cost)}</p>
 
       <details
         className="rounded-[6px] border border-border bg-card px-4 py-3"
@@ -178,7 +187,7 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
       >
         <summary className="cursor-pointer text-sm font-semibold text-[color:var(--color-secondary-foreground)]">站点与预约明细</summary>
         {added.length === 0 && removed.length === 0 && moved.length === 0 && changed.length === 0 ? (
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">没有站点差异。</p>
+          <p className={PANEL_NOTE}>没有站点差异。</p>
         ) : (
           <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)]">
             {added.map((ref) => (
@@ -204,7 +213,7 @@ function DiffView({ diff }: { diff: VersionDiffV1 }) {
         {constraintsAdded.length === 0 &&
         constraintsRemoved.length === 0 &&
         constraintsChanged.length === 0 ? (
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">没有预约差异。</p>
+          <p className={PANEL_NOTE}>没有预约差异。</p>
         ) : (
           <ul className="mt-2 mb-0 pl-5 list-disc grid gap-2 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)]">
             {constraintsAdded.map((item) => (
@@ -448,14 +457,14 @@ export default function VersionsPanel({
         </Alert>
       ) : null}
       {status === 'empty' ? (
-        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{STATUS_TEXT.empty}</p>
+        <p className={PANEL_NOTE}>{STATUS_TEXT.empty}</p>
       ) : null}
 
       <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={saveHeadingId}>
-        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={saveHeadingId}>
+        <h3 className={SECTION_TITLE} id={saveHeadingId}>
           保存当前版本
         </h3>
-        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+        <p className={PANEL_NOTE}>
           当前：{currentVersionLabel}
           {current === null
             ? ''
@@ -484,7 +493,7 @@ export default function VersionsPanel({
             保存为版本
           </Button>
         </form>
-        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]" id={nameHelpId}>
+        <p className={PANEL_NOTE} id={nameHelpId}>
           保存只记录当前内容；不会调用 AI、不会自动分叉。同名版本会各自成为独立条目。
         </p>
         {current === null ? (
@@ -495,7 +504,7 @@ export default function VersionsPanel({
       </section>
 
       <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={listHeadingId}>
-        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={listHeadingId}>
+        <h3 className={SECTION_TITLE} id={listHeadingId}>
           已保存版本（{items.length}/{VERSION_LIMITS.maxCount}）
         </h3>
         {items.length === 0 ? (
@@ -511,7 +520,7 @@ export default function VersionsPanel({
               >
                 <div className="min-w-0 flex-[1_1_240px]">
                   <h4 className="m-0 mb-1 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]">{version.name}</h4>
-                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+                  <p className={PANEL_NOTE}>
                     {formatDateTime(version.createdAt)} · 快照 revision{' '}
                     {version.workspaceRevision} ·{' '}
                     {version.budget === null ? '没有预算数据' : '含预算快照'}
@@ -544,7 +553,7 @@ export default function VersionsPanel({
           className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-primary)] bg-accent-surface p-4"
           aria-labelledby={previewHeadingId}
         >
-          <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={previewHeadingId}>
+          <h3 className={SECTION_TITLE} id={previewHeadingId}>
             采用预览：{pendingAdopt.versionName}
           </h3>
           <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
@@ -576,7 +585,7 @@ export default function VersionsPanel({
           </ul>
 
           {pendingAdopt.needsReconfirmation.length === 0 ? (
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               当前工作区没有该版本之外的额外条目。
             </p>
           ) : (
@@ -616,7 +625,7 @@ export default function VersionsPanel({
               取消预览
             </Button>
           </div>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <p className={PANEL_NOTE}>
             只有点「确认采用此版本」才会把完整 proposal 交给父级；面板不写存储。
           </p>
         </section>
@@ -627,7 +636,7 @@ export default function VersionsPanel({
           className="grid min-w-0 gap-3 rounded-[10px] border border-[color:var(--color-primary)] bg-accent-surface p-4"
           aria-label="最近一次采用可撤销"
         >
-          <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]">最近一次采用可整体撤销</h3>
+          <h3 className={SECTION_TITLE}>最近一次采用可整体撤销</h3>
           <p className="m-0 text-sm leading-[1.7] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
             撤销会恢复采用前的 Trip、sidecar 与预算；revision 仍从当前{' '}
             {undoProposal.base.identity.workspaceRevision} →{' '}
@@ -647,11 +656,11 @@ export default function VersionsPanel({
       ) : null}
 
       <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={diffHeadingId}>
-        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={diffHeadingId}>
+        <h3 className={SECTION_TITLE} id={diffHeadingId}>
           两个版本对比
         </h3>
         {items.length < 2 ? (
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">至少保存两个版本后才能对比。</p>
+          <p className={PANEL_NOTE}>至少保存两个版本后才能对比。</p>
         ) : (
           <>
             <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-3 max-md:grid-cols-[minmax(0,1fr)]">
@@ -697,10 +706,10 @@ export default function VersionsPanel({
       </section>
 
       <section className="grid min-w-0 gap-3 rounded-[10px] border border-border bg-background p-4" aria-labelledby={backupHeadingId}>
-        <h3 className="m-0 font-display text-md font-bold leading-[1.4] [overflow-wrap:anywhere]" id={backupHeadingId}>
+        <h3 className={SECTION_TITLE} id={backupHeadingId}>
           版本库独立备份 / 导入
         </h3>
-        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+        <p className={PANEL_NOTE}>
           只处理版本库自身，不包含工作区或候选库；不做跨库原子恢复。导入只预览，确认后才交给
           父级显式保存。
         </p>
@@ -736,7 +745,7 @@ export default function VersionsPanel({
           </label>
         </div>
         {fileBusy ? (
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">正在读取文件…</p>
+          <p className={PANEL_NOTE}>正在读取文件…</p>
         ) : null}
         {fileError !== null ? (
           <Alert variant="warning" role="alert">
@@ -746,11 +755,11 @@ export default function VersionsPanel({
 
         {backupPreview !== null ? (
           <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-3">
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE_STRONG}>
               备份预览：仅版本库 · {backupPreview.record.items.length} 个版本 ·{' '}
               {backupPreview.bytes} 字节（UTF-8）
             </p>
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               预览与下载使用同一份字节；面板不直接写文件，下载由父级 callback 接入。
             </p>
             <Button
@@ -769,7 +778,7 @@ export default function VersionsPanel({
 
         {importPreview !== null ? (
           <div className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-line-strong)] bg-secondary p-3">
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-secondary-foreground)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE_STRONG}>
               导入预览：仅版本库 · {importPreview.record.items.length} 个版本 ·{' '}
               {importPreview.bytes} 字节（UTF-8）· 未写入
             </p>
@@ -791,7 +800,7 @@ export default function VersionsPanel({
               </Button>
             </div>
             {onImportVersions === undefined ? (
-              <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+              <p className={PANEL_NOTE}>
                 父级尚未接入导入 callback；当前只保留预览。
               </p>
             ) : null}

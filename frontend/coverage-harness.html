@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>选择充分度卡 · E2E 挂载页</title>
+  </head>
+  <body>
+    <!--
+      六期 S6 离线浏览器验收专用挂载页。
+      只被 e2e/s6CoverageScenarios.mjs 引用：不进主包（无任何主包 import），
+      不进构建产物（vite build 默认只构建 index.html）。
+      充分度卡的真实挂载点是 App.tsx 行程区（PM 接线项）；本页用同一组件 + 同一
+      既有候选库写入路径做「充分度渲染 + 加入候选池」冒烟。
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/dev/coverageHarness.tsx"></script>
+  </body>
+</html>

@@ -9,6 +9,7 @@ import InterestTag from './components/InterestTag'
 import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
 import CityProfileCard from './components/CityProfileCard'
+import CoverageCard from './components/CoverageCard'
 import StampSeal from './components/StampSeal'
 import { useReducedMotion } from './lib/useReducedMotion'
 import { projectStopFacts } from './lib/stopFacts'
@@ -91,8 +92,10 @@ import {
   type StorageUndoHandle,
 } from './lib/workspaceStorage'
 import {
+  addCandidateToRecord,
   createCandidatesBackup,
   createEmptyCandidateRecord,
+  createManualCandidate,
   type CandidateDraftProposal,
   type CandidateStopSource,
 } from './lib/candidatePool'
@@ -1940,6 +1943,82 @@ export default function App() {
       setCandidatesSaveStatus('saved')
       setCandidatesSaveMessage(`已保存候选库（${result.record.items.length} 个候选，${result.bytes} 字节）。`)
       setCandidatesUndo(null)
+    })
+  }, [])
+
+  /**
+   * 六期 S6 · 充分度卡「加入候选池」：走既有候选库显式写路径
+   * （load → createManualCandidate → addCandidateToRecord → saveCandidatesRecord），
+   * expectedRaw 冻结比对、冲突失败保旧，与 openCandidatePool / handleSaveCandidates 同款。
+   * 组件不接触存储；写入结果由候选库状态承载（面板关闭时同样安全）。
+   */
+  const handleCoverageAddToPool = useCallback((item: { name: string; reason: string | null }) => {
+    const storage = storageRef.current
+    const locks = getWorkspaceLockManager()
+    if (!storage || !locks) {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage('当前浏览器无法安全写入候选库；原字节未改动。')
+      return
+    }
+    const read = loadCandidatesRecord(storage)
+    if (read.status !== 'ok' && read.status !== 'empty') {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage(read.message ?? '候选库当前不可读写；未写入。')
+      return
+    }
+    const empty = createEmptyCandidateRecord(Date.now())
+    const base = read.record ?? (empty.ok ? empty.value : null)
+    if (base === null) {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage('候选库初始化失败；未写入。')
+      return
+    }
+    const candidate = createManualCandidate(
+      {
+        id: newUuid(),
+        name: item.name,
+        address: null,
+        notes: item.reason,
+        tags: [],
+        priority: 1,
+        location: null,
+      },
+      Date.now(),
+    )
+    if (!candidate.ok) {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage(candidate.message)
+      return
+    }
+    const added = addCandidateToRecord(base, candidate.value, Date.now())
+    if (!added.ok) {
+      setCandidatesSaveStatus('error')
+      setCandidatesSaveMessage(added.message)
+      return
+    }
+    const seq = ++candidatesActionSeqRef.current
+    setCandidatesSaveStatus('pending')
+    setCandidatesSaveMessage(null)
+    void saveCandidatesRecord(added.value.record, {
+      storage,
+      locks,
+      expectedRaw: read.raw,
+    }).then((result) => {
+      if (candidatesActionSeqRef.current !== seq) return
+      if (!result.ok) {
+        setCandidatesSaveStatus('error')
+        setCandidatesSaveMessage(result.message)
+        return
+      }
+      candidatesRawRef.current = result.raw
+      setCandidatesRecord(result.record)
+      setCandidatesStorageStatus('ok')
+      setCandidatesStorageMessage(null)
+      setCandidatesStorageRevision(String(getLibraryGeneration(CANDIDATES_STORAGE_KEY).generation))
+      setCandidatesSaveStatus('saved')
+      setCandidatesSaveMessage(
+        `已把「${item.name}」加入候选池（共 ${result.record.items.length} 个候选）；可在候选池面板查看或删除。`,
+      )
     })
   }, [])
 
@@ -4260,6 +4339,7 @@ export default function App() {
             <div className={TRIP_LAYOUT}>
               <div className={ITINERARY_PANE} id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`}>
                 {trip?.cityProfile && <CityProfileCard cityProfile={trip.cityProfile} />}
+                {trip && <CoverageCard trip={trip} onAddToPool={handleCoverageAddToPool} />}
                 {currentDay && trip && (
                   <TodayPanel
                     days={trip.days}

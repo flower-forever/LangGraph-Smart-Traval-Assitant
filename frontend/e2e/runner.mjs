@@ -62,6 +62,10 @@ import {
   runS5StopDepthCard,
   runS5StopDepthDegraded,
 } from './s5StopDepthScenarios.mjs'
+import {
+  runS6CoverageCard,
+  runS6CoveragePoolSmoke,
+} from './s6CoverageScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1228,6 +1232,40 @@ async function scenarioS5StopDepthDegraded() {
   }
 }
 
+/** ───────────────────────── 场景 25–26：六期 S6 选择充分度（渲染 / 加入候选池冒烟） ───────────────────────── */
+
+async function scenarioS6CoverageCard() {
+  const { context, page } = await newOfflineContext('s6CoverageCard')
+  const rec = makeStepRecorder('s6CoverageCard', 'desktop-1440')
+  try {
+    await runS6CoverageCard({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s6CoverageCard = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioS6CoveragePoolSmoke() {
+  const { context, page } = await newOfflineContext('s6CoveragePoolSmoke')
+  const rec = makeStepRecorder('s6CoveragePoolSmoke', 'desktop-1440')
+  try {
+    await runS6CoveragePoolSmoke({
+      page,
+      rec,
+      appOrigin,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.s6CoveragePoolSmoke = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1307,6 +1345,8 @@ try {
   await scenarioS4CityProfileDegraded()
   await scenarioS5StopDepthCard()
   await scenarioS5StopDepthDegraded()
+  await scenarioS6CoverageCard()
+  await scenarioS6CoveragePoolSmoke()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

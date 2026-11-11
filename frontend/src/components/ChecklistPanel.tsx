@@ -147,6 +147,13 @@ const STATUS_NOTICES: Record<Exclude<ChecklistPanelStatus, 'ready'>, string> = {
   corrupt: '工作区记录损坏，暂不能编辑清单；原始数据保留。',
 }
 
+const PANEL_NOTE =
+  'm-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]'
+const FIELD_LABEL =
+  'grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]'
+const SECTION_TITLE = 'm-0 font-display text-md leading-[1.4] tracking-[0.02em]'
+const PLAIN_LIST = 'm-0 grid list-none gap-2 p-0'
+
 function parseDraftDay(value: string): number | null | 'invalid' {
   const text = value.trim()
   if (text === '') return null
@@ -738,12 +745,12 @@ export default function ChecklistPanel({
           className="grid gap-2 rounded-[6px] border border-dashed border-[color:var(--color-primary)] bg-accent-surface p-4"
           aria-label="需重新关联的清单项"
         >
-          <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">关联核对</h3>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <h3 className={SECTION_TITLE}>关联核对</h3>
+          <p className={PANEL_NOTE}>
             下面的任务不会自动删除；标记后仍保留标题、备注与勾选状态。
           </p>
           {audit.issues.length > 0 ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
+            <ul className={PLAIN_LIST}>
               {audit.issues.map((issue) => (
                 <li
                   key={`${issue.itemId}-${issue.reason}-${issue.refId ?? ''}`}
@@ -783,7 +790,7 @@ export default function ChecklistPanel({
             </ul>
           ) : null}
           {audit.unrecordedConstraintItems.length > 0 && constraintItems.length > 0 ? (
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               旧清单有 {audit.unrecordedConstraintItems.length} 项未记录预约关联；日期 / 地点仍独立保留，
               可在编辑中手动关联预约。
             </p>
@@ -828,8 +835,8 @@ export default function ChecklistPanel({
           data-testid="checklist-suggestions"
         >
           <div className="grid min-w-0 gap-1">
-            <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">建议携带物（本地推断 · 未核实）</h3>
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <h3 className={SECTION_TITLE}>建议携带物（本地推断 · 未核实）</h3>
+            <p className={PANEL_NOTE}>
               目的地：{suggestionDestination === '' ? '未指定' : suggestionDestination}
               {trip ? ` · 行程 ${trip.days.length} 天` : ' · 行程未加载'}
               {' · '}
@@ -838,16 +845,16 @@ export default function ChecklistPanel({
               {suggestedSeason === null ? '' : ` · ${CHECKLIST_SEASON_LABELS[suggestedSeason]}`}
             </p>
           </div>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <p className={PANEL_NOTE}>
             只按目的地关键词、月份与天数做本地推断；不联网、不查询库存或预约。
             采纳只会新增未准备条目，不会自动勾选。
           </p>
           {visibleChecklistSuggestions.length === 0 ? (
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]" role="status">
+            <p className={PANEL_NOTE} role="status">
               建议都处理完了；收起后再次打开可重新生成。
             </p>
           ) : (
-            <ul className="m-0 grid list-none gap-2 p-0" aria-label="清单建议列表">
+            <ul className={PLAIN_LIST} aria-label="清单建议列表">
               {visibleChecklistSuggestions.map((suggestion) => (
                 <li
                   className="flex flex-wrap items-start justify-between gap-3 rounded-[6px] border border-border bg-card p-3"
@@ -860,7 +867,7 @@ export default function ChecklistPanel({
                         {CHECKLIST_CATEGORY_LABELS[suggestion.category]}
                       </span>
                     </p>
-                    <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{suggestion.reason}</p>
+                    <p className={PANEL_NOTE}>{suggestion.reason}</p>
                     {suggestion.duplicateOf.length > 0 ? (
                       <p className="m-0 inline-block rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
                         清单里已有「{suggestion.duplicateOf.join('、')}」；不会自动合并
@@ -890,7 +897,7 @@ export default function ChecklistPanel({
               ))}
             </ul>
           )}
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <p className={PANEL_NOTE}>
             采纳后条目仍是「未准备」；勾选只代表你自己核对过。
           </p>
         </section>
@@ -898,7 +905,7 @@ export default function ChecklistPanel({
 
       {templateOpen ? (
         <section className="grid gap-3 rounded-[6px] border border-border bg-background p-4" aria-label="模板建议">
-          <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={`${notesFieldId}-template`}>
+          <label className={FIELD_LABEL} htmlFor={`${notesFieldId}-template`}>
             <span>选择模板</span>
             <Select
               id={`${notesFieldId}-template`}
@@ -915,7 +922,7 @@ export default function ChecklistPanel({
           </label>
           {template ? (
             <>
-              <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{template.description}</p>
+              <p className={PANEL_NOTE}>{template.description}</p>
               {templateApplied ? (
                 <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
                   这个模板已经采纳过；可再次添加缺少的条目。
@@ -947,21 +954,21 @@ export default function ChecklistPanel({
               </Button>
             </>
           ) : (
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">模板不存在。</p>
+            <p className={PANEL_NOTE}>模板不存在。</p>
           )}
         </section>
       ) : null}
 
       {formOpen ? (
         <form className="grid gap-3 rounded-[6px] border border-border bg-background p-4" onSubmit={handleSubmit}>
-          <h3 className="m-0 font-display text-md leading-[1.4] tracking-[0.02em]">{editingId === null ? '新增清单项' : '编辑清单项'}</h3>
+          <h3 className={SECTION_TITLE}>{editingId === null ? '新增清单项' : '编辑清单项'}</h3>
           {dirty ? (
-            <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+            <p className={PANEL_NOTE}>
               编辑尚未保存；点「保存」前不会写入清单。
             </p>
           ) : null}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={categoryFieldId}>
+            <label className={FIELD_LABEL} htmlFor={categoryFieldId}>
               <span>分类</span>
               <Select
                 id={categoryFieldId}
@@ -987,7 +994,7 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={dateFieldId}>
+            <label className={FIELD_LABEL} htmlFor={dateFieldId}>
               <span>日期（可选）</span>
               <Input
                 id={dateFieldId}
@@ -997,7 +1004,7 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={dayFieldId}>
+            <label className={FIELD_LABEL} htmlFor={dayFieldId}>
               <span>天序号（可选）</span>
               <Input
                 id={dayFieldId}
@@ -1010,7 +1017,7 @@ export default function ChecklistPanel({
                 disabled={disabled}
               />
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={stopFieldId}>
+            <label className={FIELD_LABEL} htmlFor={stopFieldId}>
               <span>关联地点（可选）</span>
               <Select
                 id={stopFieldId}
@@ -1037,7 +1044,7 @@ export default function ChecklistPanel({
                 ) : null}
               </Select>
             </label>
-            <label className="grid min-w-0 gap-1 text-sm text-[color:var(--color-muted-foreground)]" htmlFor={constraintFieldId}>
+            <label className={FIELD_LABEL} htmlFor={constraintFieldId}>
               <span>关联预约（可选）</span>
               <Select
                 id={constraintFieldId}
@@ -1072,7 +1079,7 @@ export default function ChecklistPanel({
               />
             </label>
           </div>
-          <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+          <p className={PANEL_NOTE}>
             关联预约会写入真实预约 ID，并带入其日期 / 天 / 地点；不会修改预约，也不代表预约已核实。
           </p>
           {formError ? (
@@ -1118,11 +1125,11 @@ export default function ChecklistPanel({
       ) : null}
 
       {checklist.items.length === 0 ? (
-        <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">
+        <p className={PANEL_NOTE}>
           还没有清单项。可以手工添加，或从模板挑选建议。
         </p>
       ) : (
-        <ul className="m-0 grid list-none gap-2 p-0">
+        <ul className={PLAIN_LIST}>
           {checklist.items.map((item) => {
             const stop = item.stopId === null ? null : (stopMap.get(item.stopId) ?? null)
             const linkedConstraint =
@@ -1190,7 +1197,7 @@ export default function ChecklistPanel({
                   </div>
                 </div>
                 {meta.length > 0 ? (
-                  <p className="m-0 text-sm leading-[1.65] text-[color:var(--color-faint)] [overflow-wrap:anywhere]">{meta.join(' · ')}</p>
+                  <p className={PANEL_NOTE}>{meta.join(' · ')}</p>
                 ) : null}
                 {needsRelink ? (
                   <p className="m-0 inline-block w-fit rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs text-[color:var(--color-accent-foreground)] [overflow-wrap:anywhere]">
