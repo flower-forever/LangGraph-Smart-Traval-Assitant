@@ -6,6 +6,8 @@
  *   读文件在 ./tripFile.ts。
  * - 导出只写 ./api.ts 里 Trip 契约的已知字段，其余字段（包括长得像凭据的假 key）一律不落盘；
  *   投影按原值拷贝，坐标数字、leg geometry 的每个点、day.date 都逐字保留，不取整、不抽稀、不补全。
+ * - 可选展示块（六期 S4 cityProfile、S5 深度四块）同属契约字段：按契约的最浅守卫（对象 / 数组 /
+ *   null / 缺省）原值保留，块内字段交给渲染层逐块降级；缺省时不写键，旧行程往返不新增 undefined。
  * - 导出的是明文 JSON，包含用户可能自己填写的描述（行程摘要、站点描述等），不做脱敏。
  *   导出结果带 TRIP_JSON_SHARE_NOTICE，界面需要把这条提示展示给用户。
  * - 解析按「体积 → 语法（容忍一个前导 UTF-8 BOM）→ format/version → 结构」的顺序 fail-closed，
@@ -19,7 +21,7 @@
  * - 体积上限只说明体积：达到上限是 too_large，不是 invalid；两者都不写任何数据。
  */
 
-import type { Trip, TripDay, TripLeg, TripLocation, TripStop } from './api'
+import type { CityProfile, Trip, TripDay, TripLeg, TripLocation, TripStop } from './api'
 import { isTripLike } from './api'
 import {
   MAX_GEOMETRY_POINTS_PER_LEG,
@@ -237,6 +239,27 @@ function projectStringOrNull(value: unknown): Probe<string | null> {
   return typeof value === 'string' ? value : FAIL
 }
 
+/**
+ * 六期 S4：cityProfile 只做契约同款最浅守卫（对象 / null / 缺省）。
+ * 块内字段由 lib/cityProfile.ts 在渲染时逐块降级——一块残缺的可选数据不该让整份备份
+ * 判为非法，但也不能在导出 → 导入时整块丢掉。
+ */
+function projectCityProfile(value: unknown): Probe<CityProfile | null | undefined> {
+  if (value === undefined || value === null) return value
+  return isRecord(value) ? (value as unknown as CityProfile) : FAIL
+}
+
+/**
+ * 六期 S5：单个深度块只做契约同款最浅守卫（对象 / 数组 / null / 缺省）。
+ * 与 api.ts 的 isStopDepthLike 同口径；块内字段由 lib/stopDepth.ts 逐块降级。
+ */
+function projectStopDepthBlock<T>(value: unknown): Probe<T | null | undefined> {
+  if (value === undefined || value === null || Array.isArray(value) || isRecord(value)) {
+    return value as T | null | undefined
+  }
+  return FAIL
+}
+
 function projectStop(value: unknown): Probe<TripStop> {
   if (!isRecord(value)) return FAIL
   const { id, name, time, description, address } = value
@@ -253,7 +276,24 @@ function projectStop(value: unknown): Probe<TripStop> {
   if (duration === FAIL) return FAIL
   const location = projectLocationOrNull(value.location)
   if (location === FAIL) return FAIL
-  return { id, name, time, duration_minutes: duration, description, address, location }
+  const highlights = projectStopDepthBlock<TripStop['highlights']>(value.highlights)
+  if (highlights === FAIL) return FAIL
+  const suitableFor = projectStopDepthBlock<TripStop['suitableFor']>(value.suitableFor)
+  if (suitableFor === FAIL) return FAIL
+  const suggestedStayMinutes = projectStopDepthBlock<TripStop['suggestedStayMinutes']>(
+    value.suggestedStayMinutes,
+  )
+  if (suggestedStayMinutes === FAIL) return FAIL
+  const tips = projectStopDepthBlock<TripStop['tips']>(value.tips)
+  if (tips === FAIL) return FAIL
+
+  const stop: TripStop = { id, name, time, duration_minutes: duration, description, address, location }
+  // 缺省字段不写键：旧行程往返后不会多出 undefined 键；显式 null 按原值保留。
+  if (highlights !== undefined) stop.highlights = highlights
+  if (suitableFor !== undefined) stop.suitableFor = suitableFor
+  if (suggestedStayMinutes !== undefined) stop.suggestedStayMinutes = suggestedStayMinutes
+  if (tips !== undefined) stop.tips = tips
+  return stop
 }
 
 function projectLeg(value: unknown, budget: ProjectionBudget): Probe<TripLeg> {
@@ -354,6 +394,8 @@ function projectTripValue(value: Record<string, unknown>, budget: ProjectionBudg
   const source = value.source
   if (source !== 'example' && source !== 'agent') return FAIL
   if (value.map_coordinate_system !== 'WGS84') return FAIL
+  const cityProfile = projectCityProfile(value.cityProfile)
+  if (cityProfile === FAIL) return FAIL
 
   const rawWarnings = value.warnings
   const rawDays = value.days
@@ -370,7 +412,7 @@ function projectTripValue(value: Record<string, unknown>, budget: ProjectionBudg
     days.push(projected)
   }
 
-  return {
+  const trip: Trip = {
     id,
     source,
     destination,
@@ -380,6 +422,9 @@ function projectTripValue(value: Record<string, unknown>, budget: ProjectionBudg
     warnings,
     days,
   }
+  // 缺省时不写键：旧行程往返后不会多出 undefined 键；显式 null 按原值保留。
+  if (cityProfile !== undefined) trip.cityProfile = cityProfile
+  return trip
 }
 
 /**

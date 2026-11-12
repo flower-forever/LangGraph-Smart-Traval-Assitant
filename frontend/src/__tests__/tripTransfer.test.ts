@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Trip, TripLeg, TripLocation } from '../lib/api'
+import type { CityProfile, Trip, TripLeg, TripLocation, TripStop } from '../lib/api'
 import {
   MAX_GEOMETRY_POINTS_PER_LEG,
   SAVED_TRIPS_STORAGE_KEY,
@@ -187,6 +187,195 @@ describe('createTripBackup：严格投影', () => {
     if (backup.ok) return
     expect(backup.reason).toBe('invalid_trip')
     expect(projectTrip(broken).ok).toBe(false)
+  })
+})
+
+/**
+ * X2（P6.5）：城市画像与深度四块是六期新增的契约字段，备份往返必须逐字段保留。
+ * 缺陷根因是投影白名单漏了这些键：导出 → 导入后整块消失，充分度卡（classicList）
+ * 也跟着不显示。用例走真实 createTripBackup / parseTripBackup 路径，不只测投影函数。
+ */
+describe('备份往返：城市画像与深度四块不丢', () => {
+  const CITY_PROFILE: CityProfile = {
+    source: 'model_generated',
+    oneLineImpression: { text: '一半湖山一半城，适合慢走。', source: 'model_generated' },
+    suggestedDays: { min: 2, max: 4, source: 'model_generated' },
+    districts: [
+      {
+        name: '西湖',
+        summary: '环湖步行与骑行都合适。',
+        attractions: ['断桥残雪', '苏堤春晓'],
+        source: 'model_generated',
+      },
+    ],
+    seasonTips: { text: '春季多雨，随身带伞。', source: 'model_generated' },
+    classicList: [
+      { name: '西湖', reason: '杭州的城市名片，第一次来必到。', source: 'model_generated' },
+      { name: '灵隐寺', reason: '飞来峰石窟与古刹相邻。', source: 'model_generated' },
+    ],
+  }
+
+  const DEPTH_HIGHLIGHTS: NonNullable<TripStop['highlights']> = {
+    items: ['断桥到白堤一段冬日雪景最好', '清晨人少，适合拍空镜'],
+    source: 'model_generated',
+  }
+  const DEPTH_SUITABLE: NonNullable<TripStop['suitableFor']> = {
+    tags: ['history', 'photo'],
+    source: 'model_generated',
+  }
+  const DEPTH_STAY: NonNullable<TripStop['suggestedStayMinutes']> = {
+    min: 30,
+    max: 45,
+    source: 'model_generated',
+  }
+  const DEPTH_TIPS: NonNullable<TripStop['tips']> = {
+    items: ['湖边风大，注意保暖。'],
+    source: 'model_generated',
+  }
+
+  /** 第一站带齐深度四块，第二站只带 highlights（验证逐字段可选），第三站没有深度块 */
+  function tripWithDisplayBlocks(): Trip {
+    const [firstStop, secondStop, thirdStop] = MOCK_TRIP.days[0].stops
+    return {
+      ...MOCK_TRIP,
+      cityProfile: CITY_PROFILE,
+      days: [
+        {
+          ...MOCK_TRIP.days[0],
+          stops: [
+            {
+              ...firstStop,
+              highlights: DEPTH_HIGHLIGHTS,
+              suitableFor: DEPTH_SUITABLE,
+              suggestedStayMinutes: DEPTH_STAY,
+              tips: DEPTH_TIPS,
+            },
+            { ...secondStop, highlights: DEPTH_HIGHLIGHTS },
+            thirdStop,
+          ],
+        },
+        ...MOCK_TRIP.days.slice(1),
+      ],
+    }
+  }
+
+  it('导出文件里 cityProfile（含 classicList）与深度四块逐字段存在', () => {
+    const exported = (JSON.parse(backupJsonOf(tripWithDisplayBlocks())) as { trip: Trip }).trip
+
+    expect(exported.cityProfile).toEqual(CITY_PROFILE)
+    expect(exported.cityProfile?.classicList).toEqual(CITY_PROFILE.classicList)
+
+    const [first, second, third] = exported.days[0].stops
+    expect(first.highlights).toEqual(DEPTH_HIGHLIGHTS)
+    expect(first.suitableFor).toEqual(DEPTH_SUITABLE)
+    expect(first.suggestedStayMinutes).toEqual(DEPTH_STAY)
+    expect(first.tips).toEqual(DEPTH_TIPS)
+    // 逐字段可选：只带一块的站点不被补全，完全没有深度块的站点不新增键
+    expect(second.highlights).toEqual(DEPTH_HIGHLIGHTS)
+    expect('suitableFor' in second).toBe(false)
+    expect('highlights' in third).toBe(false)
+  })
+
+  it('导出 → 导入往返后逐字段原样返回（含充分度卡数据源 classicList）', () => {
+    const original = tripWithDisplayBlocks()
+    const imported = parseTripBackup(backupJsonOf(original))
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+
+    expect(imported.trip).toEqual(original)
+    expect(imported.trip.cityProfile?.classicList).toEqual(CITY_PROFILE.classicList)
+    expect(imported.trip.cityProfile?.districts).toEqual(CITY_PROFILE.districts)
+
+    const [first, second] = imported.trip.days[0].stops
+    expect(first.highlights).toEqual(DEPTH_HIGHLIGHTS)
+    expect(first.suitableFor).toEqual(DEPTH_SUITABLE)
+    expect(first.suggestedStayMinutes).toEqual(DEPTH_STAY)
+    expect(first.tips).toEqual(DEPTH_TIPS)
+    expect(second.highlights).toEqual(DEPTH_HIGHLIGHTS)
+    expect(second.suitableFor).toBeUndefined()
+    expect(second.suggestedStayMinutes).toBeUndefined()
+    expect(second.tips).toBeUndefined()
+  })
+
+  it('旧行程（无这些字段）往返后不新增 undefined 键', () => {
+    const depthKeys = ['highlights', 'suitableFor', 'suggestedStayMinutes', 'tips'] as const
+
+    const projected = projectTrip(MOCK_TRIP)
+    expect(projected.ok).toBe(true)
+    if (!projected.ok) return
+    expect('cityProfile' in projected.trip).toBe(false)
+    for (const day of projected.trip.days) {
+      for (const stop of day.stops) {
+        for (const key of depthKeys) {
+          expect(key in stop, `旧站点不应多出 ${key} 键`).toBe(false)
+        }
+      }
+    }
+
+    const imported = parseTripBackup(backupJsonOf(MOCK_TRIP))
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    expect(imported.trip).toEqual(MOCK_TRIP)
+    expect('cityProfile' in imported.trip).toBe(false)
+    for (const day of imported.trip.days) {
+      for (const stop of day.stops) {
+        for (const key of depthKeys) {
+          expect(key in stop, `旧备份导入后不应多出 ${key} 键`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('显式 null（后端无画像 / 无深度块）原样保留，不折叠成缺省', () => {
+    const [firstStop] = MOCK_TRIP.days[0].stops
+    const trip: Trip = {
+      ...MOCK_TRIP,
+      cityProfile: null,
+      days: [
+        {
+          ...MOCK_TRIP.days[0],
+          stops: [
+            {
+              ...firstStop,
+              highlights: null,
+              suitableFor: null,
+              suggestedStayMinutes: null,
+              tips: null,
+            },
+          ],
+          legs: [],
+        },
+      ],
+    }
+
+    const imported = parseTripBackup(backupJsonOf(trip))
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    expect('cityProfile' in imported.trip).toBe(true)
+    expect(imported.trip.cityProfile).toBeNull()
+    const stop = imported.trip.days[0].stops[0]
+    expect('highlights' in stop).toBe(true)
+    expect(stop.highlights).toBeNull()
+    expect(stop.suitableFor).toBeNull()
+    expect(stop.suggestedStayMinutes).toBeNull()
+    expect(stop.tips).toBeNull()
+  })
+
+  it('本地保存路径写原始 trip：不经过备份投影，城市画像与深度块同样完整', () => {
+    const trip = tripWithDisplayBlocks()
+    const storage = createMemoryStorage()
+    const saved = saveTripToStorage(trip, storage)
+    expect(saved.ok).toBe(true)
+    if (!saved.ok) return
+
+    const raw = storage.data.get(SAVED_TRIPS_STORAGE_KEY)
+    expect(raw).toBeTruthy()
+    const record = (JSON.parse(raw as string) as { trips: Array<{ trip: Trip }> }).trips[0]
+    expect(record.trip.cityProfile).toEqual(CITY_PROFILE)
+    expect(record.trip.days[0].stops[0].highlights).toEqual(DEPTH_HIGHLIGHTS)
+    expect(record.trip.days[0].stops[0].suitableFor).toEqual(DEPTH_SUITABLE)
+    expect(record.trip.days[0].stops[0].suggestedStayMinutes).toEqual(DEPTH_STAY)
+    expect(record.trip.days[0].stops[0].tips).toEqual(DEPTH_TIPS)
   })
 })
 
