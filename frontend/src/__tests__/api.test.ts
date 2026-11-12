@@ -62,6 +62,24 @@ describe('api client', () => {
     expect(isTripLike({ ...MOCK_TRIP, warnings: [1] })).toBe(false)
   })
 
+  it('P6.5 X4 前向兼容：带 depthGeneratedAt 与未知扩展键的行程仍通过 isTripLike', () => {
+    const withDays = (days: unknown) => ({ ...MOCK_TRIP, days }) as unknown
+    const [day1] = MOCK_TRIP.days
+    const stop = day1.stops[0]
+    const extended = {
+      ...stop,
+      depthGeneratedAt: '2026-11-12T08:30:00Z',
+      // 未来版本新增的键：校验只看已知字段，多字段一律忽略。
+      unknownFutureField: { nested: true },
+    }
+
+    expect(isTripLike(withDays([{ ...day1, stops: [extended] }]))).toBe(true)
+    // 旧行程没有该字段照样通过。
+    expect(isTripLike(withDays([{ ...day1, stops: [stop] }]))).toBe(true)
+    // 有值但类型错：拒绝作为坏数据（缺省 / null 仍放行）。
+    expect(isTripLike(withDays([{ ...day1, stops: [{ ...stop, depthGeneratedAt: 42 }] }]))).toBe(false)
+  })
+
   it('fetchExampleTrip 请求 /api/trips/example 并返回契约数据', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(MOCK_TRIP))
     vi.stubGlobal('fetch', fetchMock)

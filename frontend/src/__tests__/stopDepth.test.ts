@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import type { TripStop } from '../lib/api'
 import {
   STOP_DEPTH_MAX_ITEM_LENGTH,
+  projectDepthGeneratedDate,
   projectStopDepth,
 } from '../lib/stopDepth'
 
@@ -86,6 +87,50 @@ describe('projectStopDepth · 完整与部分', () => {
     ])
     expect(view).not.toHaveProperty('stale')
     expect(view).not.toHaveProperty('recordedAt')
+  })
+})
+
+describe('projectDepthGeneratedDate · UTC 存储、本地日期展示', () => {
+  it('UTC 深夜跨日：按本机时区换成次日，不裸切 ISO 前 10 位', () => {
+    const iso = '2026-11-12T23:30:00Z'
+    const label = projectDepthGeneratedDate(makeStop({ depthGeneratedAt: iso }))
+    const local = new Date(iso)
+    const expected = [
+      local.getFullYear(),
+      String(local.getMonth() + 1).padStart(2, '0'),
+      String(local.getDate()).padStart(2, '0'),
+    ].join('-')
+
+    expect(label).toBe(expected)
+    // 本机不在 UTC 时（开发机 / 中国时区为 UTC+8），UTC 日期与本地日期必须不同。
+    if (local.getTimezoneOffset() !== 0) {
+      expect(label).not.toBe('2026-11-12')
+    }
+  })
+
+  it('带 +08:00 偏移的 ISO 同样先转本地日期', () => {
+    const label = projectDepthGeneratedDate(
+      makeStop({ depthGeneratedAt: '2026-11-12T08:30:00+08:00' }),
+    )
+    expect(label).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('旧行程缺字段 / null / 坏值：一律 null，绝不伪造', () => {
+    expect(projectDepthGeneratedDate(null)).toBeNull()
+    expect(projectDepthGeneratedDate(undefined)).toBeNull()
+    expect(projectDepthGeneratedDate(makeStop())).toBeNull()
+    expect(projectDepthGeneratedDate(makeStop({ depthGeneratedAt: null }))).toBeNull()
+    expect(
+      projectDepthGeneratedDate(
+        makeStop({ depthGeneratedAt: '2026-11-12T08:30:00' as unknown as string }),
+      ),
+    ).toBeNull()
+    expect(
+      projectDepthGeneratedDate(makeStop({ depthGeneratedAt: 'not-a-date' as unknown as string })),
+    ).toBeNull()
+    expect(
+      projectDepthGeneratedDate(makeStop({ depthGeneratedAt: 20261112 as unknown as string })),
+    ).toBeNull()
   })
 })
 

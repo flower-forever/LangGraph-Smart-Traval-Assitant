@@ -110,3 +110,34 @@ export function projectStopDepth(stop: TripStop | null | undefined): StopDepthVi
     view.tips.length > 0
   return hasContent ? view : null
 }
+
+/**
+ * P6.5 X4：深度生成时间的展示投影——**UTC 存储，本地日期展示**。
+ *
+ * - 输出 `YYYY-MM-DD`，用本地时区的 getFullYear/getMonth/getDate 逐段拼，
+ *   禁止直接切 ISO 字符串前 10 位（S9 教训：UTC 日期会差一天）。
+ * - 必须带显式时区（`Z` 或 `±HH:MM`）：无时区的 ISO 会被 `new Date` 按本地时间解析，
+ *   等于把来源不明的字符串冒充本地日期。
+ * - 缺字段 / 坏值 / 非字符串一律返回 null：旧行程不显示，绝不伪造。
+ * - 与 `projectStopDepth` 分开输出：内容块投影的字段集合已由既有用例锁定；
+ *   时间戳是元数据，坏值只影响这一行，不影响卡片内容。
+ * - 不接 180 天过期逻辑：`recordedAt`（资料来源时间）与生成时间体系分开。
+ */
+const DEPTH_GENERATED_AT_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+
+export function projectDepthGeneratedDate(
+  stop: TripStop | null | undefined,
+): string | null {
+  if (!stop || typeof stop !== 'object') return null
+  const raw = stop.depthGeneratedAt
+  if (typeof raw !== 'string') return null
+  const text = raw.trim()
+  if (!DEPTH_GENERATED_AT_RE.test(text)) return null
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}

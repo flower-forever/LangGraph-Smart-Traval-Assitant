@@ -26,7 +26,7 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import date as _date
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
@@ -235,6 +235,8 @@ MAX_STOP_DEPTH_ITEMS = 3
 MAX_STOP_DEPTH_TEXT = 80
 MIN_STOP_STAY_MINUTES = 5
 MAX_STOP_STAY_MINUTES = 1440
+# P6.5 X4：深度四块同批生成时间；响应侧新增、可选，固定 UTC（Z 结尾）。
+DEPTH_GENERATED_AT_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
 # 适合标签沿用五期兴趣枚举的 canonical token（英文），前端负责映射中文。
 STOP_DEPTH_SUITABLE_FOR = (
     "history",
@@ -316,6 +318,9 @@ class Stop(BaseModel):
     suitableFor: TripStopSuitableFor | None = None
     suggestedStayMinutes: TripStopStayMinutes | None = None
     tips: TripStopTips | None = None
+    # P6.5 X4：深度四块的生成时间（ISO 8601 UTC）。仅当至少一块深度存在时写入；
+    # 旧行程 / 旧备份没有该字段，也不回填。前端只展示本地日期，不接时效逻辑。
+    depthGeneratedAt: str | None = Field(default=None, pattern=DEPTH_GENERATED_AT_PATTERN)
 
 
 class Leg(BaseModel):
@@ -1886,6 +1891,15 @@ def _stop_depth_tags(value: Any) -> list[str]:
     return tags
 
 
+def _depth_generated_at_now() -> str:
+    """深度四块同批生成的 UTC 时间戳（秒精度，Z 结尾）。
+
+    展示层负责转本地时区日期；响应侧只存 UTC，避免服务端时区不同导致日期漂移。
+    """
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _parse_stop_depth(raw_stop: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """把模型给的站点深度块约束成可选字段。
 
@@ -1959,6 +1973,8 @@ def normalize_agent_payload(
     total_stops = 0
     # 六期 S5：任一站点深度文本命中易变事实模式时，补一条行程级 warning。
     depth_volatile = False
+    # P6.5 X4：同一次模型输出里的所有深度块共用一个生成时间戳。
+    depth_generated_at = _depth_generated_at_now()
     days: list[DayPlan] = []
 
     for day_index in range(request.days):
@@ -2004,6 +2020,9 @@ def normalize_agent_payload(
                 time_origins[stop_id] = _TIME_SOURCE_MODEL
             depth_fields, depth_dropped = _parse_stop_depth(raw_stop)
             depth_volatile = depth_volatile or depth_dropped
+            # 只有真的保留下来至少一块深度才记生成时间；四块全空不写，免得给旧行程伪造时间。
+            if any(value is not None for value in depth_fields.values()):
+                depth_fields["depthGeneratedAt"] = depth_generated_at
             stops.append(
                 Stop(
                     id=stop_id,

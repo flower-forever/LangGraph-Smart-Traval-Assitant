@@ -61,6 +61,39 @@ describe('StopDepthCard · 完整深度', () => {
   })
 })
 
+describe('StopDepthCard · 生成时间（P6.5 X4）', () => {
+  it('UTC 存储按本地日期显示「生成于 YYYY-MM-DD」，不裸显示 UTC', () => {
+    const iso = '2026-11-12T23:30:00Z'
+    const local = new Date(iso)
+    const expected = [
+      local.getFullYear(),
+      String(local.getMonth() + 1).padStart(2, '0'),
+      String(local.getDate()).padStart(2, '0'),
+    ].join('-')
+
+    render(<StopDepthCardContent stop={{ ...stop, depthGeneratedAt: iso }} />)
+    const line = screen.getByTestId('stop-depth-generated-at')
+
+    expect(line).toHaveTextContent(`生成于 ${expected}`)
+    expect(line.textContent).not.toContain('T23:30')
+    expect(line.textContent).not.toContain('Z')
+  })
+
+  it('旧行程没有该字段：卡片照常渲染，但不显示生成时间', () => {
+    render(<StopDepthCardContent stop={stop} />)
+
+    expect(screen.getByTestId(`stop-depth-card-${stop.id}`)).toBeInTheDocument()
+    expect(screen.queryByTestId('stop-depth-generated-at')).toBeNull()
+  })
+
+  it('坏值只影响这一行：不显示时间，四分区内容不受影响', () => {
+    render(<StopDepthCardContent stop={{ ...stop, depthGeneratedAt: 'not-a-date' }} />)
+
+    expect(screen.queryByTestId('stop-depth-generated-at')).toBeNull()
+    expect(screen.getByText('湖面开阔，长堤一线')).toBeInTheDocument()
+  })
+})
+
 describe('StopDepthCard · 缺字段降级', () => {
   it('只有看点时，其余三分区显示「未提供」', () => {
     render(

@@ -7,6 +7,8 @@ import os
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 
 import json
+import re
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -120,10 +122,52 @@ def test_missing_depth_keeps_old_trip_contract():
     assert stop.suitableFor is None
     assert stop.suggestedStayMinutes is None
     assert stop.tips is None
+    # P6.5 X4：没有深度块就不写生成时间，旧行程不被伪造。
+    assert stop.depthGeneratedAt is None
     # 旧 JSON（没有深度字段）仍然能重建 TripPlan。
     restored = TripPlan.model_validate(json.loads(trip.model_dump_json()))
     old_stop = restored.days[0].stops[0]
     assert old_stop.highlights is None and old_stop.tips is None
+    assert old_stop.depthGeneratedAt is None
+
+
+def test_depth_generated_at_is_utc_optional_and_shared_per_batch():
+    """P6.5 X4：四块同批一个 UTC 时间戳；无深度不写；模型自报值不可信。"""
+
+    raw_with_depth = make_stop(
+        index=1,
+        depth=full_depth(),
+        # 模型即使伪造了时间也不能进入契约。
+        depthGeneratedAt="1999-01-01T00:00:00Z",
+    )
+    trip, _ = normalize_agent_payload(
+        make_payload(
+            [
+                raw_with_depth,
+                make_stop(index=2, depth={"tips": {"items": ["第二站贴士"]}}),
+                make_stop(index=3),
+            ]
+        ),
+        make_request(),
+    )
+    first, second, third = trip.days[0].stops
+
+    assert first.depthGeneratedAt is not None
+    assert second.depthGeneratedAt == first.depthGeneratedAt
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", first.depthGeneratedAt
+    )
+    generated = datetime.strptime(first.depthGeneratedAt, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    assert abs((datetime.now(timezone.utc) - generated).total_seconds()) < 120
+    assert first.depthGeneratedAt != "1999-01-01T00:00:00Z"
+    assert third.depthGeneratedAt is None
+
+    # 往返：新字段能通过 Stop 的严格校验，旧 JSON 缺字段仍合法。
+    restored = TripPlan.model_validate(json.loads(trip.model_dump_json()))
+    assert restored.days[0].stops[0].depthGeneratedAt == first.depthGeneratedAt
+    assert restored.days[0].stops[2].depthGeneratedAt is None
 
 
 def test_partial_depth_keeps_only_present_blocks():
@@ -492,6 +536,10 @@ def test_plan_response_exposes_stop_depth(client):
     assert stop["suitableFor"]["tags"] == ["nature", "photo"]
     assert stop["suggestedStayMinutes"] == {"min": 60, "max": 90, "source": "model_generated"}
     assert stop["tips"]["source"] == "model_generated"
+    # P6.5 X4：深度块存在时，响应带同一批生成的 UTC 时间戳。
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stop["depthGeneratedAt"]
+    )
 
 
 def test_plan_response_without_stop_depth_stays_readable(client):
@@ -514,3 +562,5 @@ def test_plan_response_without_stop_depth_stays_readable(client):
     assert stop["suitableFor"] is None
     assert stop["suggestedStayMinutes"] is None
     assert stop["tips"] is None
+    # P6.5 X4：无深度块 → 不伪造生成时间。
+    assert stop["depthGeneratedAt"] is None

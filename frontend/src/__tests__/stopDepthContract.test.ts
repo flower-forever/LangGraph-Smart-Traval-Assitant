@@ -106,4 +106,29 @@ describe('景点深度契约兼容', () => {
     expect(isTripLike(raggedTrip)).toBe(true)
     expect(checkTripShape(raggedTrip).ok).toBe(true)
   })
+
+  it('P6.5 X4：depthGeneratedAt 可选；有值 / 缺省 / null 放行，非字符串拒绝', () => {
+    const tripWith = (depthGeneratedAt: unknown) => ({
+      ...oldTrip,
+      days: [
+        {
+          ...oldTrip.days[0],
+          stops: [{ ...oldStop, ...depth, depthGeneratedAt }],
+        },
+      ],
+    })
+
+    // 新行程：带 UTC 时间戳。
+    expect(isTripLike(tripWith('2026-11-12T08:30:00Z'))).toBe(true)
+    expect(checkTripShape(tripWith('2026-11-12T08:30:00Z')).ok).toBe(true)
+    // 后端缺省时的显式 null。
+    expect(isTripLike(tripWith(null))).toBe(true)
+    // 旧行程完全没有该键。
+    expect(isTripLike({ ...oldTrip, days: [{ ...oldTrip.days[0], stops: [{ ...oldStop, ...depth }] }] })).toBe(
+      true,
+    )
+    // 有值但类型错：结构性坏数据。
+    expect(isTripLike(tripWith(42))).toBe(false)
+    expect(checkTripShape(tripWith(42)).ok).toBe(false)
+  })
 })

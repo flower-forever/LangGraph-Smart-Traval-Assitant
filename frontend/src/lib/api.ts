@@ -62,6 +62,12 @@ export interface TripStop {
   suitableFor?: StopDepthSuitableFor | null
   suggestedStayMinutes?: StopDepthStayMinutes | null
   tips?: StopDepthTips | null
+  /**
+   * P6.5 X4：深度四块的生成时间（ISO 8601 UTC，如 `2026-11-12T08:30:00Z`）。
+   * 仅当至少一块深度存在时由后端写入；旧行程 / 旧备份没有该字段。
+   * 展示必须转本地时区日期（见 `lib/stopDepth.ts`），禁止裸显示 UTC 日期。
+   */
+  depthGeneratedAt?: string | null
 }
 
 export interface TripLeg {
@@ -557,6 +563,11 @@ function isNullableString(value: unknown): boolean {
   return value === null || typeof value === 'string'
 }
 
+/** 可选字符串字段：缺省（旧行程）与 null 都放行，有值时必须是字符串。 */
+function isOptionalNullableString(value: unknown): boolean {
+  return value === undefined || isNullableString(value)
+}
+
 /** 坐标只校验是数字：越界值交给 format.validCoord 在展示前过滤（不在这里丢结构） */
 function isLocationLike(value: unknown): boolean {
   return isRecord(value) && isFiniteNumber(value.lng) && isFiniteNumber(value.lat)
@@ -575,7 +586,9 @@ function isStopLike(value: unknown): boolean {
     isStopDepthLike(value.highlights) &&
     isStopDepthLike(value.suitableFor) &&
     isStopDepthLike(value.suggestedStayMinutes) &&
-    isStopDepthLike(value.tips)
+    isStopDepthLike(value.tips) &&
+    // P6.5 X4：旧行程没有该字段 → undefined 放行；显式 null 放行。
+    isOptionalNullableString(value.depthGeneratedAt)
   )
 }
 

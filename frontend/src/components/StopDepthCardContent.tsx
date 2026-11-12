@@ -1,5 +1,5 @@
 import type { TripStop } from '../lib/api'
-import { projectStopDepth } from '../lib/stopDepth'
+import { projectDepthGeneratedDate, projectStopDepth } from '../lib/stopDepth'
 
 /**
  * 六期 S5 景点深度卡（信息深度 B）· 懒加载实现体。
@@ -10,6 +10,8 @@ import { projectStopDepth } from '../lib/stopDepth'
  * - 只读展示：不写存储、不发请求、不改行程。
  * - 无任何深度块：返回 null；有块但逐项缺失：该分区显示「未提供」，不编造。
  * - 「AI 生成·供参考」徽章与「出发前请自行确认」提示常驻。
+ * - P6.5 X4：有生成时间时显示「生成于 YYYY-MM-DD」（UTC 存储转本地日期）；
+ *   旧行程没有该字段就不显示，不伪造。
  * - 与 S2 三态徽章分工：易变事实（营业 / 票价）看核实状态，稳定知识看生成标注。
  * - 样式全部用组件内 Tailwind 类，不新增全局 CSS。
  */
@@ -25,6 +27,7 @@ const MUTED = 'text-[color:var(--color-faint)]'
 
 export default function StopDepthCardContent({ stop }: StopDepthCardContentProps) {
   const view = projectStopDepth(stop)
+  const generatedDate = projectDepthGeneratedDate(stop)
   if (!view) return null
 
   return (
@@ -41,6 +44,14 @@ export default function StopDepthCardContent({ stop }: StopDepthCardContentProps
         >
           AI 生成·供参考
         </span>
+        {generatedDate ? (
+          <span
+            data-testid="stop-depth-generated-at"
+            className="text-[11px] text-[color:var(--color-secondary-foreground)]"
+          >
+            生成于 {generatedDate}
+          </span>
+        ) : null}
       </div>
       <p className="m-0 mt-1 text-[11px] text-[color:var(--color-secondary-foreground)]">
         以下为稳定知识与游玩建议；营业时间、票价等易变信息以下方核实状态为准。

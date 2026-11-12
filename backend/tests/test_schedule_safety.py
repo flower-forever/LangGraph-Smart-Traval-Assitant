@@ -1030,6 +1030,8 @@ def test_time_source_record_is_not_serialized_in_contract():
         "suitableFor",
         "suggestedStayMinutes",
         "tips",
+        # P6.5 X4：深度生成时间，响应侧新增可选字段。
+        "depthGeneratedAt",
     }
 
 
@@ -1156,6 +1158,8 @@ def test_api_map_timeout_keeps_placeholder_caveat(client, monkeypatch):
         "suitableFor",
         "suggestedStayMinutes",
         "tips",
+        # P6.5 X4：深度生成时间，响应侧新增可选字段。
+        "depthGeneratedAt",
     }
 
     trip = travel_itinerary.TripPlan.model_validate(body)
@@ -1513,4 +1517,6 @@ def test_openapi_does_not_expose_private_time_origin(client):
             "suitableFor",
             "suggestedStayMinutes",
             "tips",
+            # P6.5 X4：深度生成时间，响应侧新增可选字段。
+            "depthGeneratedAt",
         }

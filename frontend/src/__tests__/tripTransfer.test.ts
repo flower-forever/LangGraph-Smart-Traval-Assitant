@@ -232,8 +232,9 @@ describe('备份往返：城市画像与深度四块不丢', () => {
     items: ['湖边风大，注意保暖。'],
     source: 'model_generated',
   }
+  const DEPTH_GENERATED_AT = '2026-11-12T08:30:00Z'
 
-  /** 第一站带齐深度四块，第二站只带 highlights（验证逐字段可选），第三站没有深度块 */
+  /** 第一站带齐深度四块与生成时间，第二站只带 highlights（验证逐字段可选），第三站没有深度块 */
   function tripWithDisplayBlocks(): Trip {
     const [firstStop, secondStop, thirdStop] = MOCK_TRIP.days[0].stops
     return {
@@ -249,6 +250,7 @@ describe('备份往返：城市画像与深度四块不丢', () => {
               suitableFor: DEPTH_SUITABLE,
               suggestedStayMinutes: DEPTH_STAY,
               tips: DEPTH_TIPS,
+              depthGeneratedAt: DEPTH_GENERATED_AT,
             },
             { ...secondStop, highlights: DEPTH_HIGHLIGHTS },
             thirdStop,
@@ -270,9 +272,11 @@ describe('备份往返：城市画像与深度四块不丢', () => {
     expect(first.suitableFor).toEqual(DEPTH_SUITABLE)
     expect(first.suggestedStayMinutes).toEqual(DEPTH_STAY)
     expect(first.tips).toEqual(DEPTH_TIPS)
+    expect(first.depthGeneratedAt).toBe(DEPTH_GENERATED_AT)
     // 逐字段可选：只带一块的站点不被补全，完全没有深度块的站点不新增键
     expect(second.highlights).toEqual(DEPTH_HIGHLIGHTS)
     expect('suitableFor' in second).toBe(false)
+    expect('depthGeneratedAt' in second).toBe(false)
     expect('highlights' in third).toBe(false)
   })
 
@@ -291,14 +295,45 @@ describe('备份往返：城市画像与深度四块不丢', () => {
     expect(first.suitableFor).toEqual(DEPTH_SUITABLE)
     expect(first.suggestedStayMinutes).toEqual(DEPTH_STAY)
     expect(first.tips).toEqual(DEPTH_TIPS)
+    expect(first.depthGeneratedAt).toBe(DEPTH_GENERATED_AT)
     expect(second.highlights).toEqual(DEPTH_HIGHLIGHTS)
     expect(second.suitableFor).toBeUndefined()
     expect(second.suggestedStayMinutes).toBeUndefined()
     expect(second.tips).toBeUndefined()
+    expect(second.depthGeneratedAt).toBeUndefined()
+  })
+
+  it('老前端读新行程：未知 stop 键被忽略，唯一的深度字段按白名单保留', () => {
+    const [firstStop] = MOCK_TRIP.days[0].stops
+    const futureStop = {
+      ...firstStop,
+      depthGeneratedAt: DEPTH_GENERATED_AT,
+      unknownFutureField: { nested: true },
+    }
+    const trip = {
+      ...MOCK_TRIP,
+      days: [
+        { ...MOCK_TRIP.days[0], stops: [futureStop], legs: [] },
+        ...MOCK_TRIP.days.slice(1),
+      ],
+    }
+
+    const imported = parseTripBackup(envelopeJsonOf(trip))
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    const stop = imported.trip.days[0].stops[0]
+    expect(stop.depthGeneratedAt).toBe(DEPTH_GENERATED_AT)
+    expect('unknownFutureField' in stop).toBe(false)
   })
 
   it('旧行程（无这些字段）往返后不新增 undefined 键', () => {
-    const depthKeys = ['highlights', 'suitableFor', 'suggestedStayMinutes', 'tips'] as const
+    const depthKeys = [
+      'highlights',
+      'suitableFor',
+      'suggestedStayMinutes',
+      'tips',
+      'depthGeneratedAt',
+    ] as const
 
     const projected = projectTrip(MOCK_TRIP)
     expect(projected.ok).toBe(true)
@@ -341,6 +376,7 @@ describe('备份往返：城市画像与深度四块不丢', () => {
               suitableFor: null,
               suggestedStayMinutes: null,
               tips: null,
+              depthGeneratedAt: null,
             },
           ],
           legs: [],
@@ -359,6 +395,7 @@ describe('备份往返：城市画像与深度四块不丢', () => {
     expect(stop.suitableFor).toBeNull()
     expect(stop.suggestedStayMinutes).toBeNull()
     expect(stop.tips).toBeNull()
+    expect(stop.depthGeneratedAt).toBeNull()
   })
 
   it('本地保存路径写原始 trip：不经过备份投影，城市画像与深度块同样完整', () => {
@@ -376,6 +413,7 @@ describe('备份往返：城市画像与深度四块不丢', () => {
     expect(record.trip.days[0].stops[0].suitableFor).toEqual(DEPTH_SUITABLE)
     expect(record.trip.days[0].stops[0].suggestedStayMinutes).toEqual(DEPTH_STAY)
     expect(record.trip.days[0].stops[0].tips).toEqual(DEPTH_TIPS)
+    expect(record.trip.days[0].stops[0].depthGeneratedAt).toBe(DEPTH_GENERATED_AT)
   })
 })
 

@@ -286,6 +286,15 @@ function projectStop(value: unknown): Probe<TripStop> {
   if (suggestedStayMinutes === FAIL) return FAIL
   const tips = projectStopDepthBlock<TripStop['tips']>(value.tips)
   if (tips === FAIL) return FAIL
+  // P6.5 X4：可选字符串；缺省不写键，显式 null 原样保留。
+  const depthGeneratedAt = value.depthGeneratedAt
+  if (
+    depthGeneratedAt !== undefined &&
+    depthGeneratedAt !== null &&
+    typeof depthGeneratedAt !== 'string'
+  ) {
+    return FAIL
+  }
 
   const stop: TripStop = { id, name, time, duration_minutes: duration, description, address, location }
   // 缺省字段不写键：旧行程往返后不会多出 undefined 键；显式 null 按原值保留。
@@ -293,6 +302,7 @@ function projectStop(value: unknown): Probe<TripStop> {
   if (suitableFor !== undefined) stop.suitableFor = suitableFor
   if (suggestedStayMinutes !== undefined) stop.suggestedStayMinutes = suggestedStayMinutes
   if (tips !== undefined) stop.tips = tips
+  if (depthGeneratedAt !== undefined) stop.depthGeneratedAt = depthGeneratedAt
   return stop
 }
 
