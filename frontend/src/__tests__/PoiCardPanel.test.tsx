@@ -243,6 +243,77 @@ describe('PoiCardPanel · 文案红线', () => {
   })
 })
 
+describe('PoiCardPanel · 查看态可信徽章（五期-1）', () => {
+  it('有 provenance 的开放时间 / 门票各带「有来源（待核对）」徽章，可展开来源与记录日期', () => {
+    const card = ok(
+      createPoiCard(
+        {
+          id: 'card-1',
+          name: '灵隐寺',
+          intro: '杭州著名古刹。',
+          openingHours: '07:30-18:00',
+          ticket: '飞来峰45元，灵隐寺30元',
+          provenance: {
+            intro: { source: 'manual', detail: '手工粘贴', recordedAt: NOW },
+            openingHours: { source: 'tavily', detail: '灵隐寺官网页面', recordedAt: NOW },
+            ticket: { source: 'manual', detail: '手工粘贴', recordedAt: NOW },
+          },
+        },
+        NOW,
+      ),
+    )
+    render(
+      <PoiCardPanel
+        record={{ ...ok(createEmptyPoiCardsRecord(NOW)), cards: [card] }}
+        cardId="card-1"
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        now={() => NOW + 100}
+      />,
+    )
+    const view = screen.getByTestId('poi-card-view')
+    expect(view.querySelectorAll('[data-status="sourced"]')).toHaveLength(2)
+    expect(within(view).getAllByText('有来源（待核对）')).toHaveLength(2)
+    // 展开区可访问名区分两个同形 details；来源说明与记录日期在 DOM 内（原生 details）
+    expect(view.querySelector('details[aria-label="开放时间来源：灵隐寺"]')).not.toBeNull()
+    expect(view.querySelector('details[aria-label="门票来源：灵隐寺"]')).not.toBeNull()
+    expect(within(view).getByText('来源说明：灵隐寺官网页面')).toBeInTheDocument()
+    expect(within(view).getAllByText(/记录日期：\d{4}-\d{2}-\d{2}/).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('旧卡（字段无 provenance）显示「未核实」，不冒充有来源', () => {
+    render(
+      <PoiCardPanel
+        record={makeRecordWithCard()}
+        cardId="card-1"
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        now={() => NOW + 100}
+      />,
+    )
+    const view = screen.getByTestId('poi-card-view')
+    expect(view.querySelectorAll('[data-status="unverified"]')).toHaveLength(2)
+    expect(within(view).getAllByText('未核实')).toHaveLength(2)
+  })
+
+  it('空值字段显示「未知」徽章（不补 0、不伪造来源）', () => {
+    const card = ok(createPoiCard({ id: 'card-1', name: '无字碑', intro: '', openingHours: '', ticket: '' }, NOW))
+    render(
+      <PoiCardPanel
+        record={{ ...ok(createEmptyPoiCardsRecord(NOW)), cards: [card] }}
+        cardId="card-1"
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        now={() => NOW + 100}
+      />,
+    )
+    const view = screen.getByTestId('poi-card-view')
+    expect(view.querySelectorAll('[data-status="unknown"]')).toHaveLength(2)
+    // 介绍 + 开放时间 + 门票三处值都显示「未知」；其中开放时间 / 门票各带一枚徽章
+    expect(within(view).getAllByText('未知')).toHaveLength(5)
+  })
+})
+
 describe('PoiCardPanel · 图片', () => {
   it('图片懒加载 + 失败占位（图片加载失败，不阻断）', () => {
     const { storage } = memoryStorage()

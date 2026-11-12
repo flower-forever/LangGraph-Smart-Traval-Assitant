@@ -163,7 +163,7 @@ export default function CoverageCardContent({
             <p data-testid="trip-coverage-unrecognized" className={`m-0 text-[11px] ${MUTED}`}>
               另有 {view.unrecognizedStops.length} 个行程站点不在经典清单口径内（未识别，未计入覆盖统计）：
               {shownUnrecognized.join('、')}
-              {hiddenUnrecognized > 0 ? ` 等 ${view.unrecognizedStops.length} 个` : ''}。
+              {hiddenUnrecognized > 0 ? ` 共 ${view.unrecognizedStops.length} 个` : ''}。
             </p>
           )}
         </div>

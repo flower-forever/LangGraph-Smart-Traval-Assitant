@@ -57,8 +57,11 @@ export interface StopFacts {
   ticket: StopFactField
 }
 
-/** 单字段投影：值 + provenance + now → 三态。不编造：provenance 缺失即 unverified。 */
-function projectField(
+/**
+ * 单字段投影：值 + provenance + now → 三态。不编造：provenance 缺失即 unverified。
+ * 导出给「直接持有资料卡」的查看面板（PoiCardPanel）复用，保证与停点卡同一口径。
+ */
+export function projectStopFactField(
   rawValue: string,
   provenance: PoiCardFieldProvenanceV1 | null,
   now: number,
@@ -113,8 +116,8 @@ export function projectStopFacts(stop: TripStop, record: PoiCardsRecordV1 | null
   return {
     matched: true,
     cardName: card.name,
-    intro: projectField(card.intro, card.provenance.intro, now),
-    openingHours: projectField(card.openingHours, card.provenance.openingHours, now),
-    ticket: projectField(card.ticket, card.provenance.ticket, now),
+    intro: projectStopFactField(card.intro, card.provenance.intro, now),
+    openingHours: projectStopFactField(card.openingHours, card.provenance.openingHours, now),
+    ticket: projectStopFactField(card.ticket, card.provenance.ticket, now),
   }
 }

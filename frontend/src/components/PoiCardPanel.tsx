@@ -27,6 +27,8 @@
  *   存储字节都不受影响。
  * - 文案红线：无「已预订/已确认/已出票」；未知显示「未知」；所有内容默认
  *   「未核实」标注 + 来源；OSM 收进显示「来自协作地图，未核实」。
+ * - **查看态可信徽章**：开放时间 / 门票复用 `stopFacts` 的单字段投影与
+ *   `StopFactBadge`（与 StopPoiCard / TodayPanel 同一三态口径，不另造文案）。
  * - 图片仅存 URL；渲染懒加载（loading="lazy"）；加载失败 → 占位 + 「图片加载失败」，
  *   不阻断不编造。无坐标字段、无 (0,0)。
  */
@@ -69,6 +71,8 @@ import {
   type ImageSearchReport,
 } from '../lib/imageSources'
 import { searchImageSources, type ImageSourcesAdapter } from '../lib/imageSourcesApi'
+import { projectStopFactField } from '../lib/stopFacts'
+import StopFactBadge from './StopFactBadge'
 import type { ApiError } from '../lib/api'
 
 /** 来源标签：与数据层 PoiCardImageSource 一一对应；展示用。 */
@@ -364,6 +368,11 @@ export default function PoiCardPanel({
   }
 
   const provenance = current?.provenance ?? null
+  // 查看态：开放时间 / 门票各带可信徽章（与停点卡同一投影口径；现在时刻由 now 注入）。
+  const openingFact =
+    current === null ? null : projectStopFactField(current.openingHours, current.provenance.openingHours, now())
+  const ticketFact =
+    current === null ? null : projectStopFactField(current.ticket, current.provenance.ticket, now())
 
   /** S5 Wikimedia 搜索结果「收进」：只改编辑内存态，不落盘、不写任何键。 */
   const handleCollectWikimediaImage = (item: ImageSearchItem) => {
@@ -434,9 +443,19 @@ export default function PoiCardPanel({
                   <span className="text-xs text-muted-foreground">介绍</span>
                   <span>{displayValue(current.intro)}</span>
                   <span className="text-xs text-muted-foreground">开放时间</span>
-                  <span>{displayValue(current.openingHours)}</span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    {displayValue(current.openingHours)}
+                    {openingFact !== null && (
+                      <StopFactBadge fact={openingFact} detailLabel={`开放时间来源：${current.name}`} />
+                    )}
+                  </span>
                   <span className="text-xs text-muted-foreground">门票</span>
-                  <span>{displayValue(current.ticket)}</span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    {displayValue(current.ticket)}
+                    {ticketFact !== null && (
+                      <StopFactBadge fact={ticketFact} detailLabel={`门票来源：${current.name}`} />
+                    )}
+                  </span>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   来源：{provenance?.intro ? displayProvenance(provenance.intro) : '未知'}

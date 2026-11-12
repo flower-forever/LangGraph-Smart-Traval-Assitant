@@ -113,13 +113,14 @@ describe('CoverageCardContent · 统计与清单', () => {
     expect(within(uncovered).queryByRole('button')).toBeNull()
   })
 
-  it('未识别超过 12 个：只展示 12 个名字并如实收口「等 N 个」', () => {
+  it('未识别超过 12 个：只展示 12 个名字并如实收口「共 N 个」', () => {
     const stops = Array.from({ length: 14 }, (_, index) => `站点${index + 1}`)
     render(<CoverageCardContent trip={tripWith([{ name: '断桥' }], ['断桥', ...stops])} />)
     const note = screen.getByTestId('trip-coverage-unrecognized')
     expect(note).toHaveTextContent('14 个行程站点不在经典清单口径内')
     expect(note).toHaveTextContent('站点12')
-    expect(note).toHaveTextContent('等 14 个')
+    expect(note).toHaveTextContent('共 14 个')
+    expect(note).not.toHaveTextContent('等 14 个')
   })
 })
 

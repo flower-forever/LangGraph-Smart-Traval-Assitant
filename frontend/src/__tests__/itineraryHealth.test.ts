@@ -201,6 +201,10 @@ describe('inspectDayHealth · 十类问题行程', () => {
     expect(item?.level).toBe('notice')
     expect(item?.evidence).toContain('日跨度')
     expect(item?.evidence).toContain('上限')
+    // 时长用「小时/分」表述，不再用 HH:MM（13.5h 会被读成 13:30 时刻）
+    expect(item?.evidence).toContain('日跨度约 13 小时 30 分')
+    expect(item?.evidence).toContain('日跨度≤10 小时')
+    expect(item?.evidence).not.toContain('13:30')
     expectNoFalseCertainty(report.items)
   })
 

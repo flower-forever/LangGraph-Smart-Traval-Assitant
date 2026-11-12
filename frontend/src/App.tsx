@@ -2509,6 +2509,11 @@ export default function App() {
       return { ok: false, reason: 'invalid_base', message: '当前没有行程，无法创建草稿。' }
     }
     draftWorkspaceCaptureRef.current = workspaceController.getRuntime()?.capture ?? null
+    // P6.5 X5 / S8-40：与 handleStartEditing 同款守卫——作废在途示例加载，迟到的示例不得替换 fork 后的行程
+    // （审计 I3-①：commitInternalTripFork 不 bump loadSeqRef，守卫必须放在 createHealthDraft 这一层）
+    loadSeqRef.current += 1
+    exampleAbortRef.current?.abort()
+    exampleAbortRef.current = null
     setPoiSourcesOpen(false)
     setWebSourcesOpen(false)
     return createTripDraft(trip, { forkTripId: newUuid(), newLegMode: draftMode })

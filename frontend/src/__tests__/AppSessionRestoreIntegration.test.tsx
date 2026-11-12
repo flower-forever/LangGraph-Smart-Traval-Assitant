@@ -1401,3 +1401,90 @@ describe('App 会话留存：关闭后副本管理（Important 修复）', () =>
     expect(within(revived).getByRole('button', { name: '恢复上次的工作进度' })).toBeInTheDocument()
   })
 })
+
+/**
+ * P6.5 · S8-40 守卫回归：无草稿时确认顺延会造 fork 草稿，必须先作废在途示例加载。
+ *
+ * 构造真实可达的窗口：示例请求挂起期间用户先完成一次 AI 规划（handlePlan 只取消规划，
+ * 不碰示例），页面已有行程、示例仍在途。这时从体检卡「建议顺延」进面板，预览后确认 →
+ * createHealthDraft。守卫缺失时示例请求继续挂着，迟到的示例会替换 fork 后的行程。
+ * 断言落在 fetch 的 init.signal 上：getJson 用请求时钟把调用方 abort 转发成 fetch 信号。
+ */
+describe('App 体检顺延：S8-40 示例在途守卫', () => {
+  /**
+   * 长日行程：09:00 到达、各停留 60 分钟、20:00 离开 → 日跨度 12 小时，
+   * 超过均衡节奏上限 10 小时，体检卡因此给出 notice 级 pace 条目（带「建议顺延」入口）。
+   */
+  const LONG_DAY_TRIP: Trip = {
+    ...MOCK_TRIP,
+    id: 'trip-long-day-s840',
+    source: 'agent',
+    title: '超长日规划行',
+    days: [
+      {
+        day: 1,
+        date: null,
+        title: '长日',
+        summary: '',
+        stops: [
+          {
+            id: 'ld-1',
+            name: '早站',
+            time: '09:00',
+            duration_minutes: 60,
+            description: '',
+            address: '',
+            location: null,
+          },
+          {
+            id: 'ld-2',
+            name: '晚站',
+            time: '20:00',
+            duration_minutes: 60,
+            description: '',
+            address: '',
+            location: null,
+          },
+        ],
+        legs: [],
+      },
+    ],
+  }
+
+  it('无草稿确认顺延 → 创建 fork 草稿时作废在途示例请求', async () => {
+    let exampleSignal: AbortSignal | null = null
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ status: 'healthy' }))
+      if (url === '/api/trips/example') {
+        exampleSignal = init?.signal ?? null
+        // 永不返回：示例请求全程在途（慢后端 / 长排队），测试结束时由卸载清理收尾
+        return new Promise<Response>(() => {})
+      }
+      if (url === '/api/trips/plan') return Promise.resolve(jsonResponse(LONG_DAY_TRIP))
+      return Promise.reject(new TypeError(`unexpected url: ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    // 示例还没回来就能先规划（与既有 AppDraft 用例同口径）；规划成功 → 页面有行程
+    await user.type(screen.getByLabelText(/目的地/), '西安')
+    await user.click(screen.getByRole('button', { name: '生成行程' }))
+    await screen.findByText('超长日规划行')
+    expect(exampleSignal).not.toBeNull()
+    // 前提成立：此刻示例请求仍活着，规划路径不会作废它
+    expect(exampleSignal!.aborted).toBe(false)
+
+    // 体检卡 → 展开详情 → 建议顺延 → 预览 → 确认（无草稿：确认时 createHealthDraft 造 fork 草稿）
+    await user.click(await screen.findByTestId('health-toggle'))
+    await user.click(await screen.findByTestId('health-suggest-postpone'))
+    await user.click(await screen.findByTestId('postpone-preview-action'))
+    await user.click(await screen.findByTestId('postpone-confirm'))
+
+    // 守卫：示例请求被作废；即使响应忽略 abort 迟到，也不能替换 fork 后的行程
+    await waitFor(() => expect(exampleSignal!.aborted).toBe(true))
+    // 页面仍停在 fork 出的长日行程（草稿预览会重复引用同一标题，故按存在性断言）
+    expect(screen.getAllByText('超长日规划行').length).toBeGreaterThan(0)
+  })
+})

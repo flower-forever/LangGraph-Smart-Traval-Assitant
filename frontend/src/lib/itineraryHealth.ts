@@ -77,11 +77,17 @@ function parseHhMm(text: string): number | null {
   return Number(match[1]) * 60 + Number(match[2])
 }
 
-/** 分钟数 → HH:MM（仅用于 evidence 文案）。 */
-function formatMinutes(total: number): string {
-  const hh = String(Math.floor(total / 60)).padStart(2, '0')
-  const mm = String(total % 60).padStart(2, '0')
-  return `${hh}:${mm}`
+/**
+ * 分钟数 → 中文时长（仅用于 evidence 文案）。
+ * 不用 HH:MM：日跨度与阈值都是「时长」，写成 12:35 会被读成时刻（五期-3 审计项）。
+ * 整小时不带「0 分」，不足 1 小时只写分钟。
+ */
+function formatDurationCn(total: number): string {
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+  if (hours === 0) return `${minutes} 分钟`
+  if (minutes === 0) return `${hours} 小时`
+  return `${hours} 小时 ${minutes} 分`
 }
 
 /**
@@ -395,7 +401,7 @@ function checkPace(day: TripDay, pace: HealthPace): HealthItem | null {
       const span = lastArrival + lastDuration - first
       if (span > limits.maxDaySpanMinutes) {
         problems.push(
-          `日跨度约 ${formatMinutes(span)}（${day.stops[0].time} 到达至末站离开），超过${paceLabel}节奏上限 ${formatMinutes(limits.maxDaySpanMinutes)}`,
+          `日跨度约 ${formatDurationCn(span)}（${day.stops[0].time} 到达至末站离开），超过${paceLabel}节奏上限 ${formatDurationCn(limits.maxDaySpanMinutes)}`,
         )
       }
     }
@@ -431,7 +437,7 @@ function checkPace(day: TripDay, pace: HealthPace): HealthItem | null {
       code: 'pace',
       level: 'unknown',
       message: `无法按${paceLabel}节奏完整核对：${unknownParts.join('、')}数据缺失。`,
-      evidence: `缺失项：${unknownParts.join('、')}。${paceLabel}节奏阈值：≤${limits.maxStops} 站、日跨度≤${formatMinutes(limits.maxDaySpanMinutes)}、站间缓冲≥${limits.minBufferMinutes} 分钟。缺失的数据（含路段时长）不按 0 补，只报可核实的部分。`,
+      evidence: `缺失项：${unknownParts.join('、')}。${paceLabel}节奏阈值：≤${limits.maxStops} 站、日跨度≤${formatDurationCn(limits.maxDaySpanMinutes)}、站间缓冲≥${limits.minBufferMinutes} 分钟。缺失的数据（含路段时长）不按 0 补，只报可核实的部分。`,
       suggestion: null,
     }
   }
@@ -441,7 +447,7 @@ function checkPace(day: TripDay, pace: HealthPace): HealthItem | null {
       code: 'pace',
       level: 'notice',
       message: `行程比${paceLabel}节奏偏紧。${note}`,
-      evidence: problems.join('；') + `。${paceLabel}节奏阈值：≤${limits.maxStops} 站、日跨度≤${formatMinutes(limits.maxDaySpanMinutes)}、站间缓冲≥${limits.minBufferMinutes} 分钟。`,
+      evidence: problems.join('；') + `。${paceLabel}节奏阈值：≤${limits.maxStops} 站、日跨度≤${formatDurationCn(limits.maxDaySpanMinutes)}、站间缓冲≥${limits.minBufferMinutes} 分钟。`,
       suggestion: '可用「编辑这趟行程」删减站点或拉长时间，或交给「AI 调整单日」重排。',
     }
   }

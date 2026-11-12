@@ -128,6 +128,74 @@ describe('面板微转场与落印的 CSS 契约', () => {
   })
 })
 
+/**
+ * 单条声明块（选择器首次出现处）：返回起点与花括号内的声明文本。
+ * 值里没有嵌套花括号，取第一个 `}` 即可。
+ */
+function ruleBlock(css: string, selector: string, from = 0): { start: number; body: string } {
+  const start = css.indexOf(`${selector} {`, from)
+  if (start < 0) throw new Error(`找不到规则 ${selector}`)
+  const open = css.indexOf('{', start)
+  const end = css.indexOf('}', open)
+  return { start, body: css.slice(open + 1, end) }
+}
+
+/** 按顶层逗号切分 CSS 值（var() / cubic-bezier() 内的逗号不切）。 */
+function splitTopLevel(value: string): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let current = ''
+  for (const ch of value) {
+    if (ch === '(') depth += 1
+    if (ch === ')') depth -= 1
+    if (ch === ',' && depth === 0) {
+      parts.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  parts.push(current)
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0)
+}
+
+/** var(--token) → theme.css :root 里的字面值；悬空 token 直接炸（不静默放行）。 */
+function resolveVars(value: string): string {
+  return value.replace(/var\((--[a-z0-9-]+)\)/g, (_match, name: string) => {
+    const token = rootToken(themeCss, name.slice(2))
+    if (token === null) throw new Error(`theme.css 未定义 ${name}`)
+    return token
+  })
+}
+
+describe('normal 模式 computed animation（六期 S1-3 固化）', () => {
+  it('落印三条动画名俱全、时长由 token 解析为 0.3s/0.3s/0.18s（与审计 §4-3 浏览器实测同值）', () => {
+    // jsdom 的 getComputedStyle 不展开 animation 简写（只回原文），
+    // 故这里按「真实声明 + token 解析」得到与浏览器 computed 相同的值：
+    // 审计 §4-3 实测 animation-name = oc-stamp-in, oc-stamp-jolt, oc-stamp-out；
+    // duration = 0.3s, 0.3s, 0.18s。规则必须取 normal 块（reduced 块在它之后才覆盖）。
+    const normal = ruleBlock(appCss, '.oc-stamp-seal')
+    const reducedStart = appCss.indexOf('@media (prefers-reduced-motion: reduce)', normal.start)
+    expect(reducedStart).toBeGreaterThan(normal.start)
+
+    const animation = normal.body.match(/animation:\s*([^;]+);/)
+    expect(animation, '.oc-stamp-seal 缺少 animation 声明').toBeTruthy()
+    const tracks = splitTopLevel(animation![1]).map((item) => item.split(/\s+/))
+    expect(tracks.map((track) => track[0])).toEqual(['oc-stamp-in', 'oc-stamp-jolt', 'oc-stamp-out'])
+    expect(tracks.map((track) => resolveVars(track[1]))).toEqual(['300ms', '300ms', '180ms'])
+    expect(resolveVars(tracks[0][2])).toMatch(/^cubic-bezier\(/)
+    expect(resolveVars(tracks[1][2])).toMatch(/^cubic-bezier\(/)
+    expect(resolveVars(tracks[2][2])).toBe('ease-in')
+
+    // 对照组：reduced 块必须丢掉 oc-stamp-jolt——证明上面断言的是 normal 模式
+    const reduced = ruleBlock(appCss, '.oc-stamp-seal', reducedStart)
+    const reducedAnimation = reduced.body.match(/animation:\s*([^;]+);/)
+    expect(reducedAnimation).toBeTruthy()
+    const reducedNames = splitTopLevel(reducedAnimation![1]).map((item) => item.split(/\s+/)[0])
+    expect(reducedNames).toEqual(['oc-stamp-in', 'oc-stamp-out'])
+  })
+})
+
 describe('reduced-motion 降级分支（每个动效都有且可审查）', () => {
   it('微转场三类的降级分支存在', () => {
     const reduced = appCss.slice(appCss.indexOf('@media (prefers-reduced-motion: reduce)'), appCss.indexOf('/* ---------- 落印'))
