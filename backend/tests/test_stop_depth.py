@@ -266,6 +266,82 @@ def test_volatile_depth_text_is_stripped_and_flagged(text):
         assert pattern not in dumped
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # V11 · S4-19 十个全新家族（与 S4 城市卡共用同一正则，深度侧同步钉住）
+        # 夜游场次
+        "夜游每天 19:30 和 20:30 两场",
+        "夜游分两场，第一场 19:30 开船",
+        "夜游共三场，每场约四十分钟",
+        "夜游加场至 22:30",
+        "夜游班次以当日公告为准",
+        "夜游共两轮，每轮约四十分钟",
+        # 观光车班次
+        "观光车每 20 分钟一班",
+        "观光车班次间隔约 15 分钟",
+        "观光车首班 8:00，末班 18:00",
+        "观光车发车间隔约半小时",
+        "观光车班次从早到晚都有",
+        # 汉服租赁
+        "汉服租赁 80 元/小时",
+        "汉服租赁按小时计费",
+        "汉服租赁两小时起租",
+        "汉服租赁押金 200 元",
+        "汉服租赁按套计价",
+        # 寄存柜计费
+        "寄存柜 5 元/小时",
+        "寄存柜按小时计费",
+        "寄存柜超时加收 10 元",
+        "寄存柜按天计费",
+        "寄存柜租金另计",
+        # 接驳车发车
+        "接驳车每 30 分钟一班",
+        "接驳车流水发车，坐满即走",
+        "接驳车按点发车，首班 7:00",
+        "接驳车定时发车",
+        "接驳车循环发车",
+        "接驳车坐满发车",
+        "接驳车 20 分钟一趟",
+        # 母婴室位置
+        "母婴室位于三楼东侧",
+        "母婴室设在游客中心一楼",
+        "母婴室在 B1 层",
+        # 无障碍设施位置
+        "无障碍电梯在 B1 层",
+        "无障碍通道位于南门入口",
+        "无障碍卫生间设在游客中心一楼",
+        # 储物设施位置
+        "储物柜位于入口处",
+        "寄存柜分布在三个楼层",
+        "行李寄存处在东门出口",
+        # 餐饮供应
+        "餐饮供应时间为 11:00-14:00",
+        "园区仅供应午餐",
+        "晚餐供应至 20:00",
+        "餐饮供应时段为午间",
+        "园区停止供应夜宵",
+        "供应午餐仅限周末",
+        "午餐仅周末供应",
+        "仅在午餐时段供应",
+        # 行李报案
+        "行李遗失可拨打 12345 报案",
+        "行李丢失可到服务台挂失",
+        "行李报案电话 110",
+        "失物招领处位于东门",
+    ],
+)
+def test_v11_new_family_depth_variants_are_filtered(text):
+    trip, _ = normalize_agent_payload(
+        make_payload([make_stop(tips={"items": [text]})]), make_request()
+    )
+    stop = trip.days[0].stops[0]
+
+    assert stop.tips is None
+    assert any("易变信息" in warning for warning in trip.warnings)
+    assert text not in json.dumps(stop.model_dump(), ensure_ascii=False)
+
+
 def test_depth_blocks_never_contain_volatile_fact_patterns():
     """防呆：正常深度内容序列化后不出现营业/票价类构件。"""
 
@@ -289,6 +365,58 @@ def test_depth_blocks_never_contain_volatile_fact_patterns():
     ],
 )
 def test_safe_depth_text_is_not_over_filtered(text):
+    trip, _ = normalize_agent_payload(
+        make_payload([make_stop(tips={"items": [text]})]), make_request()
+    )
+    stop = trip.days[0].stops[0]
+
+    assert stop.tips is not None
+    assert stop.tips.items == [text]
+    assert not any("易变信息" in warning for warning in trip.warnings)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # V11 稳定描述对照：每族 ≥2 条，不得被新词族误杀
+        # 夜游场次
+        "夜游是古城夜晚的经典体验",
+        "夜游氛围安静",
+        "夜游路线沿河展开",
+        # 观光车班次
+        "观光车是园内主要代步方式",
+        "观光车路线覆盖主要景点",
+        # 汉服租赁
+        "景区提供汉服租赁服务",
+        "汉服款式多样",
+        # 寄存柜计费
+        "园区提供自助寄存柜",
+        "寄存柜数量充足",
+        # 接驳车发车
+        "接驳车连接东西两个片区",
+        "接驳车乘坐舒适",
+        # 母婴室位置
+        "母婴室干净整洁",
+        "母婴室设施齐全",
+        # 无障碍设施位置
+        "园区内有无障碍设施",
+        "无障碍设施完善",
+        # 储物设施位置
+        "储物柜使用方便",
+        "园区提供储物设施",
+        # 餐饮供应
+        "园区餐饮选择丰富",
+        "餐厅环境干净整洁",
+        "园内提供餐饮",
+        "提供餐饮和住宿",
+        "供应午餐和晚餐",
+        # 行李报案
+        "请看管好随身行李",
+        "行李遗失可向工作人员求助",
+        "贵重物品请随身携带",
+    ],
+)
+def test_v11_stable_depth_text_is_not_over_filtered(text):
     trip, _ = normalize_agent_payload(
         make_payload([make_stop(tips={"items": [text]})]), make_request()
     )
