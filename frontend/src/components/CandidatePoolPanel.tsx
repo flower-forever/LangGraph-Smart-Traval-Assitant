@@ -92,6 +92,11 @@ export interface CandidatePoolPanelProps {
   /** 预览生成后的观察回调；不得把它当作已持久化。 */
   onPreview?: (proposal: CandidateDraftProposal) => void
   /**
+   * 七期 S7：当前城市。列表只显示「同城 + 无城市归属的全局条目」；
+   * 缺省 / 空串 = 与旧行为一致（全部条目）。
+   */
+  city?: string | null
+  /**
    * 资料卡库记录（父级读好传入）：候选条目按名称归一化匹配资料卡，
    * 命中时显示「有资料卡」入口徽标。只读；本面板不写任何资料卡键。
    */
@@ -233,6 +238,7 @@ export default function CandidatePoolPanel({
   onImportRequest,
   onAddToDraft,
   onPreview,
+  city = null,
   poiCards = null,
   onOpenPoiCard,
   now = defaultNow,
@@ -327,8 +333,9 @@ export default function CandidatePoolPanel({
             text: filterText,
             tag: tagFilter === '__untagged__' ? null : tagFilter,
             untaggedOnly: tagFilter === '__untagged__',
+            cityId: city,
           }),
-    [record, filterText, tagFilter],
+    [record, filterText, tagFilter, city],
   )
 
   const duplicateById = useMemo(() => {
@@ -442,6 +449,7 @@ export default function CandidatePoolPanel({
         tags: parseTagsInput(addForm.tags),
         priority: Number(addForm.priority),
         location: coordinates.value,
+        cityId: city ?? null,
       },
       createdAt,
     )
@@ -488,6 +496,7 @@ export default function CandidatePoolPanel({
         notes: addForm.notes,
         tags: parseTagsInput(addForm.tags),
         priority: Number(addForm.priority),
+        cityId: city ?? null,
       },
       createdAt,
     )

@@ -150,6 +150,8 @@ export interface TripDraftEditorProps {
    * 可空：不传时可信状态一律「未知」。本组件不读存储、不自己加载资料卡。
    */
   poiCards?: PoiCardsRecordV1 | null
+  /** 七期 S7：多城时当前天城市；用于候选池按城过滤，单城不传。 */
+  city?: string | null
 }
 
 function formFromStop(stop: TripStop): FormState {
@@ -287,6 +289,7 @@ export default function TripDraftEditor({
   onSelectStop,
   candidates = null,
   poiCards = null,
+  city = null,
 }: TripDraftEditorProps) {
   const baseId = useId()
   const formFieldId = `${baseId}-form`
@@ -1359,6 +1362,7 @@ export default function TripDraftEditor({
                       onDraftChange={onDraftChange}
                       candidates={candidates}
                       poiCards={poiCards}
+                      city={city}
                       onClose={closeSwap}
                       returnFocusTo={swapReturnFocusRef}
                       onSwapAnimated={(direction) => handleSwapAnimated(stop.id, direction)}

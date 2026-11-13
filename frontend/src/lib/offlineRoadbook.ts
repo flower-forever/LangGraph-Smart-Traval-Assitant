@@ -15,6 +15,7 @@
  */
 
 import type { Trip, TripDay, TripLeg, TripStop } from './api'
+import { tripCityLabel } from './cityScope'
 import { displayTime, formatDistance, formatDuration, MODE_LABELS } from './format'
 import type { PoiCardImageSource, PoiCardsRecordV1 } from './poiCards'
 import { buildShareMiniMap } from './shareMiniMap'
@@ -353,7 +354,7 @@ export function buildOfflineRoadbook(
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"/>` +
     `<title>${title} · 离线路书</title><style>${STYLE}</style></head><body><div class="wrap">` +
     `<header><p class="kicker">旅行助手 · 离线路书</p><h1>${title}</h1>` +
-    `<p class="meta">${textOr(trip.destination, '目的地未知')} · ${trip.days.length} 天 · ${stopCount} 个站点</p>` +
+    `<p class="meta">${textOr(tripCityLabel(trip), '目的地未知')} · ${trip.days.length} 天 · ${stopCount} 个站点</p>` +
     (isDraft ? `<p class="draft-badge">${escapeHtml(ROADBOOK_DRAFT_BADGE)}</p>` : '') +
     '<p class="notice">本页是单文件离线页面：样式与脚本全部内联，不会发起任何网络请求；内容按记录原样整理，未联网核实营业、票务或交通。</p>' +
     `</header>${body}` +

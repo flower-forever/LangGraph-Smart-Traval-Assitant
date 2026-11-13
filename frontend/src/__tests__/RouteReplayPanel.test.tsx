@@ -5,11 +5,12 @@
  * 三种缺失降级（无坐标、straight_line、unavailable）不画假路线、reduced-motion
  * 逐站翻页提示、零写入零网络。播放时钟本身由 routeReplay.test.ts 的状态机覆盖。
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { TripDay, TripLeg } from '../lib/api'
 import RouteReplayPanel from '../components/RouteReplayPanel'
-import { REPLAY_DAYS } from './fixtures/replay'
+import { REPLAY_DAY, REPLAY_DAYS } from './fixtures/replay'
 
 function panel(): HTMLElement {
   return screen.getByTestId('route-replay-panel')
@@ -33,6 +34,7 @@ function renderPanel(props: Partial<Parameters<typeof RouteReplayPanel>[0]> = {}
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -189,5 +191,80 @@ describe('RouteReplayPanel · 电影模式与边界', () => {
     expect(setItem).not.toHaveBeenCalled()
     expect(fetchSpy).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+})
+
+/* ───────────────────── 七期 S4 · 回放城际段 ───────────────────── */
+
+const INTERCITY_LEG: TripLeg = {
+  from_stop_id: 'r5',
+  to_stop_id: 'x1',
+  mode: 'driving',
+  route_type: 'straight_line',
+  distance_m: 170000,
+  duration_minutes: 133,
+  geometry: [
+    { lng: 120.1131, lat: 30.2226 },
+    { lng: 121.49, lat: 31.24 },
+  ],
+  description: '城际转移：杭州 → 上海，直线约 170.0 公里；估算并预留约 2 小时 13 分钟。具体班次与时刻未提供，请自行查询。',
+  transferKind: 'intercity',
+}
+
+const MULTICITY_REPLAY_DAY: TripDay = {
+  ...REPLAY_DAY,
+  city: '杭州',
+  legs: [...REPLAY_DAY.legs, INTERCITY_LEG],
+}
+
+function renderMulticity() {
+  return render(
+    <RouteReplayPanel
+      days={[MULTICITY_REPLAY_DAY]}
+      initialDay={1}
+      onClose={vi.fn()}
+      reducedMotion={false}
+    />,
+  )
+}
+
+describe('RouteReplayPanel · 七期 S4 城际段', () => {
+  it('跨城日卡片与图例显示城际段（估算，班次未提供）', () => {
+    renderMulticity()
+    const note = screen.getByTestId('replay-intercity-note')
+    expect(note).toHaveTextContent('城际转移（估算，班次未提供）')
+    expect(note).toHaveTextContent('杭州 → 上海')
+    expect(screen.getByTestId('replay-intercity-legend')).toHaveTextContent('城际转移：虚线')
+    expect(screen.getByTestId('replay-intercity-legend')).toHaveTextContent('班次未提供')
+  })
+
+  it('回放结束把城际段画成虚线，且不出现具体车次/时刻', async () => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+    })
+    renderMulticity()
+    fireEvent.change(screen.getByTestId('replay-progress'), { target: { value: '4' } })
+    fireEvent.click(screen.getByTestId('replay-play-toggle'))
+    // 最后一站停留（90 分钟 → 夹到 4000ms）+ 城际段（133 分钟 → 夹到 6000ms）
+    await act(async () => {
+      vi.advanceTimersByTime(11_000)
+    })
+    expect(panel()).toHaveAttribute('data-phase', 'finished')
+
+    const line = document.querySelector<SVGPathElement>('.leaflet-overlay-pane path.replay-intercity')
+    expect(line).not.toBeNull()
+    expect(line!.getAttribute('stroke-dasharray')).toBe('6 6')
+    expect(line!.getAttribute('data-drawn')).toBe('true')
+    // 诚实口径：只有估算与「班次未提供」，不编造 G/D 车次或发车时刻
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('班次未提供')
+    expect(text).not.toMatch(/\b[GDC]\d{1,4}\b/)
+  })
+
+  it('单城不渲染任何城际节点（卡片说明 / 图例 / 线条）', () => {
+    renderPanel()
+    expect(screen.queryByTestId('replay-intercity-note')).toBeNull()
+    expect(screen.queryByTestId('replay-intercity-legend')).toBeNull()
+    expect(document.querySelector('.replay-intercity')).toBeNull()
   })
 })

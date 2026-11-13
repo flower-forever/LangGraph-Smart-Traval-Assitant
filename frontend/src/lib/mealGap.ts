@@ -14,6 +14,8 @@
  *   （geometry=[]、distance_m / duration_minutes=null、「待重新获取路线」），
  *   不沿用旧路线；新站没有坐标（location=null），直线距离写「未知」。
  * - **写入是一次编辑**：addDraftStop 本身只产生一个撤销步；失败时草稿完全不变。
+ * - **S8-39**：额外导出 `isMealStopLike`（站名 / 描述命中餐饮关键词），供体检识别
+ *   「窗口内已安排餐饮站」；仅新增导出，不改空档扫描与候选输出。
  */
 
 import type { TripDay, TripLocation, TripStop } from './api'
@@ -330,6 +332,23 @@ export interface MealCandidateInput {
 function keywordHits(text: string): string[] {
   if (text.length === 0) return []
   return MEAL_KEYWORDS.filter((keyword) => text.includes(keyword))
+}
+
+/**
+ * S8-39：一个站点是否像餐饮站（站名或描述命中餐饮关键词）。
+ *
+ * - 与补餐候选共用同一份 `MEAL_KEYWORDS` + `normalizeCandidateText`（NFKC、trim、大小写折叠）；
+ * - 中文按包含匹配，拉丁词根大小写不敏感；
+ * - 不看停留时长，不做外部搜索 / 推断。
+ * 本函数只服务体检识别，不改变 `scanMealGaps` / 候选输出。
+ */
+export function isMealStopLike(stop: TripStop): boolean {
+  const name = typeof stop.name === 'string' ? stop.name : ''
+  const description = typeof stop.description === 'string' ? stop.description : ''
+  return (
+    keywordHits(normalizeCandidateText(name)).length > 0 ||
+    keywordHits(normalizeCandidateText(description)).length > 0
+  )
 }
 
 function reasonOf(

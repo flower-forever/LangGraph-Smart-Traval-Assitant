@@ -25,6 +25,8 @@ export type ReplayRouteNote =
   | 'route_unavailable'
   | 'missing_coordinate'
   | 'no_leg'
+  /** 七期 S4：跨城日的收尾城际转移段（估算，班次未提供）。 */
+  | 'intercity'
 
 export interface ReplayLeg {
   kind: ReplayRouteKind
@@ -53,6 +55,8 @@ export interface ReplayDayPlan {
   drawableStopCount: number
   /** 缺坐标的站点数 */
   missingCoordCount: number
+  /** 七期 S4：当天最后一条城际段；单城 / 无城际段为 null（旧时间轴）。 */
+  intercity: ReplayLeg | null
 }
 
 export const EMPTY_REPLAY_PLAN: ReplayDayPlan = {
@@ -60,6 +64,7 @@ export const EMPTY_REPLAY_PLAN: ReplayDayPlan = {
   stations: [],
   drawableStopCount: 0,
   missingCoordCount: 0,
+  intercity: null,
 }
 
 /**
@@ -144,8 +149,53 @@ function resolveLeg(leg: TripLeg, from: TripLocation | null, to: TripLocation | 
 }
 
 /**
+ * 七期 S4：把当天最后一条城际段解析成回放段。
+ * - 优先用 leg.geometry（S1 的城际段是两点直线；导航几何若存在也保留）；
+ * - 几何不足 2 点时退到「当天末站坐标 → leg 几何末点」，不跨天补点；
+ * - 仍无法得到两端坐标时明确 unavailable，不伪造站点或车次。
+ */
+function resolveIntercityLeg(leg: TripLeg, day: TripDay): ReplayLeg {
+  const base = {
+    mode: leg.mode,
+    distanceMeters: leg.distance_m,
+    durationMinutes: leg.duration_minutes,
+    description: leg.description,
+  }
+  const geometry = simplifyGeometry(validGeometry(leg.geometry))
+  if (leg.route_type !== 'unavailable' && geometry.length >= 2) {
+    return {
+      ...base,
+      kind: leg.route_type === 'navigation' ? 'navigation' : 'straight_line',
+      note: 'intercity',
+      geometry,
+    }
+  }
+
+  const lastStop = day.stops.length > 0 ? day.stops[day.stops.length - 1] : null
+  const from = lastStop ? validCoord(lastStop.location) : null
+  const lastPoint = validGeometry(leg.geometry).at(-1) ?? null
+  if (
+    leg.route_type !== 'unavailable' &&
+    from &&
+    lastPoint &&
+    (from.lng !== lastPoint.lng || from.lat !== lastPoint.lat)
+  ) {
+    return {
+      ...base,
+      kind: 'straight_line',
+      note: 'intercity',
+      geometry: [{ ...from }, { ...lastPoint }],
+    }
+  }
+
+  return { ...base, kind: 'unavailable', note: 'intercity', geometry: [] }
+}
+
+/**
  * 生成一天的回放计划。leg 必须同时匹配「上一站 → 本站」，避免把顺序错乱的
  * leg 硬套到站点上；没有匹配 leg 的站（首站除外）明确标 no_leg，不画线。
+ *
+ * 七期 S4：`intercity` 取当天最后一条 transferKind='intercity' 的段，单城为 null。
  */
 export function buildReplayDay(day: TripDay): ReplayDayPlan {
   const stations: ReplayStation[] = []
@@ -171,7 +221,15 @@ export function buildReplayDay(day: TripDay): ReplayDayPlan {
     stations.push({ index, stop, location, inbound })
   })
 
-  return { day, stations, drawableStopCount, missingCoordCount }
+  let intercity: ReplayLeg | null = null
+  for (let index = day.legs.length - 1; index >= 0; index -= 1) {
+    const leg = day.legs[index]
+    if (leg.transferKind !== 'intercity') continue
+    intercity = resolveIntercityLeg(leg, day)
+    break
+  }
+
+  return { day, stations, drawableStopCount, missingCoordCount, intercity }
 }
 
 /* ───────────────────────── 几何截断（逐帧画线） ───────────────────────── */
@@ -231,7 +289,7 @@ export function sliceGeometry(
 
 /* ───────────────────────── 状态机 ───────────────────────── */
 
-export type ReplayPhase = 'station' | 'leg' | 'finished'
+export type ReplayPhase = 'station' | 'leg' | 'intercity' | 'finished'
 export type ReplaySpeed = 1 | 1.5 | 2
 
 export interface ReplayState {
@@ -254,6 +312,10 @@ export const REPLAY_DWELL_MIN_MS = 1200
 export const REPLAY_DWELL_MAX_MS = 4000
 export const REPLAY_LEG_MIN_MS = 1000
 export const REPLAY_LEG_MAX_MS = 4000
+/** 七期 S4：城际段固定演示时长（leg 没有 duration_minutes 时使用）。 */
+export const REPLAY_INTERCITY_MS = 3000
+export const REPLAY_INTERCITY_MIN_MS = 1000
+export const REPLAY_INTERCITY_MAX_MS = 6000
 
 export interface ReplayContext {
   stationCount: number
@@ -264,6 +326,10 @@ export interface ReplayContext {
   dwellMs?: readonly number[]
   /** 每个入站路段时长（ms）；缺省 / 缺项回退按路线类型的现状默认。 */
   legMs?: readonly number[]
+  /** 七期 S4：当天城际段；缺省 / null = 旧单城时间轴，终点站停留完直接 finished。 */
+  intercity?: ReplayLeg | null
+  /** 城际段播放时长（ms）；缺省按 duration_minutes 换算，再缺省 REPLAY_INTERCITY_MS。 */
+  intercityMs?: number
 }
 
 function clampMs(value: number, min: number, max: number): number {
@@ -287,6 +353,14 @@ export function replayLegMs(
     return legDurationMs(kind)
   }
   return clampMs(minutes * REPLAY_MS_PER_MINUTE, REPLAY_LEG_MIN_MS, REPLAY_LEG_MAX_MS)
+}
+
+/** 城际段时长：有 duration_minutes 按比例换算并夹在 [1000, 6000]；缺失固定 3 秒。 */
+export function replayIntercityMs(minutes: number | null | undefined): number {
+  if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) {
+    return REPLAY_INTERCITY_MS
+  }
+  return clampMs(minutes * REPLAY_MS_PER_MINUTE, REPLAY_INTERCITY_MIN_MS, REPLAY_INTERCITY_MAX_MS)
 }
 
 export type ReplayAction =
@@ -328,6 +402,10 @@ function legDurationMs(kind: ReplayRouteKind | undefined): number {
  * （非 reduced-motion）进入 leg 阶段，用该段时长（按 duration_minutes 换算，
  * 缺省按路线类型取固定值）把第 i+1 站入站路段画完 → 到第 i+1 站停留。最后一站
  * 停留结束后进入 finished。reduced-motion 时跳过 leg 阶段，停留结束直接翻到下一站。
+ *
+ * 七期 S4：若 context.intercity 存在且非 reduced-motion，最后一站停留结束后先播放
+ * 城际转移 phase（进度 0→1，虚线由面板绘制），播完再 finished。没有城际段时状态
+ * 序列与 HEAD 完全一致；reduced-motion 继续跳过所有路线动画（含城际段）。
  */
 export function reduceReplay(
   state: ReplayState,
@@ -386,12 +464,24 @@ export function reduceReplay(
         const progress = state.progress + delta / dwell
         if (progress < 1) return { ...state, progress }
         if (state.stationIndex >= lastIndex) {
+          if (!context.reducedMotion && context.intercity) {
+            return { ...state, phase: 'intercity', progress: 0 }
+          }
           return { ...state, phase: 'finished', playing: false, progress: 0 }
         }
         if (context.reducedMotion) {
           return { ...state, stationIndex: state.stationIndex + 1, phase: 'station', progress: 0 }
         }
         return { ...state, phase: 'leg', progress: 0 }
+      }
+
+      // 七期 S4 · phase === 'intercity'：最后一站之后把城际段画完（虚线由面板决定）
+      if (state.phase === 'intercity') {
+        const duration =
+          (context.intercityMs ?? replayIntercityMs(context.intercity?.durationMinutes)) / speed
+        const progress = state.progress + delta / duration
+        if (progress < 1) return { ...state, progress }
+        return { ...state, phase: 'finished', playing: false, progress: 0 }
       }
 
       // phase === 'leg'：正在画进入 stationIndex + 1 的那一段
@@ -410,9 +500,9 @@ export function reduceReplay(
 
 /* ───────────────────────── 展示口径 ───────────────────────── */
 
-export function replayRouteLabel(leg: ReplayLeg | null): string {
-  if (!leg) return '起点站，无上一段路线'
-  switch (leg.note) {
+/** 路段 note 的展示文案；routeReplay 与面板共用同一口径。 */
+export function replayNoteText(note: ReplayRouteNote): string {
+  switch (note) {
     case 'navigation':
       return '地图服务路线'
     case 'straight_line':
@@ -425,9 +515,16 @@ export function replayRouteLabel(leg: ReplayLeg | null): string {
       return '位置未知，无法绘制路线'
     case 'no_leg':
       return '未提供本段路线信息'
+    case 'intercity':
+      return '城际转移（估算）'
     default:
       return '路线未知'
   }
+}
+
+export function replayRouteLabel(leg: ReplayLeg | null): string {
+  if (!leg) return '起点站，无上一段路线'
+  return replayNoteText(leg.note)
 }
 
 export function replayTimeLabel(stop: TripStop): string {

@@ -1,6 +1,7 @@
-import type { CityProfile, TripDay } from './api'
+import type { CityProfile, Trip, TripDay } from './api'
 import { normalizeCandidateText } from './candidatePool'
 import { projectCityProfile } from './cityProfile'
+import { tripCityGroups } from './cityScope'
 
 /**
  * 六期 S6 选择充分度投影：行程站点 vs 城市经典清单（classicList）对比。
@@ -100,4 +101,47 @@ export function projectTripCoverage(
   }
 
   return { total: classicList.length, covered, uncovered, unrecognizedStops }
+}
+
+/** 七期 S6：按城市分段的选择充分度桶；`days` 是该城的天号（连续段）。 */
+export interface CityCoverageBucket {
+  city: string
+  days: number[]
+  /** 该城无 classicList 时为 null（卡片对该城不渲染统计）。 */
+  view: TripCoverageView | null
+}
+
+/**
+ * 按 `tripCityGroups`（S3）分城投影覆盖情况。
+ *
+ * - 每桶只统计该城分组内的站点，跨城站点不会互相顶替经典项。
+ * - 画像取值：`cityProfiles[city]` 优先；主城（destination）回退 `cityProfile`；
+ *   其余城市没有画像时为 null（该桶 view 也是 null，不伪造 0/0）。
+ * - 单城行程返回 1 个桶；无行程 / 无天 / 无城市名返回 []。
+ * - 纯函数：不读写存储、不发请求、不修改输入。
+ */
+export function projectTripCoverageByCity(
+  trip: Trip | null | undefined,
+): CityCoverageBucket[] {
+  if (!trip || !Array.isArray(trip.days) || trip.days.length === 0) return []
+
+  const groups = tripCityGroups(trip)
+  if (groups.length === 0) return []
+
+  const destination =
+    typeof trip.destination === 'string' ? trip.destination.trim() : ''
+  const buckets: CityCoverageBucket[] = []
+  for (const group of groups) {
+    // 没有城市名（destination 缺失且 day.city 也缺失）不产出伪城市桶。
+    if (!group.city) continue
+    const profile =
+      trip.cityProfiles?.[group.city] ??
+      (group.city === destination ? trip.cityProfile : null)
+    buckets.push({
+      city: group.city,
+      days: group.days.map((day) => day.day),
+      view: projectTripCoverage(group.days, profile ?? null),
+    })
+  }
+  return buckets
 }

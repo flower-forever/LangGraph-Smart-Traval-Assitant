@@ -16,6 +16,7 @@
  */
 
 import type { Trip, TripDay } from './api'
+import { isMultiCityTrip, tripCityLabel } from './cityScope'
 import { displayTime } from './format'
 
 export type ShareCardStyle =
@@ -29,6 +30,11 @@ export type ShareCardStyle =
 export interface ShareCardData {
   tripTitle: string
   destination: string
+  /**
+   * 七期 S7：destination 是否为多城城市序列。缺省 / false = 旧单城路径，
+   * 渲染结果与 HEAD 逐字节一致；true 时长标签换行自适应。
+   */
+  destinationIsMultiCity?: boolean
   dayNumber: number
   dayTitle: string
   date: string | null
@@ -67,7 +73,8 @@ export function buildShareCardData(trip: Trip, day: TripDay): ShareCardData {
 
   return {
     tripTitle: trip.title,
-    destination: trip.destination,
+    destination: tripCityLabel(trip),
+    destinationIsMultiCity: isMultiCityTrip(trip),
     dayNumber: day.day,
     dayTitle: day.title,
     date: day.date,
@@ -515,16 +522,39 @@ function renderXuanzhi(data: ShareCardData): string {
     }),
   )
 
-  parts.push(
-    textEl(`行旅 · ${data.destination}`, {
-      x: 96,
-      y: 132,
-      size: 24,
-      fill: c.accent,
-      font: c.bodyFont,
-      spacing: 7,
-    }),
-  )
+  if (data.destinationIsMultiCity) {
+    // 多城城市序列可能比单城名长：按可用宽度换行并逐级缩小，最多两行；
+    // 单城仍走下方原路径，保证旧输出逐字节不变。
+    const kicker = fitText(`行旅 · ${data.destination}`, {
+      maxWidth: 740,
+      maxFont: 24,
+      minFont: 14,
+      maxHeight: 64,
+      lineHeightRatio: 1.16,
+    })
+    parts.push(
+      multilineText(kicker.lines, {
+        x: 96,
+        y: 132,
+        size: kicker.fontSize,
+        fill: c.accent,
+        font: c.bodyFont,
+        lineHeight: kicker.lineHeight,
+        spacing: 7,
+      }),
+    )
+  } else {
+    parts.push(
+      textEl(`行旅 · ${data.destination}`, {
+        x: 96,
+        y: 132,
+        size: 24,
+        fill: c.accent,
+        font: c.bodyFont,
+        spacing: 7,
+      }),
+    )
+  }
 
   const title = fitText(data.tripTitle, {
     maxWidth: 760,
@@ -1599,16 +1629,39 @@ function renderBoarding(data: ShareCardData): string {
       spacing: 3,
     }),
   )
-  parts.push(
-    textEl(data.destination, {
-      x: 104,
-      y: stampY + 94,
-      size: 42,
-      fill: c.accent,
-      font: c.titleFont,
-      weight: 800,
-    }),
-  )
+  if (data.destinationIsMultiCity) {
+    // 城市序列可能较长：在票根虚线左侧（宽 440）内最多两行，缩字号兜底；
+    // 单城保持上方旧单行渲染，逐字节不变。
+    const destination = fitText(data.destination, {
+      maxWidth: 440,
+      maxFont: 38,
+      minFont: 18,
+      maxHeight: 84,
+      lineHeightRatio: 1.12,
+    })
+    parts.push(
+      multilineText(destination.lines, {
+        x: 104,
+        y: stampY + 78,
+        size: destination.fontSize,
+        fill: c.accent,
+        font: c.titleFont,
+        lineHeight: destination.lineHeight,
+        weight: 800,
+      }),
+    )
+  } else {
+    parts.push(
+      textEl(data.destination, {
+        x: 104,
+        y: stampY + 94,
+        size: 42,
+        fill: c.accent,
+        font: c.titleFont,
+        weight: 800,
+      }),
+    )
+  }
   parts.push(
     `<circle cx="590" cy="${stampY + 63}" r="42" fill="none" stroke="${c.accent2}" stroke-width="3" transform="rotate(-12 590 ${stampY + 63})"/>`,
   )

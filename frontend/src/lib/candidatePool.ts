@@ -34,6 +34,7 @@ import {
   MAX_CANDIDATES_BYTES,
   MAX_CANDIDATES_COUNT,
   MAX_CANDIDATE_ADDRESS_LENGTH,
+  MAX_CANDIDATE_CITY_LENGTH,
   MAX_CANDIDATE_NAME_LENGTH,
   MAX_CANDIDATE_NOTES_LENGTH,
   MAX_CANDIDATE_PRIORITY,
@@ -66,6 +67,7 @@ export type CandidatePoolFailureReason =
   | 'invalid_address'
   | 'invalid_notes'
   | 'invalid_tags'
+  | 'invalid_city'
   | 'invalid_priority'
   | 'invalid_location'
   | 'invalid_timestamp'
@@ -147,6 +149,8 @@ export interface CandidateManualInput {
   tags?: readonly string[]
   priority?: number
   location?: GeoPointV1 | null
+  /** 七期 S7b：可选城市归属；缺省 / 空串 = 不落键（全局条目）。 */
+  cityId?: string | null
 }
 
 export interface CandidateCopyInput {
@@ -155,6 +159,8 @@ export interface CandidateCopyInput {
   notes?: string | null
   tags?: readonly string[]
   priority?: number
+  /** 七期 S7b：可选城市归属；缺省 / 空串 = 不落键（全局条目）。 */
+  cityId?: string | null
 }
 
 export interface CandidateUpdatePatch {
@@ -164,6 +170,8 @@ export interface CandidateUpdatePatch {
   tags?: readonly string[]
   priority?: number
   location?: GeoPointV1 | null
+  /** 七期 S7b：undefined = 保持原值；null / 空串 = 清除城市键。 */
+  cityId?: string | null
 }
 
 export interface CandidateFilter {
@@ -173,6 +181,11 @@ export interface CandidateFilter {
   tag?: string | null
   /** true 时只显示没有标签的候选；优先于 tag。 */
   untaggedOnly?: boolean
+  /**
+   * 七期 S7：按城市过滤。null / undefined / 空串 = 不过滤；
+   * 指定城市时返回「同城 + 无城市归属的全局条目」。
+   */
+  cityId?: string | null
 }
 
 export interface CandidateDraftProposalInput {
@@ -288,6 +301,11 @@ function normalizeTags(tags: unknown): CandidatePoolResult<string[]> {
   return { ok: true, value: result }
 }
 
+/** 七期 S7b：可选城市归属；trim 后空串 / null = 不落键。 */
+function normalizeCityId(value: unknown): CandidatePoolResult<string | null> {
+  return optionalTrimmedText(value, MAX_CANDIDATE_CITY_LENGTH, 'invalid_city', '候选城市')
+}
+
 function normalizePriority(value: unknown): CandidatePoolResult<number> {
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
     return fail('invalid_priority', '优先级必须是 0–3 的整数。')
@@ -333,6 +351,7 @@ function candidateContentEqual(a: CandidateItemV1, b: CandidateItemV1): boolean 
     a.priority === b.priority &&
     a.source === b.source &&
     a.copiedFromStopId === b.copiedFromStopId &&
+    (a.cityId ?? null) === (b.cityId ?? null) &&
     a.location?.lng === b.location?.lng &&
     a.location?.lat === b.location?.lat &&
     a.tags.length === b.tags.length &&
@@ -371,6 +390,7 @@ function buildCandidateItem(input: {
   tags: unknown
   priority: unknown
   location: unknown
+  cityId: unknown
   source: 'manual' | 'copied'
   copiedFromStopId: string | null
   now: unknown
@@ -398,24 +418,29 @@ function buildCandidateItem(input: {
   if (!notes.ok) return notes
   const tags = normalizeTags(input.tags)
   if (!tags.ok) return tags
-  const priority = normalizePriority(input.priority)
-  if (!priority.ok) return priority
+  const normalizedPriority = normalizePriority(input.priority)
+  if (!normalizedPriority.ok) return normalizedPriority
   const location = normalizeLocation(input.location)
   if (!location.ok) return location
+  const cityId = normalizeCityId(input.cityId)
+  if (!cityId.ok) return cityId
 
-  const parsed = validateCandidateItem({
+  const candidate: CandidateItemV1 = {
     id: input.id,
     name: name.value,
     address: address.value,
     notes: notes.value,
     tags: tags.value,
-    priority: priority.value,
+    priority: normalizedPriority.value,
     location: location.value,
     source: input.source,
     copiedFromStopId: input.copiedFromStopId,
     createdAt: now.value,
     updatedAt: now.value,
-  })
+  }
+  // 只有明确有城市时才落键：旧记录 / 未指定城市时键集合不变。
+  if (cityId.value !== null) candidate.cityId = cityId.value
+  const parsed = validateCandidateItem(candidate)
   if (!parsed.ok) return fromValidation(parsed, 'invalid_candidate')
   return { ok: true, value: parsed.value }
 }
@@ -434,6 +459,7 @@ export function createManualCandidate(
     tags: input.tags ?? [],
     priority: input.priority ?? 1,
     location: input.location ?? null,
+    cityId: input.cityId ?? null,
     source: 'manual',
     copiedFromStopId: null,
     now,
@@ -465,6 +491,7 @@ export function copyCandidateFromStop(
     tags: input.tags ?? [],
     priority: input.priority ?? 1,
     location: location.value,
+    cityId: input.cityId ?? null,
     source: 'copied',
     copiedFromStopId: stop.stopId,
     now,
@@ -621,6 +648,12 @@ export function updateCandidateInRecord(
     if (!parsed.ok) return parsed
     location = parsed.value
   }
+  let cityId = current.cityId ?? null
+  if (patch.cityId !== undefined) {
+    const parsed = normalizeCityId(patch.cityId)
+    if (!parsed.ok) return parsed
+    cityId = parsed.value
+  }
 
   const next: CandidateItemV1 = {
     ...current,
@@ -630,6 +663,12 @@ export function updateCandidateInRecord(
     tags,
     priority,
     location,
+  }
+  // 清除城市时移除键本身，而不是写入 null：旧 / 全局条目的键集合保持一致。
+  if (cityId === null) {
+    delete next.cityId
+  } else {
+    next.cityId = cityId
   }
   if (candidateContentEqual(current, next)) {
     return { ok: true, value: { record, changed: false, duplicates: [] } }
@@ -691,6 +730,17 @@ export function listCandidateTags(items: readonly CandidateItemV1[]): string[] {
   return result
 }
 
+/**
+ * 候选条目的城市归属。旧条目 / 尚未写 cityId 的记录一律视为全局条目，
+ * 对任何城市可见（不因缺键而隐藏）。
+ */
+function candidateCityId(item: CandidateItemV1): string | null {
+  const value = item.cityId
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed === '' ? null : trimmed
+}
+
 /** 只读筛选；原条目对象与顺序不变，不写 currentTrip。 */
 export function filterCandidates(
   items: readonly CandidateItemV1[],
@@ -698,7 +748,12 @@ export function filterCandidates(
 ): CandidateItemV1[] {
   const text = normalizeCandidateText(filter.text ?? '')
   const tag = filter.tag === null || filter.tag === undefined ? '' : normalizeCandidateText(filter.tag)
+  const city = filter.cityId === null || filter.cityId === undefined ? '' : normalizeCandidateText(filter.cityId)
   return items.filter((item) => {
+    if (city.length > 0) {
+      const itemCity = candidateCityId(item)
+      if (itemCity !== null && normalizeCandidateText(itemCity) !== city) return false
+    }
     if (filter.untaggedOnly === true) {
       if (item.tags.length > 0) return false
     } else if (tag.length > 0) {

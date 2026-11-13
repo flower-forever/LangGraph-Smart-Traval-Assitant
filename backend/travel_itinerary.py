@@ -1422,6 +1422,64 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
             "确实需要跨城区或跨景区转移时，在 description 里简要说明理由。\n"
         )
 
+    # 七期 S6：多城请求要求每座请求城市各写一份 cityProfiles；
+    # 单城分支保留旧 cityProfile 模板与第 10-12 条原文，提示词逐字节不变。
+    if request.cities:
+        city_names = "、".join(city.name for city in request.cities)
+        city_profile_template = (
+            '  "cityProfiles": {\n'
+            '    "<城市名>": {\n'
+            '      "oneLineImpression": {"text": "一句话城市印象", "source": "model_generated"},\n'
+            '      "suggestedDays": {"min": 2, "max": 4, "source": "model_generated"},\n'
+            '      "districts": [\n'
+            '        {"name": "片区名", "summary": "一句话片区特点", '
+            '"attractions": ["代表景点1", "代表景点2"], "source": "model_generated"}\n'
+            "      ],\n"
+            '      "seasonTips": {"text": "当季一句话贴士", "source": "model_generated"},\n'
+            '      "classicList": [\n'
+            '        {"name": "经典景点名", "reason": "一句话理由", "source": "model_generated"}\n'
+            "      ]\n"
+            "    },\n"
+            '    "<下一座城市名>": {"…同上结构…"}\n'
+            "  },\n"
+        )
+        city_profile_rules = (
+            "10. cityProfiles 是本次联程每座请求城市各一份的稳定知识概览："
+            f"{city_names} 每城各写一份，key 必须是请求城市名；"
+            "每份含一句话印象、建议天数、3-6 个片区、当季贴士、8-15 条经典清单。"
+            "全部字段可选；没把握的块直接省略，不要编造。\n"
+            "11. cityProfiles 的每一份都禁止输出营业时间、票价、预约政策等易变具体信息，"
+            "也不要输出具体时间表或价格数字。\n"
+            "12. cityProfiles 字数软约束对每城每份同样生效："
+            "oneLineImpression / seasonTips 各不超过 40 字；"
+            "片区 summary 不超过 40 字；每条经典清单 reason 不超过 30 字；"
+            "district.attractions 只写 2-3 个景点名称。\n"
+        )
+    else:
+        city_profile_template = (
+            '  "cityProfile": {\n'
+            '    "oneLineImpression": {"text": "一句话城市印象", "source": "model_generated"},\n'
+            '    "suggestedDays": {"min": 2, "max": 4, "source": "model_generated"},\n'
+            '    "districts": [\n'
+            '      {"name": "片区名", "summary": "一句话片区特点", '
+            '"attractions": ["代表景点1", "代表景点2"], "source": "model_generated"}\n'
+            "    ],\n"
+            '    "seasonTips": {"text": "当季一句话贴士", "source": "model_generated"},\n'
+            '    "classicList": [\n'
+            '      {"name": "经典景点名", "reason": "一句话理由", "source": "model_generated"}\n'
+            "    ]\n"
+            "  },\n"
+        )
+        city_profile_rules = (
+            "10. cityProfile 是城市稳定知识概览：一句话印象、建议天数、3-6 个片区、当季贴士、"
+            "8-15 条经典清单。全部字段可选；没把握的块直接省略，不要编造。\n"
+            "11. cityProfile 中禁止输出营业时间、票价、预约政策等易变具体信息，"
+            "也不要输出具体时间表或价格数字。\n"
+            "12. cityProfile 字数软约束：oneLineImpression / seasonTips 各不超过 40 字；"
+            "片区 summary 不超过 40 字；每条经典清单 reason 不超过 30 字；"
+            "district.attractions 只写 2-3 个景点名称。\n"
+        )
+
     return (
         "你是结构化的旅行行程规划器。请只输出一个 JSON 对象，"
         "不要输出 Markdown 代码块标记、解释、前后缀或额外文字。\n\n"
@@ -1434,18 +1492,7 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "{\n"
         '  "title": "行程标题",\n'
         '  "summary": "2-3 句行程概述",\n'
-        '  "cityProfile": {\n'
-        '    "oneLineImpression": {"text": "一句话城市印象", "source": "model_generated"},\n'
-        '    "suggestedDays": {"min": 2, "max": 4, "source": "model_generated"},\n'
-        '    "districts": [\n'
-        '      {"name": "片区名", "summary": "一句话片区特点", '
-        '"attractions": ["代表景点1", "代表景点2"], "source": "model_generated"}\n'
-        "    ],\n"
-        '    "seasonTips": {"text": "当季一句话贴士", "source": "model_generated"},\n'
-        '    "classicList": [\n'
-        '      {"name": "经典景点名", "reason": "一句话理由", "source": "model_generated"}\n'
-        "    ]\n"
-        "  },\n"
+        f"{city_profile_template}"
         '  "days": [\n'
         "    {\n"
         '      "day": 1,\n'
@@ -1479,13 +1526,7 @@ def build_agent_prompt(request: TripPlanRequest) -> str:
         "8. 午餐（11:30-13:30）与晚餐（17:30-19:30）窗口内至少各留 45 分钟用餐时间；"
         "不确认沿途是否有餐馆时不要编造用餐地点。\n"
         "9. 只输出 JSON，不要包含 ``` 标记。\n"
-        "10. cityProfile 是城市稳定知识概览：一句话印象、建议天数、3-6 个片区、当季贴士、"
-        "8-15 条经典清单。全部字段可选；没把握的块直接省略，不要编造。\n"
-        "11. cityProfile 中禁止输出营业时间、票价、预约政策等易变具体信息，"
-        "也不要输出具体时间表或价格数字。\n"
-        "12. cityProfile 字数软约束：oneLineImpression / seasonTips 各不超过 40 字；"
-        "片区 summary 不超过 40 字；每条经典清单 reason 不超过 30 字；"
-        "district.attractions 只写 2-3 个景点名称。\n"
+        f"{city_profile_rules}"
         "13. 每个 stop 可选附带深度信息：highlights（2-3 条看点，每条一句话）、"
         "suitableFor（适合标签，只能取 history / food / nature / photo / family / "
         "elder_friendly）、suggestedStayMinutes（建议停留分钟区间，形如 {min, max}）、"
@@ -2264,6 +2305,32 @@ def normalize_agent_payload(
         # 容忍模型把 cityProfile 放在 trip 包装层外面的形态。
         raw_city_profile = payload.get("cityProfile")
     city_profile, city_profile_dropped = _parse_city_profile(raw_city_profile)
+
+    # 七期 S6：多城请求解析 cityProfiles。key 只认请求城市，多余 key 丢弃，
+    # 缺失城市不补造；任一份命中易变事实只补一条 warning（下面统一收口）。
+    # 单城请求完全走旧路径：忽略任何 cityProfiles，cityProfiles 保持 None。
+    city_profiles: dict[str, CityProfile] | None = None
+    if request.cities:
+        raw_city_profiles = data.get("cityProfiles")
+        if raw_city_profiles is None and data is not payload:
+            raw_city_profiles = payload.get("cityProfiles")
+        if isinstance(raw_city_profiles, dict):
+            parsed_profiles: dict[str, CityProfile] = {}
+            profiles_dropped = False
+            for city in request.cities:
+                parsed_profile, dropped = _parse_city_profile(
+                    raw_city_profiles.get(city.name)
+                )
+                profiles_dropped = profiles_dropped or dropped
+                if parsed_profile is not None:
+                    parsed_profiles[city.name] = parsed_profile
+            if parsed_profiles:
+                city_profiles = parsed_profiles
+            city_profile_dropped = city_profile_dropped or profiles_dropped
+        # 主城画像优先模型显式给的 cityProfile，否则回退 map 的首城。
+        if city_profile is None and city_profiles is not None:
+            city_profile = city_profiles.get(request.cities[0].name)
+
     if city_profile_dropped:
         warnings.append(
             "城市导览中有内容涉及营业时间、票价或预约等易变信息，已省略；请以官方渠道为准。"
@@ -2279,6 +2346,7 @@ def normalize_agent_payload(
         warnings=dedupe_warnings(warnings),
         days=days,
         cityProfile=city_profile,
+        cityProfiles=city_profiles,
     )
     # 私有来源记录：地图增强重算冲突时用来区分真实时刻与占位时间。
     trip._time_origins = time_origins

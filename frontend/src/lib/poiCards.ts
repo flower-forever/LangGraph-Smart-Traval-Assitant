@@ -77,6 +77,11 @@ export interface PoiCardV1 {
   id: string
   /** 复用候选池 dedupeKey 同款「名称+地址」归一化键；创建后随更新重算名称段。 */
   identityKey: string
+  /**
+   * 七期 S7：可选城市归属。缺省 = 全局卡（任何城市可见）；
+   * 旧卡不因校验 / 投影新增这个键。
+   */
+  cityId?: string | null
   name: string
   /** 最多 2000 字；空字符串 = 未填写。 */
   intro: string
@@ -200,6 +205,17 @@ function optionalText(value: unknown, max: number): string | null {
   const trimmed = typeof value === 'string' ? value.trim() : null
   if (trimmed === null || trimmed.length > max) return null
   return trimmed
+}
+
+/** 可选城市归属：trim 后空串 / null 视为全局（null），不是文本则拒绝。 */
+function optionalCityId(value: unknown, path: string): PoiCardsResult<string | null> {
+  if (value === undefined || value === null) return { ok: true, value: null }
+  if (typeof value !== 'string') return fail('invalid', `${path} 必须是文本或 null。`)
+  const trimmed = value.trim()
+  if (trimmed.length > MAX_POI_CARD_FIELD_LENGTH) {
+    return fail('invalid', `${path} 最多 ${MAX_POI_CARD_FIELD_LENGTH} 个字符。`)
+  }
+  return { ok: true, value: trimmed === '' ? null : trimmed }
 }
 
 const IMAGE_SOURCES: readonly PoiCardImageSource[] = ['manual', 'tavily', 'osm', 'wikimedia']
@@ -328,6 +344,8 @@ function validateStoredPoiCard(value: unknown, path: string): PoiCardsResult<Poi
   if (ticket === null) {
     return fail('invalid', `${path}.ticket 最多 ${MAX_POI_CARD_FIELD_LENGTH} 个字符。`)
   }
+  const cityId = optionalCityId(value.cityId, `${path}.cityId`)
+  if (!cityId.ok) return cityId
   if (!Array.isArray(value.images)) return fail('invalid', `${path}.images 必须是数组。`)
   if (value.images.length > MAX_POI_CARD_IMAGES) {
     return fail('invalid', `${path}.images 最多 ${MAX_POI_CARD_IMAGES} 张。`)
@@ -354,21 +372,21 @@ function validateStoredPoiCard(value: unknown, path: string): PoiCardsResult<Poi
   if (value.updatedAt < value.createdAt) {
     return fail('invalid', `${path}.updatedAt 不能早于 createdAt。`)
   }
-  return {
-    ok: true,
-    value: {
-      id,
-      identityKey,
-      name,
-      intro,
-      openingHours,
-      ticket,
-      images,
-      provenance: provenance.value,
-      createdAt: value.createdAt,
-      updatedAt: value.updatedAt,
-    },
+  const card: PoiCardV1 = {
+    id,
+    identityKey,
+    name,
+    intro,
+    openingHours,
+    ticket,
+    images,
+    provenance: provenance.value,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
   }
+  // 只有明确有城市时才落键：旧卡（无 cityId）往返后键集合不变。
+  if (cityId.value !== null) card.cityId = cityId.value
+  return { ok: true, value: card }
 }
 
 /**
@@ -470,6 +488,8 @@ export interface PoiCardInput {
   id: string
   name: string
   address?: string | null
+  /** 七期 S7：可选城市归属；缺省 / 空串 = 全局卡。 */
+  cityId?: string | null
   intro?: string
   openingHours?: string
   ticket?: string
@@ -486,6 +506,7 @@ export function createPoiCard(input: PoiCardInput, now: number): PoiCardsResult<
       id: input.id,
       name: input.name,
       identityKey: poiCardIdentityKey({ name: input.name, address: input.address ?? null }),
+      cityId: input.cityId ?? null,
       intro: input.intro ?? '',
       openingHours: input.openingHours ?? '',
       ticket: input.ticket ?? '',
@@ -503,6 +524,8 @@ export interface PoiCardPatch {
   name?: string
   /** 只参与 identityKey 重算（名称段 + 地址段）；不落在卡上。 */
   address?: string | null
+  /** 七期 S7：undefined = 保持原值；null / 空串 = 清除城市（回到全局卡）。 */
+  cityId?: string | null
   intro?: string
   openingHours?: string
   ticket?: string
@@ -542,6 +565,7 @@ export function updatePoiCard(
       id: current.id,
       name: nextName,
       identityKey: nextIdentityKey,
+      cityId: patch.cityId !== undefined ? patch.cityId : current.cityId,
       intro: patch.intro ?? current.intro,
       openingHours: patch.openingHours ?? current.openingHours,
       ticket: patch.ticket ?? current.ticket,

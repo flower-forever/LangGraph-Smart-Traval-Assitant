@@ -13,9 +13,11 @@
  *   只认明确、无歧义的文本；含糊形状（「全天」、多段区间、含文案）一律放弃判定。
  */
 
-import type { TripDay, TripStop } from './api'
+import type { TripDay, TripLeg, TripStop } from './api'
+import { findIntercityLeg } from './cityScope'
+import { isMealStopLike } from './mealGap'
 import type { StopFactField, StopFacts } from './stopFacts'
-import { analyzeDayRoute } from './routeFlow'
+import { analyzeDayRoute, haversineKm } from './routeFlow'
 
 /** 节奏档位：与后端 pace 字段同一枚举；缺省 balanced。 */
 export type HealthPace = 'relaxed' | 'balanced' | 'packed'
@@ -29,6 +31,7 @@ export type HealthCode =
   | 'closed_day'
   | 'meal_gap'
   | 'pace'
+  | 'intercity_transfer'
   | 'backtrack'
   | 'unknown_time'
   | 'detour'
@@ -88,6 +91,13 @@ function formatDurationCn(total: number): string {
   if (hours === 0) return `${minutes} 分钟`
   if (minutes === 0) return `${hours} 小时`
   return `${hours} 小时 ${minutes} 分`
+}
+
+/** 当日分钟数 → HH:MM（仅用于城际到达时刻的 evidence / message）。 */
+function formatClock(total: number): string {
+  const hour = Math.floor(total / 60)
+  const minute = total % 60
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
 /**
@@ -348,11 +358,33 @@ function checkMealGaps(day: TripDay): HealthItem | null {
   if (day.stops.length === 0) return null
 
   const problems: string[] = []
+  /** S8-39：窗口内已有餐饮站 → 视为已安排正餐，不再按空档不足报 notice。 */
+  const mealStops: string[] = []
   const windows: Array<[string, { start: string; end: string }]> = [
     ['午餐', LUNCH_WINDOW],
     ['晚餐', DINNER_WINDOW],
   ]
   for (const [label, window] of windows) {
+    const windowStart = parseHhMm(window.start)
+    const windowEnd = parseHhMm(window.end)
+    // 口径：到达时间落在窗口内（左闭右开）且站名 / 描述命中餐饮关键词。
+    // 只认行程里已经安排的站，不推断沿途是否有餐馆。
+    const mealStop =
+      windowStart === null || windowEnd === null
+        ? undefined
+        : day.stops.find((stop) => {
+            const arrival = parseHhMm(stop.time)
+            return (
+              arrival !== null &&
+              arrival >= windowStart &&
+              arrival < windowEnd &&
+              isMealStopLike(stop)
+            )
+          })
+    if (mealStop !== undefined) {
+      mealStops.push(`${label}（${mealStop.time}「${mealStop.name}」）`)
+      continue
+    }
     const gap = largestFreeGapInWindow(occupied, window)
     if (gap === null) continue
     if (gap < MAIN_MEAL_MIN_MINUTES) {
@@ -361,12 +393,18 @@ function checkMealGaps(day: TripDay): HealthItem | null {
   }
 
   if (problems.length > 0) {
+    const mealStopNote =
+      mealStops.length > 0
+        ? `已识别到餐饮站：${mealStops.join('、')}，对应窗口按已安排正餐处理。`
+        : ''
     return {
       code: 'meal_gap',
       level: 'notice',
       message: `正餐窗口偏紧：${problems.length === 2 ? '午餐与晚餐' : problems[0]}安排可能没有留足正餐时间。`,
       evidence:
-        `${problems.join('；')}。要求 ${LUNCH_WINDOW.start}-${LUNCH_WINDOW.end} 与 ` +
+        `${problems.join('；')}。` +
+        mealStopNote +
+        `要求 ${LUNCH_WINDOW.start}-${LUNCH_WINDOW.end} 与 ` +
         `${DINNER_WINDOW.start}-${DINNER_WINDOW.end} 各留至少 ${MAIN_MEAL_MIN_MINUTES} 分钟；` +
         '占用按站点到达时间 + 停留时长计算。本体检不确认沿途是否有餐馆。',
       suggestion: '可在「编辑这趟行程」里留出用餐时间，或让「AI 调整单日」避开饭点。',
@@ -455,8 +493,140 @@ function checkPace(day: TripDay, pace: HealthPace): HealthItem | null {
 }
 
 /**
+ * 城际转移（七期 S5）：当天最后一条 `transferKind='intercity'` 的 leg。
+ *
+ * - 绕行：`distance_m` 与两端 haversine 直线距离比对，超过 1.6 倍 → notice。
+ *   S1 的 straight_line 距离 = 直线，比为 1.0，不误报；真实路线距离接入后生效。
+ * - 时间：当天末站离开（到达 + 停留）+ 城际耗时 晚于下一天首站到达 → notice。
+ * - leg / 坐标 / 时间 / 下一天缺失 → unknown（不猜、不按 0 补）。
+ * - 单城无城际 leg → null，零输出。
+ */
+export const INTERCITY_DETOUR_RATIO = 1.6
+
+function checkIntercityTransfer(day: TripDay, nextDay: TripDay | null): HealthItem | null {
+  const leg = findIntercityLeg(day)
+  if (leg === null) return null
+
+  const problems: string[] = []
+  const unknownParts: string[] = []
+  const evidenceParts: string[] = []
+
+  const fromStop = day.stops.find((stop) => stop.id === leg.from_stop_id) ?? null
+  const nextFirstStop = nextDay?.stops[0] ?? null
+  // 到达站：优先在下一天找（契约：城际段连接当日末站与次日首站），找不到再看当天。
+  const toStop =
+    nextDay?.stops.find((stop) => stop.id === leg.to_stop_id) ??
+    day.stops.find((stop) => stop.id === leg.to_stop_id) ??
+    null
+
+  if (fromStop === null) unknownParts.push('城际段的出发站不在当天行程里')
+  if (nextDay === null) unknownParts.push('没有下一天行程，无法核对城际到达时间')
+  else if (nextFirstStop === null) unknownParts.push('下一天没有站点，无法核对城际到达时间')
+
+  const routeUsable = leg.route_type !== 'unavailable'
+  if (!routeUsable) {
+    unknownParts.push('城际段路线待重新获取（route_type=unavailable）')
+  }
+
+  /* 1) 绕行检查：路线距离 vs 端点直线距离。 */
+  const legMeters =
+    routeUsable && typeof leg.distance_m === 'number' && Number.isFinite(leg.distance_m)
+      ? leg.distance_m
+      : null
+  const straightKm =
+    fromStop?.location != null && toStop?.location != null
+      ? haversineKm(fromStop.location, toStop.location)
+      : Number.NaN
+  const straightMeters = Number.isFinite(straightKm) ? straightKm * 1000 : null
+
+  if (routeUsable) {
+    if (legMeters === null) unknownParts.push('城际段缺路线距离 distance_m')
+    if (straightMeters === null) unknownParts.push('城际段端点缺可用坐标')
+  }
+  if (legMeters !== null && straightMeters !== null) {
+    evidenceParts.push(
+      `路线距离 ${(legMeters / 1000).toFixed(1)} 公里 / 两端直线 ${(straightMeters / 1000).toFixed(1)} 公里`,
+    )
+    if (legMeters > straightMeters * INTERCITY_DETOUR_RATIO) {
+      problems.push(
+        `城际转移绕行异常：路线距离约 ${(legMeters / 1000).toFixed(1)} 公里，` +
+          `两端直线仅 ${(straightMeters / 1000).toFixed(1)} 公里（超过 ${INTERCITY_DETOUR_RATIO} 倍）。`,
+      )
+    }
+  }
+
+  /* 2) 时间检查：末站离开 + 城际耗时 vs 下一天首站到达。 */
+  const legMinutes =
+    routeUsable && typeof leg.duration_minutes === 'number' && Number.isFinite(leg.duration_minutes)
+      ? leg.duration_minutes
+      : null
+  const lastArrival = fromStop !== null ? parseHhMm(fromStop.time) : null
+  const lastDuration = fromStop !== null ? stopDurationMinutes(fromStop) : null
+  const departAt =
+    lastArrival !== null && lastDuration !== null ? lastArrival + lastDuration : null
+  const nextArrival = nextFirstStop !== null ? parseHhMm(nextFirstStop.time) : null
+
+  if (routeUsable && legMinutes === null) unknownParts.push('城际段缺耗时 duration_minutes')
+  if (fromStop !== null && (lastArrival === null || lastDuration === null)) {
+    unknownParts.push('当天末站缺到达时间或停留时长')
+  }
+  if (nextFirstStop !== null && nextArrival === null) {
+    unknownParts.push('下一天首站缺到达时间')
+  }
+  if (departAt !== null && legMinutes !== null) {
+    const expectedArrival = departAt + legMinutes
+    evidenceParts.push(
+      `末站 ${formatClock(departAt)} 离开 + 城际 ${legMinutes} 分钟 = ${formatClock(expectedArrival % (24 * 60))}`,
+    )
+    if (expectedArrival >= 24 * 60) {
+      // 跨午夜：当日时刻不可直接比较，宁可放弃判定。
+      unknownParts.push('城际耗时跨越午夜，无法用当日时刻核对')
+    } else if (nextArrival !== null && nextArrival < expectedArrival) {
+      problems.push(
+        `城际转移时间不足：预计 ${formatClock(expectedArrival)} 抵达，` +
+          `但下一天首站 ${nextFirstStop?.time} 已安排到达（早 ${expectedArrival - nextArrival} 分钟）。`,
+      )
+    }
+  }
+
+  if (problems.length > 0) {
+    const note = unknownParts.length > 0 ? `（另有未核对项：${unknownParts.join('、')}）` : ''
+    return {
+      code: 'intercity_transfer',
+      level: 'notice',
+      message: problems.join('；') + note,
+      evidence:
+        `${evidenceParts.join('；')}。` +
+        `城际段按 legs 的 transferKind='intercity' 识别；绕行阈值为直线的 ${INTERCITY_DETOUR_RATIO} 倍，` +
+        '时间按「末站离开 + 城际耗时」与下一天首站到达比对。',
+      suggestion: '请用「编辑这趟行程」调整城际段或次日首站时间；本体检不会自动修改行程。',
+    }
+  }
+  if (unknownParts.length > 0) {
+    const fromLabel = fromStop?.name ?? leg.from_stop_id
+    const toLabel = toStop?.name ?? leg.to_stop_id
+    return {
+      code: 'intercity_transfer',
+      level: 'unknown',
+      message: `无法完整核对城际转移：${unknownParts.join('、')}。`,
+      evidence:
+        `城际段（${fromLabel} → ${toLabel}）数据不全；` +
+        '缺失项不按 0 补，绕行与时间两项都不猜测。' +
+        (evidenceParts.length > 0 ? evidenceParts.join('；') + '。' : ''),
+      suggestion: null,
+    }
+  }
+  return null
+}
+
+/**
  * 折返：复用 routeFlow 的相邻交换分析；缩短 ≥10% 才提示「顺序可优化」，
  * 不自动改。坐标缺失等 → 沉默（routeFlow 自己的 unknown 语义），本规则不再叠加。
+ *
+ * 七期 S5 防御性豁免：`transferKind='intercity'` 的 leg 不参与同日回溯。
+ * `analyzeDayRoute` 只吃 stops、本就不读 legs，所以这里无需额外过滤；
+ * 追加城际段前后 backtrack 输出必须完全一致（回归用例 6 钉住）。
+ * 站级城市（stop.cityId）留八期，同日跨城站对不在本片识别范围。
  */
 function checkBacktrack(day: TripDay): HealthItem | null {
   const analysis = analyzeDayRoute(
@@ -490,10 +660,17 @@ function checkDetour(day: TripDay): HealthItem | null {
   if (points.some((point) => point === null || !Number.isFinite(point.lng) || !Number.isFinite(point.lat))) {
     return null
   }
+  // 七期 S5：按 from_stop_id/to_stop_id 精确匹配站点对，legs 缺段 / 插入城际段时不再按
+  // 位置错位；城际转移段本身是跨城长距离，不参与同日 detour（绕行交给 intercity_transfer）。
+  const legByPair = new Map<string, TripLeg>()
+  for (const leg of day.legs) {
+    if (leg.transferKind === 'intercity') continue
+    legByPair.set(`${leg.from_stop_id}\u0000${leg.to_stop_id}`, leg)
+  }
   let worstIndex = -1
   let worstKm = 0
   for (let i = 1; i < points.length; i += 1) {
-    const leg = day.legs[i - 1]
+    const leg = legByPair.get(`${day.stops[i - 1].id}\u0000${day.stops[i].id}`)
     const legKm =
       leg !== undefined && typeof leg.distance_m === 'number' && Number.isFinite(leg.distance_m)
         ? leg.distance_m / 1000
@@ -565,12 +742,17 @@ function summarize(items: readonly HealthItem[]): DayHealthReport['counts'] {
  * 一天的体检。输入：当天行程 + 节奏档位 + 每站的可信字段查询（S2 投影，可为 null）。
  * 输出只读问题清单；同输入同输出；零副作用。
  *
- * rules 顺序固定：opening → closed → meal → pace → backtrack → detour → unknown_time。
+ * rules 顺序固定：opening → closed → meal → pace → intercity_transfer → backtrack →
+ * detour → unknown_time。
+ *
+ * 七期 S5：`nextDay` 可选（默认 null），只用于城际转移的时间核对；
+ * 旧调用不传时行为除「有城际段会报 unknown」外与五期完全一致。
  */
 export function inspectDayHealth(
   day: TripDay,
   pace: HealthPace,
   factsByStop: ReadonlyArray<StopFacts | null>,
+  nextDay: TripDay | null = null,
 ): DayHealthReport {
   const items: HealthItem[] = []
   const push = (item: HealthItem | null) => {
@@ -581,6 +763,7 @@ export function inspectDayHealth(
   push(checkClosedDay(day, factsByStop))
   push(checkMealGaps(day))
   push(checkPace(day, pace))
+  push(checkIntercityTransfer(day, nextDay))
   push(checkBacktrack(day))
   push(checkDetour(day))
   push(checkUnknownTime(day))

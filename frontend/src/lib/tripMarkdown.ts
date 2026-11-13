@@ -17,6 +17,7 @@
 
 import type { Trip, TripDay, TripLeg, TripStop } from './api'
 import { isTripLike } from './api'
+import { tripCityLabel } from './cityScope'
 import { checkTripShape, utf8ByteLength } from './savedTrips'
 import { safeTripBackupFilename } from './tripFile'
 
@@ -220,7 +221,7 @@ export function tripToMarkdown(trip: Trip, options: { maxBytes?: number } = {}):
   const lines: string[] = []
   lines.push(`# ${escapeUserText(trip.title || MISSING)}`)
   lines.push('')
-  lines.push(`- 目的地：${escapeUserText(trip.destination || MISSING)}`)
+  lines.push(`- 目的地：${escapeUserText(tripCityLabel(trip) || MISSING)}`)
   lines.push(`- 行程来源：${TRIP_SOURCE_LABELS[trip.source]}`)
   lines.push(`- 天数：${trip.days.length}`)
   if (trip.summary.trim() !== '') lines.push(`- 摘要：${escapeUserText(trip.summary)}`)

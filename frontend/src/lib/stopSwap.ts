@@ -16,7 +16,7 @@
  */
 
 import type { TripLeg, TripLocation, TripStop } from './api'
-import { normalizeCandidateText } from './candidatePool'
+import { filterCandidates, normalizeCandidateText } from './candidatePool'
 import type { PoiCardsRecordV1 } from './poiCards'
 import { haversineKm } from './routeFlow'
 import { projectStopFacts, type StopFactStatus } from './stopFacts'
@@ -61,6 +61,11 @@ export interface SwapCandidateInput {
   now: number
   /** 同一天里其它站点的名字：用于排除重复站点。 */
   otherStopNames?: readonly string[]
+  /**
+   * 七期 S7：当前城市。传入时先按「同城 + 全局」过滤候选池；
+   * 缺省 / 空串 = 与旧行为一致（全部候选池条目）。
+   */
+  city?: string | null
 }
 
 /** 可信状态的中文说明；与 S2 语义一致，绝不出现「已核实」。 */
@@ -258,8 +263,13 @@ export function buildSwapCandidates(input: SwapCandidateInput): SwapCandidate[] 
   takenNames.add(stopNameKey)
 
   const result: SwapCandidate[] = []
+  const city = typeof input.city === 'string' ? input.city.trim() : ''
+  const pool =
+    city === ''
+      ? (input.candidates ?? [])
+      : filterCandidates(input.candidates ?? [], { cityId: city })
 
-  for (const item of input.candidates ?? []) {
+  for (const item of pool) {
     const nameKey = normalizeCandidateText(item.name)
     if (nameKey.length === 0 || takenNames.has(nameKey)) continue
     const location = candidateLocation(item)

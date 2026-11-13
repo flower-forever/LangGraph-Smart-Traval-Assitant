@@ -49,6 +49,8 @@ export interface StopSwapPanelProps {
   candidates?: readonly CandidateItemV1[] | null
   /** 资料卡库；可空。 */
   poiCards?: PoiCardsRecordV1 | null
+  /** 七期 S7：多城时当前天城市；用于候选池按城过滤，单城不传。 */
+  city?: string | null
   /** 关闭面板。 */
   onClose: () => void
   /**
@@ -80,6 +82,7 @@ export default function StopSwapPanel({
   onDraftChange,
   candidates = null,
   poiCards = null,
+  city = null,
   onClose,
   returnFocusTo = null,
   onSwapAnimated,
@@ -108,12 +111,13 @@ export default function StopSwapPanel({
         stop,
         candidates: candidates ?? null,
         poiCards: poiCards ?? null,
+        city,
         now: Date.now(),
         otherStopNames,
       }),
     // candidates / poiCards 是父组件给的记录引用；变了就重算。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stop, candidates, poiCards, otherStopNames],
+    [stop, candidates, poiCards, city, otherStopNames],
   )
   const shown = topSwapCandidates(candidatesList, SWAP_CANDIDATE_LIMIT)
   const selected: SwapCandidate | null =

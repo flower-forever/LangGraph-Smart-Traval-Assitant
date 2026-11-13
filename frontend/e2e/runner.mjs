@@ -79,6 +79,12 @@ import {
   runS9SwapFocus,
   setS9AppOrigin,
 } from './s9NarrowKeyboardScenarios.mjs'
+import {
+  runP7CinemaScenario,
+  runP7StampScenario,
+  runP7SwapFlyToScenario,
+  setP7AppOrigin,
+} from './p7Scenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1371,6 +1377,53 @@ async function scenarioS9SwapFocus() {
   }
 }
 
+/** ───────────────────────── 七期 S8 · 落印 / 换一换 + fly-to / 电影模式（E2E 补测） ───────────────────────── */
+
+async function scenarioP7Stamp() {
+  const { context, page } = await newOfflineContext('p7Stamp')
+  const rec = makeStepRecorder('p7Stamp', 'desktop-1440')
+  try {
+    await runP7StampScenario({
+      page,
+      rec,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.p7Stamp = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioP7SwapFlyTo() {
+  const { context, page } = await newOfflineContext('p7SwapFlyTo')
+  const rec = makeStepRecorder('p7SwapFlyTo', 'desktop-1440')
+  try {
+    await runP7SwapFlyToScenario({
+      page,
+      rec,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.p7SwapFlyTo = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioP7Cinema() {
+  const { context, page } = await newOfflineContext('p7Cinema')
+  const rec = makeStepRecorder('p7Cinema', 'desktop-1440')
+  try {
+    await runP7CinemaScenario({
+      page,
+      rec,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.p7Cinema = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1459,6 +1512,10 @@ try {
   setS9AppOrigin(appOrigin)
   await scenarioS9NarrowKeyboard()
   await scenarioS9SwapFocus()
+  setP7AppOrigin(appOrigin)
+  await scenarioP7Stamp()
+  await scenarioP7SwapFlyTo()
+  await scenarioP7Cinema()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

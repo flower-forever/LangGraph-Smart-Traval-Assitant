@@ -1,5 +1,6 @@
 import type { Trip } from './api'
 import { tripToIcs, type IcsExportOptions, type IcsExportResult } from './calendar'
+import { tripCityLabel } from './cityScope'
 
 /** .ics 的标准 MIME；带 charset 让导入端按 UTF-8 解码中文 */
 export const ICS_MIME_TYPE = 'text/calendar;charset=utf-8'
@@ -43,7 +44,9 @@ export function sanitizeFilenamePart(raw: unknown): string {
  * 不包含时间戳，保证同一行程重复导出的文件名一致。
  */
 export function safeIcsFilename(trip: Trip): string {
-  const destination = sanitizeFilenamePart(trip?.destination)
+  const destination = sanitizeFilenamePart(
+    trip === null || trip === undefined ? '' : tripCityLabel(trip),
+  )
   const title = sanitizeFilenamePart(trip?.title)
   let base = [destination, title]
     .filter(Boolean)

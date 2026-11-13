@@ -15,6 +15,7 @@
 import { useMemo, useState, type RefObject } from 'react'
 
 import type { TripDay } from '../lib/api'
+import { filterCandidates } from '../lib/candidatePool'
 import type { PoiCardsRecordV1 } from '../lib/poiCards'
 import type { CandidateItemV1 } from '../lib/workspace'
 import {
@@ -45,6 +46,11 @@ export interface MealSuggestPanelProps {
   onDraftChange: (next: TripDraft) => void
   /** 候选池条目；可空（未接入时只有资料卡来源）。 */
   candidates?: readonly CandidateItemV1[] | null
+  /**
+   * 七期 S7：当前城市。传入时候选池只取「同城 + 全局」；
+   * 缺省 / 空串 = 与旧行为一致。
+   */
+  city?: string | null
   /** 资料卡库；可空。 */
   poiCards?: PoiCardsRecordV1 | null
   /** 新站点 id 由调用方生成（与 TripDraftEditor 的 createStopId 同一纪律）。 */
@@ -89,6 +95,7 @@ export default function MealSuggestPanel({
   onCreateDraft,
   onDraftChange,
   candidates = null,
+  city = null,
   poiCards = null,
   createStopId,
   now,
@@ -105,11 +112,17 @@ export default function MealSuggestPanel({
     return day.stops[insertion.slot.index - 1] ?? day.stops[insertion.slot.index] ?? null
   }, [day, insertion])
 
+  const scopedCandidates = useMemo(() => {
+    if (candidates === null) return null
+    const key = typeof city === 'string' ? city.trim() : ''
+    return key === '' ? candidates : filterCandidates(candidates, { cityId: key })
+  }, [candidates, city])
+
   const mealCandidates = useMemo(() => {
     if (!insertion.ok) return []
     return topMealCandidates(
       buildMealCandidates({
-        candidates: candidates ?? null,
+        candidates: scopedCandidates,
         poiCards: poiCards ?? null,
         anchorStop,
         existingStopNames: day.stops.map((stop) => stop.name),
@@ -117,9 +130,9 @@ export default function MealSuggestPanel({
       }),
       MEAL_CANDIDATE_LIMIT,
     )
-    // candidates / poiCards 是父组件给的记录引用；变了就重算。
+    // scopedCandidates / poiCards 是父组件给的记录引用；变了就重算。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insertion, anchorStop, day, candidates, poiCards])
+  }, [insertion, anchorStop, day, scopedCandidates, poiCards])
 
   const [preview, setPreview] = useState<PreviewState | null>(null)
   const [applied, setApplied] = useState<AppliedState | null>(null)

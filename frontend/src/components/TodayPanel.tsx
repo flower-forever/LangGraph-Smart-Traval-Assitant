@@ -59,6 +59,8 @@ export interface TodayPanelProps {
   now?: () => number
   /** 天气 adapter 注入：默认 weatherApi.fetchDayWeather，测试传 mock。 */
   requestWeather?: WeatherAdapter
+  /** 七期 S3：当前天所在城市；仅多城行程传入，不传时输出与旧版完全一致。 */
+  city?: string | null
 }
 
 type WeatherView =
@@ -101,6 +103,7 @@ export default function TodayPanel({
   onSelectStop,
   now = Date.now,
   requestWeather,
+  city,
 }: TodayPanelProps) {
   const nowMs = now()
   const pick = pickTodayDay(days, nowMs)
@@ -184,6 +187,8 @@ export default function TodayPanel({
         ? `行程第 ${day.day} 天（日期未匹配）`
         : `行程第 ${day.day} 天（日期未知）`
   const clockText = localDateKey(nowMs) === '' ? null : minutesToHhMm(minutesOfDay(nowMs))
+  /* 七期 S3：城市徽标只在显式传入非空城市时渲染，单城/旧调用零 DOM 变化。 */
+  const cityBadge = typeof city === 'string' ? city.trim() : ''
 
   /* ── S7 本日连续讲解 ── */
   const narrationItems = day.stops.map((stop, index) => ({
@@ -213,6 +218,14 @@ export default function TodayPanel({
     <div data-testid="today-panel" data-today-kind={pick.kind} className={cn(CARD, 'oc-panel-enter-fast')}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className={LABEL} data-testid="today-day-label">{dayLabel}</p>
+        {cityBadge !== '' && (
+          <span
+            className="inline-flex items-center rounded-full border border-[color:var(--color-line-strong)] bg-secondary px-2 py-0.5 text-xs font-normal text-[color:var(--color-secondary-foreground)]"
+            data-testid="today-city-badge"
+          >
+            {cityBadge}
+          </span>
+        )}
         {clockText !== null && (
           <p className={`m-0 font-mono text-xs ${MUTED}`} data-testid="today-clock">现在 {clockText}</p>
         )}

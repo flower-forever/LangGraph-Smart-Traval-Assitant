@@ -18,12 +18,20 @@ const CoverageCardContent = lazy(() => import('./CoverageCardContent'))
  * 只判断「有没有可用 classicList」，不做内容清洗；完整投影留在懒加载实现体里。
  * 无 cityProfile / 无 classicList → 直接不渲染，也不会闪一次 loading（无伪统计）。
  */
-function hasClassicList(trip: Trip | null | undefined): boolean {
+function profileHasClassics(profile: Trip['cityProfile'] | undefined): boolean {
   return Boolean(
-    trip?.cityProfile &&
-      Array.isArray(trip.cityProfile.classicList) &&
-      trip.cityProfile.classicList.length > 0,
+    profile &&
+      Array.isArray(profile.classicList) &&
+      profile.classicList.length > 0,
   )
+}
+
+function hasClassicList(trip: Trip | null | undefined): boolean {
+  if (!trip) return false
+  if (profileHasClassics(trip.cityProfile)) return true
+  const profiles = trip.cityProfiles
+  if (!profiles || typeof profiles !== 'object') return false
+  return Object.values(profiles).some((profile) => profileHasClassics(profile))
 }
 
 function CoverageCardLoadingFallback() {

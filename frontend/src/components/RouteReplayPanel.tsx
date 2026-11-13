@@ -31,6 +31,7 @@ import {
   buildReplayDay,
   reduceReplay,
   replayDwellMs,
+  replayIntercityMs,
   replayLegMs,
   replayRouteLabel,
   replayStayLabel,
@@ -115,6 +116,7 @@ export default function RouteReplayPanel({
   const layerRef = useRef<L.LayerGroup | null>(null)
   const markerRefs = useRef<Map<number, L.Marker>>(new Map())
   const lineRefs = useRef<Array<L.Polyline | null>>([])
+  const intercityLineRef = useRef<L.Polyline | null>(null)
 
   const initialIndex = Math.max(
     0,
@@ -139,6 +141,9 @@ export default function RouteReplayPanel({
         legMs: plan.stations.map((station) =>
           replayLegMs(station.inbound?.durationMinutes, station.inbound?.kind),
         ),
+        // 七期 S4：只有跨城日才有收尾城际段；单城 null，时间轴与 HEAD 一致。
+        intercity: plan.intercity,
+        intercityMs: plan.intercity ? replayIntercityMs(plan.intercity.durationMinutes) : undefined,
       }),
     [plan, reducedMotion],
   )
@@ -246,6 +251,7 @@ export default function RouteReplayPanel({
       layerRef.current = null
       markerRefs.current.clear()
       lineRefs.current = []
+      intercityLineRef.current = null
     }
   }, [])
 
@@ -290,6 +296,23 @@ export default function RouteReplayPanel({
       lines.push(polyline)
     })
     lineRefs.current = lines
+
+    // 七期 S4 · 城际段：单独一条虚线（估算，不冒充导航）；没有城际段时不建任何图层。
+    intercityLineRef.current = null
+    const intercity = plan.intercity
+    if (intercity && intercity.geometry.length >= 2) {
+      const polyline = L.polyline([], {
+        className: 'replay-leg replay-intercity',
+        color: 'var(--color-line-strong)',
+        weight: 4,
+        opacity: 0.95,
+        dashArray: '6 6',
+        lineCap: 'round',
+        interactive: false,
+      })
+      polyline.addTo(layer)
+      intercityLineRef.current = polyline
+    }
   }, [plan])
 
   /* 当前站高亮：只换图标，不重建 marker */
@@ -302,7 +325,6 @@ export default function RouteReplayPanel({
   /* 路线可见性：已走过的段画满，当前段按 progress 截断，未来段不提前画 */
   useEffect(() => {
     const lines = lineRefs.current
-    if (lines.length === 0) return
     for (let index = 1; index < lines.length; index += 1) {
       const line = lines[index]
       if (!line) continue
@@ -325,6 +347,20 @@ export default function RouteReplayPanel({
       const element = line.getElement()
       if (element) element.setAttribute('data-drawn', points ? 'true' : 'false')
     }
+
+    // 城际段只在城际 phase 内按进度画，播完（finished）画满；之前不提前出现。
+    const intercityLine = intercityLineRef.current
+    const intercity = plan.intercity
+    if (intercityLine && intercity && intercity.geometry.length >= 2) {
+      let points: Array<{ lng: number; lat: number }> | null = null
+      if (state.phase === 'finished') points = intercity.geometry
+      else if (state.phase === 'intercity') points = sliceGeometry(intercity.geometry, state.progress)
+      intercityLine.setLatLngs(
+        points ? points.map((point) => [point.lat, point.lng] as [number, number]) : [],
+      )
+      const element = intercityLine.getElement()
+      if (element) element.setAttribute('data-drawn', points ? 'true' : 'false')
+    }
   }, [plan, state.stationIndex, state.phase, state.progress])
 
   /* 地图移动：到站 pan/zoom；画线时把整段放进视野；无坐标站不移动 */
@@ -340,6 +376,15 @@ export default function RouteReplayPanel({
       if (points.length > 0) {
         map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 13, animate: false })
       }
+      return
+    }
+    if (state.phase === 'intercity' && plan.intercity && plan.intercity.geometry.length >= 2) {
+      map.fitBounds(
+        L.latLngBounds(
+          plan.intercity.geometry.map((point) => [point.lat, point.lng] as [number, number]),
+        ),
+        { padding: [48, 48], maxZoom: 13, animate: !reducedMotion },
+      )
       return
     }
     if (state.phase === 'leg') {
@@ -407,7 +452,9 @@ export default function RouteReplayPanel({
         ? '回放结束'
         : state.phase === 'leg'
           ? `前往第 ${state.stationIndex + 2} 站（路线绘制中）`
-          : `第 ${state.stationIndex + 1} 站 / 共 ${stationCount} 站`
+          : state.phase === 'intercity'
+            ? '城际转移（估算）'
+            : `第 ${state.stationIndex + 1} 站 / 共 ${stationCount} 站`
   const playLabel = stationCount === 0 ? '播放' : state.playing ? '暂停' : finished ? '重新播放' : '播放'
 
   const changeDay = (index: number) => {
@@ -446,7 +493,13 @@ export default function RouteReplayPanel({
     >
       <p className={`m-0 ${MUTED}`}>
         第 {current.index + 1} 站 / 共 {stationCount} 站
-        {state.phase === 'leg' ? ' · 正在前往下一站' : finished ? ' · 回放结束' : ' · 当前站'}
+        {state.phase === 'leg'
+          ? ' · 正在前往下一站'
+          : state.phase === 'intercity'
+            ? ' · 城际转移（估算）'
+            : finished
+              ? ' · 回放结束'
+              : ' · 当前站'}
       </p>
       <h3 className="m-0 mt-1 font-display text-lg font-bold [overflow-wrap:anywhere]" data-testid="replay-current-name">
         {current.stop.name}
@@ -474,6 +527,14 @@ export default function RouteReplayPanel({
       <p className="m-0 mt-2 border-t border-border pt-2 text-xs text-muted-foreground" data-testid="replay-next-leg">
         下一段：{next ? nextLegSummary(next) : '本日路线结束'}
       </p>
+      {/* 七期 S4：只有跨城日才出现城际段说明；单城 DOM 与 HEAD 完全一致。 */}
+      {plan.intercity && (
+        <p className="m-0 mt-2 text-xs text-[color:var(--color-secondary-foreground)]" data-testid="replay-intercity-note">
+          <i aria-hidden="true" className="mr-1 inline-block h-0 w-[22px] border-t-2 border-dashed border-[color:var(--color-line-strong)] align-middle" />
+          城际转移（估算，班次未提供）
+          {plan.intercity.description ? `：${plan.intercity.description}` : ''}
+        </p>
+      )}
       {reducedMotion && (
         <p className="m-0 mt-2 text-xs text-muted-foreground" data-testid="replay-reduced-note">
           已按系统「减少动态效果」设置关闭路线动画，按站翻页。
@@ -570,6 +631,11 @@ export default function RouteReplayPanel({
             />
             <div className="pointer-events-none absolute left-3 top-3 z-[400] rounded-[6px] border border-border bg-card/95 px-2 py-1 text-[11px] leading-[1.5] text-[color:var(--color-secondary-foreground)] shadow-[var(--shadow-1)]">
               实线：地图服务路线 · 虚线：示意直线 · 未来路段不提前绘制
+              {plan.intercity && (
+                <span data-testid="replay-intercity-legend">
+                  {' '}· 城际转移：虚线（估算，班次未提供）
+                </span>
+              )}
             </div>
             {cinema && (
               <div className="absolute bottom-3 left-3 z-[1000] w-[min(420px,calc(100%-24px))]">{stationCard}</div>
@@ -680,7 +746,7 @@ export default function RouteReplayPanel({
               退出
             </button>
           </div>
-          {state.phase === 'leg' && (
+          {(state.phase === 'leg' || state.phase === 'intercity') && (
             <div className="mt-2 h-1 w-full overflow-hidden rounded bg-secondary" role="presentation">
               <div
                 className="h-full bg-[color:var(--color-primary)]"

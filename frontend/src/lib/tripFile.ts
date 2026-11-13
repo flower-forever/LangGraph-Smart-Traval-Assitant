@@ -13,6 +13,7 @@
  */
 
 import type { Trip } from './api'
+import { tripCityLabel } from './cityScope'
 import { sanitizeFilenamePart } from './icsFile'
 import type {
   TripBackupFailureReason,
@@ -45,7 +46,9 @@ function truncateCodePoints(text: string, max: number): string {
  * 空标题退到 trip.id，再退到 trip.json；不含时间戳，同一行程重复导出文件名一致。
  */
 export function safeTripBackupFilename(trip: Trip): string {
-  const destination = sanitizeFilenamePart(trip?.destination)
+  const destination = sanitizeFilenamePart(
+    trip === null || trip === undefined ? '' : tripCityLabel(trip),
+  )
   const title = sanitizeFilenamePart(trip?.title)
   let base = [destination, title]
     .filter(Boolean)

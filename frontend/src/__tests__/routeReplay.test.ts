@@ -7,13 +7,16 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import type { TripDay } from '../lib/api'
+import type { TripDay, TripLeg } from '../lib/api'
 import {
   INITIAL_REPLAY_STATE,
   MAX_REPLAY_GEOMETRY_POINTS,
   REPLAY_DWELL_MAX_MS,
   REPLAY_DWELL_MIN_MS,
   REPLAY_DWELL_MS,
+  REPLAY_INTERCITY_MAX_MS,
+  REPLAY_INTERCITY_MIN_MS,
+  REPLAY_INTERCITY_MS,
   REPLAY_LEG_MAX_MS,
   REPLAY_LEG_MIN_MS,
   REPLAY_LEG_MS,
@@ -22,7 +25,9 @@ import {
   normalizeReplaySpeed,
   reduceReplay,
   replayDwellMs,
+  replayIntercityMs,
   replayLegMs,
+  replayNoteText,
   replayRouteLabel,
   replayStayLabel,
   replayTimeLabel,
@@ -406,5 +411,152 @@ describe('展示口径', () => {
     expect(replayStayLabel(stop)).toBe('停留未知')
     expect(replayTimeLabel({ ...stop, time: '' })).toBe('时间未知')
     expect(replayStayLabel({ ...stop, duration_minutes: 30 })).toBe('停留 约 30 分钟')
+  })
+})
+
+/* ───────────────────── 七期 S4 · 回放城际段 ───────────────────── */
+
+const INTERCITY_LEG: TripLeg = {
+  from_stop_id: 'r5',
+  to_stop_id: 'x1',
+  mode: 'driving',
+  route_type: 'straight_line',
+  distance_m: 170000,
+  duration_minutes: 133,
+  geometry: [
+    { lng: 120.1131, lat: 30.2226 },
+    { lng: 121.49, lat: 31.24 },
+  ],
+  description: '城际转移：杭州 → 上海，直线约 170.0 公里；估算并预留约 2 小时 13 分钟。具体班次与时刻未提供，请自行查询。',
+  transferKind: 'intercity',
+}
+
+const MULTICITY_DAY: TripDay = {
+  ...REPLAY_DAY,
+  legs: [...REPLAY_DAY.legs, INTERCITY_LEG],
+}
+
+describe('七期 S4 · 跨城日回放计划', () => {
+  it('最后一条城际段进入 intercity，距离 / 时长与 leg 一致', () => {
+    const plan = buildReplayDay(MULTICITY_DAY)
+    expect(plan.intercity).not.toBeNull()
+    expect(plan.intercity!.note).toBe('intercity')
+    expect(plan.intercity!.kind).toBe('straight_line')
+    expect(plan.intercity!.distanceMeters).toBe(170000)
+    expect(plan.intercity!.durationMinutes).toBe(133)
+    expect(plan.intercity!.description).toBe(INTERCITY_LEG.description)
+    expect(plan.intercity!.geometry).toEqual(INTERCITY_LEG.geometry)
+    // 站点计划本身不受影响
+    expect(plan.stations).toHaveLength(5)
+  })
+
+  it('单城日 intercity 为 null，旧计划字段不变', () => {
+    expect(buildReplayDay(REPLAY_DAY).intercity).toBeNull()
+    expect(buildReplayDay(REPLAY_DAY_EMPTY).intercity).toBeNull()
+  })
+
+  it('城际段几何不足时用当天末站坐标兜底；unavailable 不画线', () => {
+    const onePoint: TripDay = {
+      ...MULTICITY_DAY,
+      legs: [...REPLAY_DAY.legs, { ...INTERCITY_LEG, geometry: [{ lng: 121.49, lat: 31.24 }] }],
+    }
+    const fallback = buildReplayDay(onePoint).intercity!
+    expect(fallback.kind).toBe('straight_line')
+    // 起点取当天末站，终点取 leg 几何末点；不跨天补站点、不补车次
+    expect(fallback.geometry).toEqual([
+      { lng: REPLAY_DAY.stops[4].location!.lng, lat: REPLAY_DAY.stops[4].location!.lat },
+      { lng: 121.49, lat: 31.24 },
+    ])
+    expect(fallback.distanceMeters).toBe(170000)
+
+    const unavailable: TripDay = {
+      ...MULTICITY_DAY,
+      legs: [...REPLAY_DAY.legs, { ...INTERCITY_LEG, route_type: 'unavailable', geometry: [], distance_m: null, duration_minutes: null }],
+    }
+    const plan = buildReplayDay(unavailable).intercity!
+    expect(plan.kind).toBe('unavailable')
+    expect(plan.distanceMeters).toBeNull()
+    expect(plan.durationMinutes).toBeNull()
+  })
+
+  it('replayRouteLabel / replayNoteText 同一口径', () => {
+    const plan = buildReplayDay(MULTICITY_DAY)
+    expect(replayRouteLabel(plan.intercity)).toBe('城际转移（估算）')
+    expect(replayNoteText('intercity')).toBe('城际转移（估算）')
+    // 旧 note 文案不因重构改变
+    expect(replayNoteText('navigation')).toBe('地图服务路线')
+    expect(replayNoteText('no_leg')).toBe('未提供本段路线信息')
+    expect(replayRouteLabel(null)).toBe('起点站，无上一段路线')
+  })
+})
+
+describe('七期 S4 · 城际状态机', () => {
+  const plan = buildReplayDay(MULTICITY_DAY)
+  const intercityContext: ReplayContext = {
+    ...CONTEXT,
+    intercity: plan.intercity,
+    intercityMs: 2000,
+  }
+
+  it('最后一站停留结束后进入 intercity，progress 0→1 后才 finished', () => {
+    let state = reduceReplay(INITIAL_REPLAY_STATE, { type: 'seek', index: 4 }, intercityContext)
+    state = play(state, intercityContext)
+    state = tick(state, REPLAY_DWELL_MS, intercityContext)
+    expect(state.phase).toBe('intercity')
+    expect(state.stationIndex).toBe(4)
+    expect(state.progress).toBe(0)
+
+    state = tick(state, 1000, intercityContext)
+    expect(state.phase).toBe('intercity')
+    expect(state.progress).toBeCloseTo(0.5, 5)
+
+    state = tick(state, 999, intercityContext)
+    expect(state.phase).toBe('intercity')
+
+    state = tick(state, 1, intercityContext)
+    expect(state.phase).toBe('finished')
+    expect(state.playing).toBe(false)
+    expect(state.progress).toBe(0)
+  })
+
+  it('总时长包含城际段：同一时刻无城际段已 finished，有城际段仍在播', () => {
+    const without = (() => {
+      let state = reduceReplay(INITIAL_REPLAY_STATE, { type: 'seek', index: 4 }, CONTEXT)
+      state = play(state)
+      return tick(state, REPLAY_DWELL_MS)
+    })()
+    expect(without.phase).toBe('finished')
+
+    let withIntercity = reduceReplay(INITIAL_REPLAY_STATE, { type: 'seek', index: 4 }, intercityContext)
+    withIntercity = play(withIntercity, intercityContext)
+    withIntercity = tick(withIntercity, REPLAY_DWELL_MS, intercityContext)
+    expect(withIntercity.phase).toBe('intercity')
+  })
+
+  it('倍速作用到城际段：2x 下 1000ms 播完', () => {
+    let state = reduceReplay(INITIAL_REPLAY_STATE, { type: 'seek', index: 4 }, intercityContext)
+    state = reduceReplay(state, { type: 'setSpeed', speed: 2 }, intercityContext)
+    state = play(state, intercityContext)
+    state = tick(state, REPLAY_DWELL_MS / 2, intercityContext)
+    expect(state.phase).toBe('intercity')
+    state = tick(state, 1000, intercityContext)
+    expect(state.phase).toBe('finished')
+  })
+
+  it('reduced-motion 跳过城际动画，最后一站停留完直接 finished', () => {
+    const reduced: ReplayContext = { ...intercityContext, reducedMotion: true }
+    let state = reduceReplay(INITIAL_REPLAY_STATE, { type: 'seek', index: 4 }, reduced)
+    state = play(state, reduced)
+    state = tick(state, REPLAY_DWELL_MS, reduced)
+    expect(state.phase).toBe('finished')
+  })
+
+  it('replayIntercityMs：缺失固定 3 秒，有值按比例并夹在上下限', () => {
+    expect(replayIntercityMs(null)).toBe(REPLAY_INTERCITY_MS)
+    expect(replayIntercityMs(undefined)).toBe(REPLAY_INTERCITY_MS)
+    expect(replayIntercityMs(Number.NaN)).toBe(REPLAY_INTERCITY_MS)
+    expect(replayIntercityMs(133)).toBe(REPLAY_INTERCITY_MAX_MS)
+    expect(replayIntercityMs(10)).toBe(REPLAY_INTERCITY_MIN_MS)
+    expect(replayIntercityMs(50)).toBe(4000)
   })
 })

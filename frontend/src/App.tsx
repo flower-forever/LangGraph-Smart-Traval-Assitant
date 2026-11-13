@@ -10,6 +10,9 @@ import type { PlanInterest } from './lib/interests'
 import TodayPanel from './components/TodayPanel'
 import CityProfileCard from './components/CityProfileCard'
 import CoverageCard from './components/CoverageCard'
+import { currentCity, findIntercityLeg, getCityProfile, isMultiCityTrip, tripCityGroups } from './lib/cityScope'
+import { buildCityMapSegment } from './lib/cityMap'
+import { projectTripCoverageByCity } from './lib/tripCoverage'
 import DetourInterceptCard from './components/DetourInterceptCard'
 import StampSeal from './components/StampSeal'
 import { useReducedMotion } from './lib/useReducedMotion'
@@ -155,6 +158,10 @@ const ShareCardPanel = lazy(() => import('./components/ShareCardPanel'))
 /** 六期 S8：体检条目级「建议顺延 / 补一餐」两个操作面板，同样按需加载。 */
 const PostponePanel = lazy(() => import('./components/PostponePanel'))
 const MealSuggestPanel = lazy(() => import('./components/MealSuggestPanel'))
+
+/** 七期 S3：多城分段与城际转移卡只在多城行程出现时才拉取。 */
+const CitySegments = lazy(() => import('./components/CitySegments'))
+const IntercityTransferCard = lazy(() => import('./components/IntercityTransferCard'))
 
 function PanelLoadingFallback({ label }: { label: string }) {
   return (
@@ -402,6 +409,8 @@ export default function App() {
   const [backend, setBackend] = useState<BackendState>(BACKEND_INITIAL)
   const [activeDay, setActiveDay] = useState(1)
   const [activeStopId, setActiveStopId] = useState<string | null>(null)
+  /** 七期 S4：跨日地图点选后，等 activeDay 落地再补选中，避免被日切换 effect 清掉。 */
+  const pendingStopAfterDaySwitch = useRef<{ day: number; stopId: string } | null>(null)
   /**
    * S7 绕行拦截的会话内抑制（选择「保留原样」的行程）：零写入，
    * 刷新后重新判定属合理行为；同 trip.id 重新规划不重弹。
@@ -962,6 +971,28 @@ export default function App() {
     },
     [aiOpen, mapOpen, editingDraft, editorInputDirty],
   )
+
+  // 七期 S4：多城行程的地图视图按「连续同城段」取数；单城仍只投影当天。
+  const mapSegment = useMemo(
+    () => (!trip || !currentDay ? null : buildCityMapSegment(draft ? { ...trip, days: [...draft.days] } : trip, currentDay)),
+    [trip, draft, currentDay],
+  )
+
+  const handleSelectStopInDay = useCallback(
+    (dayNum: number, stopId: string) => {
+      // 与 switchDay 同一把锁：被锁住时不留下待补选中，避免以后切到该天时误选。
+      if (aiOpen || mapOpen || (editingDraft && editorInputDirty)) return
+      pendingStopAfterDaySwitch.current = { day: dayNum, stopId }
+      switchDay(dayNum)
+    },
+    [switchDay, aiOpen, mapOpen, editingDraft, editorInputDirty],
+  )
+
+  useEffect(() => {
+    const pending = pendingStopAfterDaySwitch.current
+    pendingStopAfterDaySwitch.current = null
+    if (pending !== null && pending.day === activeDay) setActiveStopId(pending.stopId)
+  }, [activeDay, currentDay])
 
   // tablist 方向键导航（WAI-APG）：左右键在日签间移动并激活
   const dayNavKeyDown = useCallback(
@@ -2433,6 +2464,8 @@ export default function App() {
 
   const dayTabs = trip?.days ?? []
   const tripIsExample = trip?.source === 'example'
+  const activeCity = trip ? currentCity(trip, currentDay) : ''
+  const activeCityProfile = trip ? getCityProfile(trip, activeCity) : null
 
   /* ───────── 本地编辑：进入 / 应用 / 放弃 / 撤销应用 ───────── */
 
@@ -3904,6 +3937,7 @@ export default function App() {
                           <CandidatePoolPanel
                             record={candidatesRecord}
                             draft={draft ?? candidateDraftBase}
+                            city={trip && isMultiCityTrip(trip) ? activeCity : undefined}
                             copySources={candidateCopySources}
                             storageStatus={candidatesStorageStatus}
                             storageMessage={candidatesStorageMessage}
@@ -4224,6 +4258,7 @@ export default function App() {
               <TripDraftEditor
                 draft={draft}
                 dayNumber={currentDay?.day ?? draft.base.days[0]?.day ?? 1}
+                city={trip && isMultiCityTrip(trip) ? activeCity : undefined}
                 onDraftChange={setDraft}
                 onApply={handleDraftApply}
                 onDiscard={handleDraftDiscard}
@@ -4234,6 +4269,17 @@ export default function App() {
                 candidates={candidatesRecord?.items ?? []}
                 poiCards={poiCardsRecord}
               />
+            )}
+
+            {trip && isMultiCityTrip(trip) && (
+              <Suspense fallback={null}>
+                <CitySegments
+                  groups={tripCityGroups(trip)}
+                  activeDay={activeDay}
+                  onJump={switchDay}
+                  disabled={Boolean(aiOpen || mapOpen || (editingDraft && editorInputDirty))}
+                />
+              </Suspense>
             )}
 
             <div className={DAY_NAV} role="tablist" aria-label="按日切换" onKeyDown={dayNavKeyDown}>
@@ -4434,11 +4480,23 @@ export default function App() {
                     onGoAdjust={handleDetourGoAdjust}
                   />
                 )}
-                {trip?.cityProfile && <CityProfileCard cityProfile={trip.cityProfile} />}
-                {trip && <CoverageCard trip={trip} onAddToPool={handleCoverageAddToPool} />}
+                {activeCityProfile !== null && (
+                  <CityProfileCard
+                    cityProfile={activeCityProfile}
+                    cityName={trip && isMultiCityTrip(trip) ? activeCity : undefined}
+                  />
+                )}
+                {trip && (
+                  <CoverageCard
+                    trip={trip}
+                    buckets={projectTripCoverageByCity(trip)}
+                    onAddToPool={handleCoverageAddToPool}
+                  />
+                )}
                 {currentDay && trip && (
                   <TodayPanel
                     days={trip.days}
+                    city={isMultiCityTrip(trip) ? activeCity : undefined}
                     poiCardsRecord={poiCardsRecord}
                     poiCardsLoaded={poiCardsReadRef.current}
                     checklist={currentWorkspaceRecord?.sidecar.checklist.items ?? []}
@@ -4451,6 +4509,7 @@ export default function App() {
                   <ItineraryHealthCard
                     day={currentDay}
                     pace={lastPlannedPace ?? 'balanced'}
+                    nextDay={(draft?.days ?? trip?.days ?? []).find((d) => d.day === currentDay.day + 1) ?? null}
                     factsByStop={currentDay.stops.map(
                       (stop) => (poiCardsReadRef.current ? projectStopFacts(stop, poiCardsRecord, Date.now()) : null),
                     )}
@@ -4476,6 +4535,7 @@ export default function App() {
                     <MealSuggestPanel
                       baseDay={currentDay}
                       draft={draft}
+                      city={trip && isMultiCityTrip(trip) ? activeCity : undefined}
                       onCreateDraft={createHealthDraft}
                       onDraftChange={setDraft}
                       candidates={candidatesRecord?.items ?? null}
@@ -4497,6 +4557,15 @@ export default function App() {
                     onOpenPoiCardPanel={handleStopFactSupplement}
                   />
                 )}
+                {trip && currentDay && findIntercityLeg(currentDay) !== null && (
+                  <Suspense fallback={null}>
+                    <IntercityTransferCard
+                      trip={trip}
+                      day={currentDay}
+                      nextDay={trip.days[trip.days.findIndex((d) => d.day === currentDay.day) + 1] ?? null}
+                    />
+                  </Suspense>
+                )}
                 {currentDay && (
                   <div className="mb-4 flex justify-end">
                     <Button type="button" variant="outline" className="min-h-11 px-5 text-base" onClick={() => setReplayOpen(true)} data-testid="route-replay-entry">
@@ -4511,6 +4580,8 @@ export default function App() {
                     day={currentDay}
                     activeStopId={activeStopId}
                     onSelectStop={handleSelectStop}
+                    segment={mapSegment}
+                    onSelectStopInDay={handleSelectStopInDay}
                     key={`${trip.id}:${currentDay.day}`}
                   />
                 )}

@@ -87,6 +87,8 @@ export const MAX_BUDGET_AMOUNT_RAW_LENGTH = 1000
 export const MAX_CANDIDATE_NAME_LENGTH = 120
 export const MAX_CANDIDATE_ADDRESS_LENGTH = 300
 export const MAX_CANDIDATE_NOTES_LENGTH = 500
+/** 七期 S7b：候选条目可选城市归属的长度上限。 */
+export const MAX_CANDIDATE_CITY_LENGTH = 60
 export const MAX_CANDIDATE_TAG_LENGTH = 50
 export const MAX_CANDIDATE_TAGS = 20
 export const MAX_CANDIDATE_PRIORITY = 3
@@ -303,6 +305,12 @@ export interface CandidateItemV1 {
   source: CandidateSourceV1
   /** source='copied' 时必填；manual 时必须为 null。 */
   copiedFromStopId: string | null
+  /**
+   * 七期 S7b：候选所属城市（自由文本，trim 后最多 60 字符）。
+   * 可选以兼容旧 v1：缺键 = 未登记城市，按全局条目可见；
+   * 读取 / 重写旧记录时不得自动补 null，只有非空值才落键。
+   */
+  cityId?: string | null
   createdAt: number
   updatedAt: number
 }

@@ -42,6 +42,7 @@ import {
   MAX_CANDIDATES_BYTES,
   MAX_CANDIDATES_COUNT,
   MAX_CANDIDATE_ADDRESS_LENGTH,
+  MAX_CANDIDATE_CITY_LENGTH,
   MAX_CANDIDATE_NAME_LENGTH,
   MAX_CANDIDATE_NOTES_LENGTH,
   MAX_CANDIDATE_PRIORITY,
@@ -1464,19 +1465,24 @@ export function commitWorkspaceTransition(
 /* ───────── F3：候选库校验 ───────── */
 
 function parseCandidateItem(value: unknown, path: string): WorkspaceValidationResult<CandidateItemV1> {
-  const object = readObject(value, path, [
-    'id',
-    'name',
-    'address',
-    'notes',
-    'tags',
-    'priority',
-    'location',
-    'source',
-    'copiedFromStopId',
-    'createdAt',
-    'updatedAt',
-  ])
+  const object = readObject(
+    value,
+    path,
+    [
+      'id',
+      'name',
+      'address',
+      'notes',
+      'tags',
+      'priority',
+      'location',
+      'source',
+      'copiedFromStopId',
+      'createdAt',
+      'updatedAt',
+    ],
+    ['cityId'],
+  )
   if (!object.ok) return object
   const v = object.value
   const id = requiredId(v.id, `${path}.id`)
@@ -1528,22 +1534,30 @@ function parseCandidateItem(value: unknown, path: string): WorkspaceValidationRe
   if (updatedAt.value < createdAt.value) {
     return fail('invalid_field', `${path}.updatedAt`, 'updatedAt 不能早于 createdAt。')
   }
-  return {
-    ok: true,
-    value: {
-      id: id.value,
-      name: name.value,
-      address: address.value,
-      notes: notes.value,
-      tags,
-      priority: priority.value,
-      location: location.value,
-      source: source.value,
-      copiedFromStopId: copiedFromStopId.value,
-      createdAt: createdAt.value,
-      updatedAt: updatedAt.value,
-    },
+  // 七期 S7b：cityId 可选。只有键存在且 trim 后非空才落键，旧记录键集不变。
+  // 显式 undefined 视同缺键（直接构造对象时的常见写法）。
+  let cityId: string | null = null
+  if (v.cityId !== undefined) {
+    const parsedCity = optionalText(v.cityId, `${path}.cityId`, { max: MAX_CANDIDATE_CITY_LENGTH })
+    if (!parsedCity.ok) return parsedCity
+    const trimmed = parsedCity.value === null ? '' : parsedCity.value.trim()
+    cityId = trimmed.length === 0 ? null : trimmed
   }
+  const item: CandidateItemV1 = {
+    id: id.value,
+    name: name.value,
+    address: address.value,
+    notes: notes.value,
+    tags,
+    priority: priority.value,
+    location: location.value,
+    source: source.value,
+    copiedFromStopId: copiedFromStopId.value,
+    createdAt: createdAt.value,
+    updatedAt: updatedAt.value,
+  }
+  if (cityId !== null) item.cityId = cityId
+  return { ok: true, value: item }
 }
 
 export function validateCandidateItem(value: unknown): WorkspaceValidationResult<CandidateItemV1> {

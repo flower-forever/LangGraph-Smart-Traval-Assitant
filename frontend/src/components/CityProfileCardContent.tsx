@@ -18,6 +18,11 @@ import { projectCityProfile } from '../lib/cityProfile'
 
 export interface CityProfileCardProps {
   cityProfile?: CityProfile | null
+  /**
+   * 七期 S6：多城模式下当前城名；仅传入时在标题区显示城市徽标。
+   * 不传时 DOM 与六期完全一致（单城旧行程零变化）。
+   */
+  cityName?: string
   /** 默认展开；折叠只是组件内状态，不持久化。 */
   defaultOpen?: boolean
 }
@@ -29,11 +34,13 @@ const MUTED = 'text-[color:var(--color-faint)]'
 
 export default function CityProfileCardContent({
   cityProfile,
+  cityName,
   defaultOpen = true,
 }: CityProfileCardProps) {
   const [open, setOpen] = useState(defaultOpen)
   const view = projectCityProfile(cityProfile)
   if (!view) return null
+  const cityLabel = typeof cityName === 'string' ? cityName.trim() : ''
 
   return (
     <section
@@ -44,6 +51,14 @@ export default function CityProfileCardContent({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="m-0 flex flex-wrap items-center gap-2 font-semibold">
           城市导览
+          {cityLabel && (
+            <span
+              data-testid="city-profile-city"
+              className="rounded-full border border-[color:var(--color-line-strong)] bg-card px-2 py-0.5 text-xs font-normal text-foreground"
+            >
+              {cityLabel}
+            </span>
+          )}
           <span
             data-testid="city-profile-badge"
             className="rounded-full border border-[color:var(--color-line-strong)] bg-secondary px-2 py-0.5 text-xs font-normal text-[color:var(--color-secondary-foreground)]"

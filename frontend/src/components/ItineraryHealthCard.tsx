@@ -17,6 +17,8 @@ interface ItineraryHealthCardProps {
   pace: HealthPace
   /** 每站的可信字段查询（S2 投影结果，与 day.stops 等长对齐）。 */
   factsByStop: ReadonlyArray<StopFacts | null>
+  /** 七期 S5：下一天（城际转移的时间核对用）；缺省按无下一天处理。 */
+  nextDay?: TripDay | null
   /** 六期 S8：条目级「建议顺延」入口；缺省 = 该条目不显示入口。 */
   onSuggestPostpone?: (item: HealthItem) => void
   /** 六期 S8：条目级「补一餐」入口；缺省 = 该条目不显示入口。 */
@@ -33,11 +35,12 @@ export default function ItineraryHealthCard({
   day,
   pace,
   factsByStop,
+  nextDay = null,
   onSuggestPostpone,
   onSuggestMeal,
 }: ItineraryHealthCardProps) {
   const [open, setOpen] = useState(false)
-  const report = inspectDayHealth(day, pace, factsByStop)
+  const report = inspectDayHealth(day, pace, factsByStop, nextDay)
   const { counts } = report
 
   const summary =

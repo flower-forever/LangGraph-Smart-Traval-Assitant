@@ -82,14 +82,15 @@ function classicsOf(value: unknown): CityProfileClassicView[] {
   if (!Array.isArray(value)) return []
   const classics: CityProfileClassicView[] = []
   const seen = new Set<string>()
-  for (const entry of value.slice(0, MAX_CLASSICS)) {
+  // 先遍历全部候选，过滤空名 / 去重后再截断：前部脏数据不能把后面的有效条目挤掉。
+  for (const entry of value) {
     if (!isRecord(entry)) continue
     const name = textOf(entry.name, 60)
     if (!name || seen.has(name)) continue
     seen.add(name)
     classics.push({ name, reason: textOf(entry.reason, 120) })
   }
-  return classics
+  return classics.slice(0, MAX_CLASSICS)
 }
 
 /** 没有任何可用块时返回 null，调用方据此完全不渲染城市卡。 */

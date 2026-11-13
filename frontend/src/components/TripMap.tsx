@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { TripDay } from '../lib/api'
+import type { CityMapSegment } from '../lib/cityMap'
 import { buildDayMapData, groupStopsByLocation, type DayMapData, type StopRef } from '../lib/mapData'
-import { osmSearchUrl, displayTime } from '../lib/format'
+import { osmSearchUrl, displayTime, validCoord } from '../lib/format'
 import { createTileWatch, type TileState, type TileWatch } from '../lib/tileStatus'
 import { useReducedMotion } from '../lib/useReducedMotion'
 import { MAP_FLY_DURATION_S } from '../lib/motionMap'
@@ -12,6 +13,38 @@ interface TripMapProps {
   day: TripDay
   activeStopId: string | null
   onSelectStop: (stopId: string) => void
+  /**
+   * 七期 S4 · 多城跨日视野：城市段内全部天 + 首尾城际段。
+   * 为空或只有一天时完全走旧单日路径（DOM / 请求 / fitBounds 不变）。
+   */
+  segment?: CityMapSegment | null
+  /** 点击非当天站点：切到该天并选中；缺省时只弹 popup，不把别的天的 stopId 塞给当天。 */
+  onSelectStopInDay?: (day: number, stopId: string) => void
+}
+
+/**
+ * 多城段地图数据：逐天投影后按 day 顺序合并，站点序号改成段内连续序号。
+ * leg 仍按天投影，跨天的城际段（to 站不在当天）不会混进市内 leg，由调用方单独画虚线。
+ */
+function buildSegmentMapData(segment: CityMapSegment): DayMapData {
+  const stops: StopRef[] = []
+  const legs: DayMapData['legs'] = []
+  let totalStopCount = 0
+  let missingCoordCount = 0
+  for (const day of segment.days) {
+    const data = buildDayMapData(day)
+    totalStopCount += data.totalStopCount
+    missingCoordCount += data.missingCoordCount
+    for (const ref of data.stops) stops.push({ stop: ref.stop, index: stops.length })
+    legs.push(...data.legs)
+  }
+  return {
+    stops,
+    legs,
+    hasCoords: stops.length > 0,
+    totalStopCount,
+    missingCoordCount,
+  }
 }
 
 /** 用 divIcon 圆点替代默认 marker，避免默认图钉资源加载问题 */
@@ -116,36 +149,58 @@ function buildPopupEl(refs: StopRef[], onSelectStop: (id: string) => void, onClo
   return wrap
 }
 
-export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProps) {
+export default function TripMap({
+  day,
+  activeStopId,
+  onSelectStop,
+  segment = null,
+  onSelectStopInDay,
+}: TripMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<L.Map | null>(null)
   const layerRef = useRef<L.LayerGroup | null>(null)
   const markersRef = useRef<Map<string, L.Marker>>(new Map())
   const popupsRef = useRef<Map<string, L.Popup>>(new Map())
   const onSelectRef = useRef(onSelectStop)
+  const onSelectInDayRef = useRef(onSelectStopInDay)
   const tileWatchRef = useRef<TileWatch | null>(null)
   const [tileState, setTileState] = useState<TileState>('loading')
   // 六期 S2 · fly-to：选中联动的平滑飞行在 reduced-motion 下改 setView 直跳。
   const reducedMotion = useReducedMotion()
 
-  const data: DayMapData = useMemo(() => buildDayMapData(day), [day])
+  /** 只有 ≥2 天的城市段才进入跨日视野；单城 / 单天保持旧路径。 */
+  const segmentView = segment !== null && segment.days.length >= 2 ? segment : null
+  const data: DayMapData = useMemo(
+    () => (segmentView ? buildSegmentMapData(segmentView) : buildDayMapData(day)),
+    [day, segmentView],
+  )
   /** 同坐标分组：一组对应一个 marker；组内是可单独访问的各站 */
   const groups: StopRef[][] = useMemo(() => groupStopsByLocation(data.stops), [data])
+  /** 选中站必须属于当前天；别的天的选中不得在本天 marker 上高亮或弹窗。 */
+  const activeStopIsCurrentDay = useMemo(() => {
+    if (!activeStopId) return false
+    if (!segmentView) return true
+    return segmentView.dayByStopId[activeStopId] === day.day
+  }, [activeStopId, segmentView, day.day])
   /** 组内任一站被选中，就视为这个 marker 选中 */
   const activeGroupId = useMemo(() => {
-    if (!activeStopId) return null
+    if (!activeStopId || !activeStopIsCurrentDay) return null
     const idx = groups.findIndex((g) => g.some((s) => s.stop.id === activeStopId))
     return idx >= 0 ? idx : null
-  }, [groups, activeStopId])
+  }, [groups, activeStopId, activeStopIsCurrentDay])
   const activeIsOnMap = useMemo(
-    () => data.stops.some((s) => s.stop.id === activeStopId),
-    [data, activeStopId],
+    () => activeStopIsCurrentDay && data.stops.some((s) => s.stop.id === activeStopId),
+    [data, activeStopId, activeStopIsCurrentDay],
   )
 
   // 回调走 ref：父组件回调身份变化不该触发图层重建
   useEffect(() => {
     onSelectRef.current = onSelectStop
   }, [onSelectStop])
+
+  useEffect(() => {
+    onSelectInDayRef.current = onSelectStopInDay
+  }, [onSelectStopInDay])
 
   // 初始化地图（一次）
   useEffect(() => {
@@ -209,6 +264,17 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
     markersRef.current.clear()
     popupsRef.current.clear()
 
+    /** 段视图下按站点归属天分流：当天走旧回调，其它天交给 onSelectStopInDay。 */
+    const selectStopOnMap = (stopId: string): void => {
+      const stopDay = segmentView ? segmentView.dayByStopId[stopId] : undefined
+      if (stopDay !== undefined && stopDay !== day.day) {
+        // 没有切天回调时只保留 popup，不把别的天的 stopId 冒充成当天选中
+        onSelectInDayRef.current?.(stopDay, stopId)
+        return
+      }
+      onSelectRef.current(stopId)
+    }
+
     // 路线：先画线再画点，点在上层
     for (const leg of data.legs) {
       const latlngs = leg.geometry.map((p) => [p.lat, p.lng] as [number, number])
@@ -227,6 +293,39 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
       layer.addLayer(line)
     }
 
+    // 七期 S4 · 城际段单独画虚线：不做导航匹配、不补造车次；popup 直接取后端描述。
+    // 坐标先过 validCoord：坏点宁可这段不画，也不显示假路线。
+    const intercitySegments = (segmentView?.intercityLegs ?? [])
+      .map((leg) => {
+        const latlngs: Array<[number, number]> = []
+        for (const point of leg.geometry) {
+          const valid = validCoord(point)
+          if (valid) latlngs.push([valid.lat, valid.lng])
+        }
+        return { leg, latlngs }
+      })
+      .filter((entry) => entry.latlngs.length >= 2)
+    for (const { leg, latlngs } of intercitySegments) {
+      const line = L.polyline(
+        latlngs,
+        {
+          className: 'poly-intercity',
+          weight: 4,
+          opacity: 0.9,
+          dashArray: '6 6',
+          color: 'var(--color-line-strong)',
+          lineCap: 'round',
+        },
+      )
+      if (leg.description.trim() !== '') {
+        const popupEl = document.createElement('div')
+        popupEl.className = 'pop-meta'
+        popupEl.textContent = leg.description
+        line.bindPopup(popupEl, { maxWidth: 280 })
+      }
+      layer.addLayer(line)
+    }
+
     for (const refs of groups) {
       const loc = refs[0].stop.location!
       const marker = L.marker([loc.lat, loc.lng], {
@@ -236,10 +335,10 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
         alt: markerAriaLabel(refs, false),
       })
       const popup = L.popup({ maxWidth: 280, autoPan: true })
-      popup.setContent(buildPopupEl(refs, (id) => onSelectRef.current(id), () => marker.closePopup()))
+      popup.setContent(buildPopupEl(refs, (id) => selectStopOnMap(id), () => marker.closePopup()))
       marker.bindPopup(popup)
       // 地图点击只上报选中；选中状态由父组件幂等处理，重复触发不会被抵消
-      marker.on('click', () => onSelectRef.current(refs[0].stop.id))
+      marker.on('click', () => selectStopOnMap(refs[0].stop.id))
       layer.addLayer(marker)
       markersRef.current.set(refs[0].stop.id, marker)
       popupsRef.current.set(refs[0].stop.id, popup)
@@ -253,10 +352,14 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
       for (const leg of data.legs) {
         bounds.extend(L.latLngBounds(leg.geometry.map((p) => [p.lat, p.lng] as [number, number])))
       }
+      // 跨日视野必须同时框住首尾城际几何，否则切到别的城只看到本段截图
+      for (const { latlngs } of intercitySegments) {
+        bounds.extend(L.latLngBounds(latlngs))
+      }
       map.fitBounds(bounds, { padding: [36, 36], maxZoom: 15 })
     }
     // 选中态只影响高亮，不参与建层；下面单独一个 effect 处理，避免选中就重置用户缩放
-  }, [data])
+  }, [data, segmentView, day.day])
 
   // 选中站点变化：只换单个 marker 的图标 + 平移，不清图层、不重算视野
   useEffect(() => {
@@ -287,9 +390,12 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
   }, [activeStopId, activeGroupId, activeIsOnMap, groups, reducedMotion])
 
   // 没有站点（空日）不能说「站点均无坐标」；有站点但一个坐标都没有才算缺坐标
-  const hasStops = day.stops.length > 0
+  // 跨日视野按整段统计；单城路径仍用当天站点数，文案与 HEAD 一致。
+  const hasStops = segmentView ? data.totalStopCount > 0 : day.stops.length > 0
   const allMissing = hasStops && data.stops.length === 0
   const someMissing = hasStops && data.stops.length > 0 && data.missingCoordCount > 0
+  const scopeWord = segmentView ? '这一段' : '这一天'
+  const scopeShort = segmentView ? '本段' : '本日'
   /**
    * 空态文案分情形说，且都不承诺「重新规划就能拿到坐标」：
    * - 全部缺坐标：全幅说明，原因前端看不到，措辞保持中性——本地新增站点、导入文件
@@ -299,8 +405,8 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
    */
   const status = allMissing
     ? {
-        big: '这一天的站点缺少坐标',
-        desc: '当前数据里没有这一天的可绘制坐标：可能尚未定位，也可能定位没有成功，原因前端无法确认（本地编辑新增的站点、导入文件里的站点都不会自动请求定位；其他站点取决于当时服务的地图配置）。文字行程照常可用。',
+        big: `${scopeWord}的站点缺少坐标`,
+        desc: `当前数据里没有${scopeWord}的可绘制坐标：可能尚未定位，也可能定位没有成功，原因前端无法确认（本地编辑新增的站点、导入文件里的站点都不会自动请求定位；其他站点取决于当时服务的地图配置）。文字行程照常可用。`,
       }
     : tileState === 'failed'
       ? {
@@ -325,7 +431,7 @@ export default function TripMap({ day, activeStopId, onSelectStop }: TripMapProp
         : null
   const coordNote =
     someMissing
-      ? `本日共 ${data.totalStopCount} 个站点，其中 ${data.missingCoordCount} 个没有解析到经纬度，未画在图上；缺少的站点在下方文字行程里仍可查看。`
+      ? `${scopeShort}共 ${data.totalStopCount} 个站点，其中 ${data.missingCoordCount} 个没有解析到经纬度，未画在图上；缺少的站点在下方文字行程里仍可查看。`
       : null
 
   return (
