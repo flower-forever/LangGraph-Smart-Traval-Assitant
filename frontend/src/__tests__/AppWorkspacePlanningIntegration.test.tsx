@@ -92,7 +92,7 @@ describe('App × 行程工具真实接线', () => {
     await setupLinkedWorkspace(user)
 
     await user.click(screen.getByRole('button', { name: '准备清单' }))
-    await user.click(screen.getByRole('button', { name: '新增清单项' }))
+    await user.click(await screen.findByRole('button', { name: '新增清单项' }))
     await user.type(screen.getByLabelText('标题'), '护照')
     await user.click(screen.getByRole('button', { name: '添加这一项' }))
 
@@ -106,7 +106,7 @@ describe('App × 行程工具真实接线', () => {
     await setupLinkedWorkspace(user)
 
     await user.click(screen.getByRole('button', { name: '必去点与预约时间约束' }))
-    await user.click(screen.getByRole('button', { name: '添加约束' }))
+    await user.click(await screen.findByRole('button', { name: '添加约束' }))
     await user.type(screen.getByLabelText('标题'), '断桥残雪')
     await user.click(screen.getByRole('button', { name: '保存约束' }))
     await user.click(screen.getByRole('button', { name: '应用约束改动' }))
@@ -120,7 +120,7 @@ describe('App × 行程工具真实接线', () => {
     await setupLinkedWorkspace(user)
 
     await user.click(screen.getByRole('button', { name: '住宿与抵离锚点' }))
-    await user.click(screen.getByRole('button', { name: '添加住宿信息' }))
+    await user.click(await screen.findByRole('button', { name: '添加住宿信息' }))
     await user.type(screen.getByLabelText('住宿名称'), '中央酒店')
     await user.type(screen.getByLabelText('入住日期（当地）'), '2026-04-03')
     await user.type(screen.getByLabelText('退房日期（当地）'), '2026-04-05')
@@ -136,7 +136,7 @@ describe('App × 行程工具真实接线', () => {
     await setupLinkedWorkspace(user)
 
     await user.click(screen.getByRole('button', { name: '候选地点池' }))
-    await user.type(screen.getByLabelText('候选名称'), '西湖')
+    await user.type(await screen.findByLabelText('候选名称'), '西湖')
     await user.click(screen.getByRole('button', { name: '添加到候选库' }))
     await user.click(screen.getByRole('button', { name: '保存候选库' }))
 
@@ -149,7 +149,7 @@ describe('App × 行程工具真实接线', () => {
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
     await user.click(screen.getByRole('button', { name: '候选地点池' }))
-    await user.type(screen.getByLabelText('候选名称'), '西湖')
+    await user.type(await screen.findByLabelText('候选名称'), '西湖')
     await user.click(screen.getByRole('button', { name: '添加到候选库' }))
     await user.click(screen.getByRole('button', { name: '保存候选库' }))
     await screen.findByText(/候选库已保存/)
@@ -198,7 +198,7 @@ describe('App × 行程工具真实接线', () => {
     const user = userEvent.setup()
     await setupLinkedWorkspace(user)
     await user.click(screen.getByRole('button', { name: '候选地点池' }))
-    await user.type(screen.getByLabelText('候选名称'), '西湖')
+    await user.type(await screen.findByLabelText('候选名称'), '西湖')
     await user.click(screen.getByRole('button', { name: '添加到候选库' }))
     await user.click(screen.getByRole('button', { name: '保存候选库' }))
     await screen.findByText(/候选库已保存/)

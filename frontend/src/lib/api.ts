@@ -80,6 +80,11 @@ export interface TripLeg {
   /** [lng, lat] 序列 */
   geometry: TripLocation[]
   description: string
+  /**
+   * 七期 S1：城际转移段标记，归属出发日尾部（连接当日末站与次日首站）。
+   * 缺省（旧行程 / 同城段）= 既有市内腿语义；只允许 'intercity' 或 null。
+   */
+  transferKind?: 'intercity' | null
 }
 
 export interface TripDay {
@@ -89,6 +94,11 @@ export interface TripDay {
   summary: string
   stops: TripStop[]
   legs: TripLeg[]
+  /**
+   * 七期 S1：该天所在城市；缺省回退 `trip.destination`（读取侧一律 `day.city ?? trip.destination`）。
+   * 旧行程没有该字段。
+   */
+  city?: string | null
 }
 
 /** 六期 S4 城市导览：所有子块可选；旧行程没有 cityProfile 时整块缺省。 */
@@ -139,6 +149,18 @@ export interface Trip {
   days: TripDay[]
   /** 六期 S4：可选城市导览；旧行程 / 旧备份没有该字段。 */
   cityProfile?: CityProfile | null
+  /**
+   * 七期 S1：各城画像，key 是城市名；`cityProfile` 单实例保留为主城（首城）画像。
+   * 旧行程 / 旧备份没有该字段；空对象合法。
+   */
+  cityProfiles?: Record<string, CityProfile> | null
+}
+
+/** 七期 S1：多城联程的单城请求（城市名 + 该城停留天数）。 */
+export interface PlanCityRequest {
+  name: string
+  /** 1..6，且所有城天数之和等于 PlanRequest.days */
+  days: number
 }
 
 export interface PlanRequest {
@@ -162,6 +184,12 @@ export interface PlanRequest {
    * 只表达偏好，不承诺一定安排到。
    */
   interests?: PlanInterest[]
+  /**
+   * 七期 S1：多城联程城市序列（按游览顺序）。
+   * 可选字段：单城请求不传，请求体与旧版逐字一致。
+   * 出现时必须满足 `cities[0].name === destination`、长度 2..7、`sum(days) === days`。
+   */
+  cities?: PlanCityRequest[]
 }
 
 export type ApiErrorKind =
@@ -543,6 +571,18 @@ function isCityProfileLike(value: unknown): boolean {
   return isRecord(value)
 }
 
+/**
+ * 七期 S1：cityProfiles 是「城市名 → CityProfile」的可选映射。
+ * 只做普通对象 + 每个 value 过最浅守卫；空对象合法，块内字段仍交给渲染层逐块降级。
+ * value 允许 null（旧数据 / 部分城市暂无画像），与 projectTrip 的投影口径一致。
+ */
+function isCityProfilesLike(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((item) => item === null || isCityProfileLike(item))
+  )
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
@@ -614,7 +654,11 @@ function isLegLike(value: unknown): boolean {
     isNullableNumber(value.duration_minutes) &&
     Array.isArray(value.geometry) &&
     value.geometry.every(isLocationLike) &&
-    isPlainString(value.description)
+    isPlainString(value.description) &&
+    // 七期 S1：城际标记可选；只认 undefined / null / 'intercity'。
+    (value.transferKind === undefined ||
+      value.transferKind === null ||
+      value.transferKind === 'intercity')
   )
 }
 
@@ -629,7 +673,9 @@ function isDayLike(value: unknown): boolean {
     Array.isArray(value.stops) &&
     value.stops.every(isStopLike) &&
     Array.isArray(value.legs) &&
-    value.legs.every(isLegLike)
+    value.legs.every(isLegLike) &&
+    // 七期 S1：day.city 可选；缺省（旧行程）与 null 放行，有值时必须是字符串。
+    isOptionalNullableString(value.city)
   )
 }
 
@@ -653,7 +699,11 @@ export function isTripLike(value: unknown): value is Trip {
     value.days.every(isDayLike) &&
     (value.cityProfile === undefined ||
       value.cityProfile === null ||
-      isCityProfileLike(value.cityProfile))
+      isCityProfileLike(value.cityProfile)) &&
+    // 七期 S1：cityProfiles 可选；缺省（旧行程）与 null 放行，普通对象逐 value 过守卫。
+    (value.cityProfiles === undefined ||
+      value.cityProfiles === null ||
+      isCityProfilesLike(value.cityProfiles))
   )
 }
 

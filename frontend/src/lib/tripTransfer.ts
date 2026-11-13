@@ -23,6 +23,7 @@
 
 import type { CityProfile, Trip, TripDay, TripLeg, TripLocation, TripStop } from './api'
 import { isTripLike } from './api'
+import { haversineKm } from './routeFlow'
 import {
   MAX_GEOMETRY_POINTS_PER_LEG,
   MAX_SAVED_TRIP_BYTES,
@@ -54,6 +55,12 @@ export const MAX_TRIP_FILE_BYTES = MAX_TRIP_TRANSFER_BYTES + 64 * 1024
  * 每个点最省也要约 20 字节，40 000 点必然超过 640 KB，命中预算的行程只会得到 too_large。
  */
 export const MAX_TOTAL_GEOMETRY_POINTS = SHARED_TOTAL_GEOMETRY_POINTS
+
+/** 七期 S1：城际转移估算口径，与后端 travel_itinerary.py 同值。 */
+export const INTERCITY_LONG_HAUL_THRESHOLD_M = 300_000
+export const INTERCITY_LONG_HAUL_SPEED_KMH = 250
+export const INTERCITY_SHORT_HAUL_SPEED_KMH = 80
+export const INTERCITY_BUFFER_MINUTES = 40
 
 /** 明文分享提醒：导出的是可读 JSON，里面可能有用户自己写的描述 */
 export const TRIP_JSON_SHARE_NOTICE =
@@ -260,6 +267,36 @@ function projectStopDepthBlock<T>(value: unknown): Probe<T | null | undefined> {
   return FAIL
 }
 
+/**
+ * 七期 S1：cityProfiles 是「城市名 → CityProfile」的可选映射。
+ * 源对象没有该键时不写；null 原样保留；普通对象逐 key 复用 projectCityProfile 的最浅守卫，
+ * null 值保留、undefined 值丢弃；非对象（含数组）丢弃整个键。
+ */
+function projectCityProfiles(
+  value: unknown,
+): Probe<Record<string, CityProfile> | null | undefined> {
+  if (value === undefined || value === null) return value
+  if (!isRecord(value)) return undefined
+  // 契约里 value 是 CityProfile，但极端旧数据可能是 null；按任务口径保留 null 值。
+  const profiles: Record<string, CityProfile | null> = {}
+  for (const [city, profile] of Object.entries(value)) {
+    const projected = projectCityProfile(profile)
+    if (projected === FAIL || projected === undefined) continue
+    profiles[city] = projected
+  }
+  return profiles as Record<string, CityProfile>
+}
+
+/**
+ * 七期 S1：day.city 可选。源对象有这个键时原值保留（string / null）；
+ * 没有该键时不写。非法类型不写该键（isTripLike 已先行整体拦截）。
+ */
+function projectDayCity(value: Record<string, unknown>): string | null | undefined {
+  if (!Object.prototype.hasOwnProperty.call(value, 'city')) return undefined
+  const city = value.city
+  return city === null || typeof city === 'string' ? city : undefined
+}
+
 function projectStop(value: unknown): Probe<TripStop> {
   if (!isRecord(value)) return FAIL
   const { id, name, time, description, address } = value
@@ -358,6 +395,11 @@ function projectLeg(value: unknown, budget: ProjectionBudget): Probe<TripLeg> {
     duration_minutes: duration,
     geometry: points,
     description,
+    // 七期 S1：源对象有 transferKind 键时保留（只接受 'intercity' / null）；
+    // 非法值只丢这个键，不丢整条 leg。
+    ...(value.transferKind === 'intercity' || value.transferKind === null
+      ? { transferKind: value.transferKind }
+      : {}),
   }
 }
 
@@ -388,7 +430,11 @@ function projectDay(value: unknown, budget: ProjectionBudget): Probe<TripDay> {
     if (projected === FAIL) return FAIL
     legs.push(projected)
   }
-  return { day: dayNumber, date, title, summary, stops, legs }
+  const day: TripDay = { day: dayNumber, date, title, summary, stops, legs }
+  // 七期 S1：源对象有 city 键时保留；缺省不写键（旧行程往返不新增 undefined）。
+  const city = projectDayCity(value)
+  if (city !== undefined) day.city = city
+  return day
 }
 
 function projectTripValue(value: Record<string, unknown>, budget: ProjectionBudget): Probe<Trip> {
@@ -406,6 +452,8 @@ function projectTripValue(value: Record<string, unknown>, budget: ProjectionBudg
   if (value.map_coordinate_system !== 'WGS84') return FAIL
   const cityProfile = projectCityProfile(value.cityProfile)
   if (cityProfile === FAIL) return FAIL
+  const cityProfiles = projectCityProfiles(value.cityProfiles)
+  if (cityProfiles === FAIL) return FAIL
 
   const rawWarnings = value.warnings
   const rawDays = value.days
@@ -434,6 +482,7 @@ function projectTripValue(value: Record<string, unknown>, budget: ProjectionBudg
   }
   // 缺省时不写键：旧行程往返后不会多出 undefined 键；显式 null 按原值保留。
   if (cityProfile !== undefined) trip.cityProfile = cityProfile
+  if (cityProfiles !== undefined) trip.cityProfiles = cityProfiles
   return trip
 }
 
@@ -453,6 +502,117 @@ export function projectTrip(value: unknown): TripProjection {
       : { ok: false, reason: 'invalid_trip', message: MESSAGE_INVALID_TRIP }
   }
   return { ok: true, trip: projected }
+}
+
+/** 该天所属城市；旧行程没有 city 时回退主城 / destination。 */
+function dayCityName(day: TripDay, destination: string): string {
+  return day.city || destination
+}
+
+function formatIntercityDistance(distanceM: number): string {
+  return distanceM >= 1000 ? `${(distanceM / 1000).toFixed(1)} 公里` : `${distanceM} 米`
+}
+
+function formatIntercityMinutes(minutes: number): string {
+  const total = Math.round(minutes)
+  if (total < 60) return `${total} 分钟`
+  const hours = Math.floor(total / 60)
+  const remainder = total % 60
+  return remainder ? `${hours} 小时 ${remainder} 分钟` : `${hours} 小时`
+}
+
+/**
+ * 七期 S1：按后端 travel_itinerary.py 同口径生成当天的城际转移段。
+ * 同城 / 任一天没有站点返回 null；缺坐标降级为 unavailable。
+ */
+function buildIntercityLeg(
+  day: TripDay,
+  followingDay: TripDay,
+  destination: string,
+): TripLeg | null {
+  if (day.stops.length === 0 || followingDay.stops.length === 0) return null
+  const fromCity = dayCityName(day, destination)
+  const toCity = dayCityName(followingDay, destination)
+  if (fromCity === toCity) return null
+
+  const fromStop = day.stops[day.stops.length - 1]
+  const toStop = followingDay.stops[0]
+  const prefix = `城际转移：${fromCity} → ${toCity}`
+
+  if (fromStop.location === null || toStop.location === null) {
+    return {
+      from_stop_id: fromStop.id,
+      to_stop_id: toStop.id,
+      mode: 'driving',
+      route_type: 'unavailable',
+      distance_m: null,
+      duration_minutes: null,
+      geometry: [],
+      description: `${prefix}，缺少可信坐标，距离与耗时未知；具体班次与时刻未提供，请自行查询。`,
+      transferKind: 'intercity',
+    }
+  }
+
+  const distanceM = Math.round(
+    haversineKm(fromStop.location, toStop.location) * 1000,
+  )
+  const speedKmh =
+    distanceM >= INTERCITY_LONG_HAUL_THRESHOLD_M
+      ? INTERCITY_LONG_HAUL_SPEED_KMH
+      : INTERCITY_SHORT_HAUL_SPEED_KMH
+  const durationMinutes = Math.round(
+    (distanceM / 1000 / speedKmh) * 60 + INTERCITY_BUFFER_MINUTES,
+  )
+  return {
+    from_stop_id: fromStop.id,
+    to_stop_id: toStop.id,
+    mode: 'driving',
+    route_type: 'straight_line',
+    distance_m: distanceM,
+    duration_minutes: durationMinutes,
+    geometry: [
+      { lng: fromStop.location.lng, lat: fromStop.location.lat },
+      { lng: toStop.location.lng, lat: toStop.location.lat },
+    ],
+    description:
+      `${prefix}，直线约 ${formatIntercityDistance(distanceM)}；` +
+      `按 ${speedKmh} 公里/小时估算并预留 ${INTERCITY_BUFFER_MINUTES} 分钟，` +
+      `建议预留约 ${formatIntercityMinutes(durationMinutes)}。` +
+      '具体班次与时刻未提供，请自行查询。',
+    transferKind: 'intercity',
+  }
+}
+
+/**
+ * 七期 S1：重建相邻天之间的城际转移段（纯函数，不改输入）。
+ * - 先摘掉每天原有的 transferKind='intercity' 段，保证多次调用幂等；
+ * - 同城 / 缺站点 → 不生成；
+ * - 跨城 → 用当天末站与下天首站重算直线距离 / 时长，追加到当天 legs 末尾。
+ */
+export function rebuildIntercityLegs(
+  days: readonly TripDay[],
+  destination: string,
+): TripDay[] {
+  const result: TripDay[] = []
+  for (let index = 0; index < days.length; index += 1) {
+    const day = days[index]
+    const hasIntercity = day.legs.some((leg) => leg.transferKind === 'intercity')
+    const intercity =
+      index + 1 < days.length
+        ? buildIntercityLeg(day, days[index + 1], destination)
+        : null
+    // 没有旧城际段、也不需要新建时保持原对象引用（其它天的几何与引用都不动）。
+    if (!hasIntercity && intercity === null) {
+      result.push(day)
+      continue
+    }
+    const legs = hasIntercity
+      ? day.legs.filter((leg) => leg.transferKind !== 'intercity')
+      : [...day.legs]
+    if (intercity !== null) legs.push(intercity)
+    result.push({ ...day, legs })
+  }
+  return result
 }
 
 function normalizeIsoTimestamp(value: Date | number | string | undefined): string | null {

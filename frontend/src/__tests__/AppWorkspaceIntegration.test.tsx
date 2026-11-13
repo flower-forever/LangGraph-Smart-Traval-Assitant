@@ -499,7 +499,7 @@ describe('App 工作区与版本接线', () => {
       hubRegion().textContent.match(/revision (\d+)/)?.[1] ?? 0,
     )
     await user.click(screen.getByRole('button', { name: '住宿与抵离锚点' }))
-    await user.click(screen.getByRole('button', { name: '添加住宿信息' }))
+    await user.click(await screen.findByRole('button', { name: '添加住宿信息' }))
     await user.type(screen.getByLabelText('住宿名称'), '留存酒店')
     await user.type(screen.getByLabelText('入住日期（当地）'), '2026-04-03')
     await user.type(screen.getByLabelText('退房日期（当地）'), '2026-04-05')

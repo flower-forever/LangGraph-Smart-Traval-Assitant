@@ -31,14 +31,15 @@ import WebSourcesPanel from './components/WebSourcesPanel'
 import MapRefreshPanel from './components/MapRefreshPanel'
 import TripBudgetPanel from './components/TripBudgetPanel'
 import WorkspaceHub from './components/WorkspaceHub'
-import AnchorsPanel from './components/AnchorsPanel'
-import ConstraintsPanel, {
-  type ConstraintsPanelApplyRequest,
-} from './components/ConstraintsPanel'
-import ChecklistPanel, {
-  type ChecklistChangeHandler,
-} from './components/ChecklistPanel'
-import CandidatePoolPanel, {
+import {
+  AnchorsPanel,
+  CandidatePoolPanel,
+  ChecklistPanel,
+  ConstraintsPanel,
+} from './components/lazyWorkspacePanels'
+import { type ConstraintsPanelApplyRequest } from './components/ConstraintsPanel'
+import { type ChecklistChangeHandler } from './components/ChecklistPanel'
+import {
   type CandidatePoolSaveStatus,
   type CandidatePoolStorageStatus,
 } from './components/CandidatePoolPanel'
@@ -3847,80 +3848,88 @@ export default function App() {
 
                     {anchorsOpen && currentWorkspaceRecord !== null ? (
                       <div className={WSH_TOOL_PANEL}>
-                        <AnchorsPanel
-                          key={`anchors:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
-                          record={currentWorkspaceRecord}
-                          epoch={workspaceEpoch}
-                          newLegMode={draftMode}
-                          onApply={handleAnchorsApply}
-                          onClose={() => setAnchorsOpen(false)}
-                        />
+                        <Suspense fallback={<PanelLoadingFallback label="正在加载锚点面板…" />}>
+                          <AnchorsPanel
+                            key={`anchors:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
+                            record={currentWorkspaceRecord}
+                            epoch={workspaceEpoch}
+                            newLegMode={draftMode}
+                            onApply={handleAnchorsApply}
+                            onClose={() => setAnchorsOpen(false)}
+                          />
+                        </Suspense>
                       </div>
                     ) : null}
 
                     {constraintsOpen && currentWorkspaceRecord !== null ? (
                       <div className={WSH_TOOL_PANEL}>
-                        <ConstraintsPanel
-                          key={`constraints:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
-                          constraints={currentWorkspaceRecord.sidecar.constraints}
-                          trip={currentWorkspaceRecord.trip}
-                          workspaceRevision={currentWorkspaceRecord.workspaceRevision}
-                          epoch={workspaceEpoch}
-                          candidateTrip={currentWorkspaceRecord.trip}
-                          record={currentWorkspaceRecord}
-                          runtimeCapture={constraintsRuntimeCapture}
-                          planScope={constraintsScope}
-                          onApply={handleConstraintsApply}
-                          onClose={() => setConstraintsOpen(false)}
-                        />
+                        <Suspense fallback={<PanelLoadingFallback label="正在加载约束面板…" />}>
+                          <ConstraintsPanel
+                            key={`constraints:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
+                            constraints={currentWorkspaceRecord.sidecar.constraints}
+                            trip={currentWorkspaceRecord.trip}
+                            workspaceRevision={currentWorkspaceRecord.workspaceRevision}
+                            epoch={workspaceEpoch}
+                            candidateTrip={currentWorkspaceRecord.trip}
+                            record={currentWorkspaceRecord}
+                            runtimeCapture={constraintsRuntimeCapture}
+                            planScope={constraintsScope}
+                            onApply={handleConstraintsApply}
+                            onClose={() => setConstraintsOpen(false)}
+                          />
+                        </Suspense>
                       </div>
                     ) : null}
 
                     {checklistOpen && currentWorkspaceRecord !== null ? (
                       <div className={WSH_TOOL_PANEL}>
-                        <ChecklistPanel
-                          key={`checklist:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
-                          checklist={currentWorkspaceRecord.sidecar.checklist}
-                          trip={currentWorkspaceRecord.trip}
-                          constraints={currentWorkspaceRecord.sidecar.constraints}
-                          previousConstraints={checklistPreviousConstraints}
-                          status="ready"
-                          onChange={handleChecklistChange}
-                          onClose={() => setChecklistOpen(false)}
-                        />
+                        <Suspense fallback={<PanelLoadingFallback label="正在加载清单面板…" />}>
+                          <ChecklistPanel
+                            key={`checklist:${currentWorkspaceRecord.workspaceId}:${currentWorkspaceRecord.workspaceRevision}`}
+                            checklist={currentWorkspaceRecord.sidecar.checklist}
+                            trip={currentWorkspaceRecord.trip}
+                            constraints={currentWorkspaceRecord.sidecar.constraints}
+                            previousConstraints={checklistPreviousConstraints}
+                            status="ready"
+                            onChange={handleChecklistChange}
+                            onClose={() => setChecklistOpen(false)}
+                          />
+                        </Suspense>
                       </div>
                     ) : null}
 
                     {candidatePoolOpen ? (
                       <div className={WSH_TOOL_PANEL}>
-                        <CandidatePoolPanel
-                          record={candidatesRecord}
-                          draft={draft ?? candidateDraftBase}
-                          copySources={candidateCopySources}
-                          storageStatus={candidatesStorageStatus}
-                          storageMessage={candidatesStorageMessage}
-                          storageRevision={candidatesStorageRevision}
-                          saveStatus={candidatesSaveStatus}
-                          saveMessage={candidatesSaveMessage}
-                          onRecordChange={handleCandidatesRecordChange}
-                          onSave={handleSaveCandidates}
-                          onExport={handleExportCandidates}
-                          onImportRequest={handleCandidatesImportRequest}
-                          onAddToDraft={handleCandidateAddToDraft}
-                          poiCards={poiCardsRecord}
-                          onOpenPoiCard={(candidateName) => {
-                            ensurePoiCardsLoaded()
-                            // 候选条目 → 资料卡：按名称归一化定位已有卡；没有则新建态。
-                            const read = poiCardsReadRef.current ? poiCardsRecord : null
-                            const card =
-                              read?.cards.find(
-                                (item) =>
-                                  item.name.trim().toLowerCase() === candidateName.trim().toLowerCase(),
-                              ) ?? null
-                            setPoiCardOpenId(card === null ? null : card.id)
-                          }}
-                          onClose={() => setCandidatePoolOpen(false)}
-                        />
+                        <Suspense fallback={<PanelLoadingFallback label="正在加载候选地点池…" />}>
+                          <CandidatePoolPanel
+                            record={candidatesRecord}
+                            draft={draft ?? candidateDraftBase}
+                            copySources={candidateCopySources}
+                            storageStatus={candidatesStorageStatus}
+                            storageMessage={candidatesStorageMessage}
+                            storageRevision={candidatesStorageRevision}
+                            saveStatus={candidatesSaveStatus}
+                            saveMessage={candidatesSaveMessage}
+                            onRecordChange={handleCandidatesRecordChange}
+                            onSave={handleSaveCandidates}
+                            onExport={handleExportCandidates}
+                            onImportRequest={handleCandidatesImportRequest}
+                            onAddToDraft={handleCandidateAddToDraft}
+                            poiCards={poiCardsRecord}
+                            onOpenPoiCard={(candidateName) => {
+                              ensurePoiCardsLoaded()
+                              // 候选条目 → 资料卡：按名称归一化定位已有卡；没有则新建态。
+                              const read = poiCardsReadRef.current ? poiCardsRecord : null
+                              const card =
+                                read?.cards.find(
+                                  (item) =>
+                                    item.name.trim().toLowerCase() === candidateName.trim().toLowerCase(),
+                                ) ?? null
+                              setPoiCardOpenId(card === null ? null : card.id)
+                            }}
+                            onClose={() => setCandidatePoolOpen(false)}
+                          />
+                        </Suspense>
                         {candidatesImportPreview !== null ? (
                           <div className={WSH_TOOL_PANEL} role="region" aria-label="候选库导入预览">
                             <p className={WSH_TOOL_NOTE}>

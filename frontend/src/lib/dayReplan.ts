@@ -31,6 +31,7 @@ import {
   checkTripShape,
   savedTripRecordBytes,
 } from './savedTrips'
+import { rebuildIntercityLegs } from './tripTransfer'
 
 // ==================== 后端契约上限 ====================
 
@@ -294,6 +295,18 @@ function projectStop(
 }
 
 /**
+ * 该天请求 / 校验用的目的地：优先 day.city（去首尾空白），缺省回退 trip.destination。
+ * 与后端 `_day_city_name(day) or destination` 同义；空串也回退。
+ */
+function dayDestinationOf(
+  day: Pick<TripDay, 'city'> | null | undefined,
+  fallback: string,
+): string {
+  const city = typeof day?.city === 'string' ? day.city.trim() : ''
+  return city || fallback
+}
+
+/**
  * 从当前 Trip、目标 day、用户指令与显式选项构造单日重规划请求。
  * 目标日缺失 / 重复、字段超限、日期非严格 YYYY-MM-DD 都返回明确失败；原 Trip 不被修改。
  */
@@ -378,6 +391,16 @@ export function buildDayReplanRequest(
   if (!isRecord(sourceDay) || !Array.isArray(sourceDay.stops)) {
     return buildFailure('invalid_trip', `第 ${day} 天的站点数据结构不完整，未发起 AI 调整。`)
   }
+  const requestDestination = dayDestinationOf(
+    sourceDay as unknown as TripDay,
+    baseTrip.destination,
+  )
+  if (!isBoundedText(requestDestination, MAX_REPLAN_DESTINATION_LENGTH)) {
+    return buildFailure(
+      'invalid_destination',
+      `第 ${day} 天的城市名必须是 1-${MAX_REPLAN_DESTINATION_LENGTH} 字非空字符串；未发起 AI 调整。`,
+    )
+  }
   const date = sourceDay.date
   if (date !== null && !isStrictDate(date)) {
     return buildFailure(
@@ -410,7 +433,7 @@ export function buildDayReplanRequest(
   }
 
   const request: DayReplanRequest = {
-    destination: baseTrip.destination,
+    destination: requestDestination,
     day,
     date,
     travel_mode: options.travel_mode,
@@ -448,6 +471,8 @@ const DAY_KEYS: ReadonlySet<string> = new Set([
   'summary',
   'stops',
   'legs',
+  // 七期 S1：day.city（该天所在城市）
+  'city',
 ])
 const STOP_KEYS: ReadonlySet<string> = new Set([
   'id',
@@ -467,6 +492,8 @@ const LEG_KEYS: ReadonlySet<string> = new Set([
   'duration_minutes',
   'geometry',
   'description',
+  // 七期 S1：城际转移段标记
+  'transferKind',
 ])
 const LOCATION_KEYS: ReadonlySet<string> = new Set(['lng', 'lat'])
 const PARENT_KEYS: ReadonlySet<string> = new Set(['trip_id', 'revision'])
@@ -985,14 +1012,16 @@ export function applyDayReplan(input: ApplyDayReplanInput): DayReplanApplyResult
   }
   if (
     !isIntegerInRange(request.day, 1, MAX_REPLAN_DAYS) ||
-    (request.date !== null && !isStrictDate(request.date)) ||
-    request.destination !== baseTrip.destination
+    (request.date !== null && !isStrictDate(request.date))
   ) {
     return applyFailure('request_mismatch', '候选请求与当前行程的目标日或目的地不一致，AI 候选未应用。')
   }
   const baseDay = baseTrip.days.find((day) => day.day === request.day)
   if (!baseDay) {
     return applyFailure('unknown_day', `当前行程里没有第 ${request.day} 天，AI 候选未应用。`)
+  }
+  if (request.destination !== dayDestinationOf(baseDay, baseTrip.destination)) {
+    return applyFailure('request_mismatch', '候选请求与当前行程的目标日或目的地不一致，AI 候选未应用。')
   }
   if (baseDay.date !== request.date) {
     return applyFailure(
@@ -1021,7 +1050,10 @@ export function applyDayReplan(input: ApplyDayReplanInput): DayReplanApplyResult
     }
   }
 
-  const days = baseTrip.days.map((day) => (day.day === request.day ? candidateDay : day))
+  const days = rebuildIntercityLegs(
+    baseTrip.days.map((day) => (day.day === request.day ? candidateDay : day)),
+    baseTrip.destination,
+  )
   const composed = composeWarnings(
     request.day,
     days.length,
@@ -1038,6 +1070,10 @@ export function applyDayReplan(input: ApplyDayReplanInput): DayReplanApplyResult
     warnings: composed.warnings,
     days,
   }
+  // 七期 S1：单日重规划不重新生成城市导览；源行程有则原样保留（含 null），
+  // 没有则不凭空加键。否则多城数据会在一次单日调整后被静默丢掉。
+  if (baseTrip.cityProfile !== undefined) trip.cityProfile = baseTrip.cityProfile
+  if (baseTrip.cityProfiles !== undefined) trip.cityProfiles = baseTrip.cityProfiles
 
   const postShape = checkTripShape(trip)
   if (!postShape.ok) {

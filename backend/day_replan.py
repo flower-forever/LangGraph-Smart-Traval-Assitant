@@ -521,6 +521,7 @@ def _build_target_day(
             summary=summary,
             stops=stops,
             legs=legs,
+            city=base_day.city,
         ),
         new_origins,
     )

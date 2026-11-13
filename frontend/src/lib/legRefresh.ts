@@ -200,6 +200,8 @@ const LEG_KEYS: ReadonlySet<string> = new Set([
   'duration_minutes',
   'geometry',
   'description',
+  // 七期 S1：城际转移段标记
+  'transferKind',
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {

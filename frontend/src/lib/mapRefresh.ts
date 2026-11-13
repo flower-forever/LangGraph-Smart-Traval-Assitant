@@ -27,6 +27,7 @@ import {
   checkTripShape,
   savedTripRecordBytes,
 } from './savedTrips'
+import { rebuildIntercityLegs } from './tripTransfer'
 
 export type { MapStatus }
 
@@ -379,6 +380,8 @@ const LEG_KEYS: ReadonlySet<string> = new Set([
   'duration_minutes',
   'geometry',
   'description',
+  // 七期 S1：城际转移段标记
+  'transferKind',
 ])
 
 // ==================== 请求构造 ====================
@@ -1447,8 +1450,9 @@ export function applyMapRefresh(input: ApplyMapRefreshInput): MapRefreshApplyRes
     }
   }
 
-  const days = baseTrip.days.map((day) =>
-    day.day === request.day ? merge.day : day,
+  const days = rebuildIntercityLegs(
+    baseTrip.days.map((day) => (day.day === request.day ? merge.day : day)),
+    baseTrip.destination,
   )
   const trip: Trip = {
     id: forkTripId,
