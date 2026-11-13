@@ -12,6 +12,7 @@
  */
 import { chromium } from 'playwright-core'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { createServer as createViteServer } from 'vite'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
@@ -85,6 +86,11 @@ import {
   runP7SwapFlyToScenario,
   setP7AppOrigin,
 } from './p7Scenarios.mjs'
+import {
+  runP7MulticityThreeCityScenario,
+  runP7MulticityTwoCityScenario,
+  setP7MulticityAppOrigin,
+} from './p7MulticityScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1424,6 +1430,36 @@ async function scenarioP7Cinema() {
   }
 }
 
+async function scenarioP7MulticityTwoCity() {
+  const { context, page } = await newOfflineContext('p7MulticityTwoCity')
+  const rec = makeStepRecorder('p7MulticityTwoCity', 'desktop-1440')
+  try {
+    await runP7MulticityTwoCityScenario({
+      page,
+      rec,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.p7MulticityTwoCity = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioP7MulticityThreeCity() {
+  const { context, page } = await newOfflineContext('p7MulticityThreeCity')
+  const rec = makeStepRecorder('p7MulticityThreeCity', 'desktop-1440')
+  try {
+    await runP7MulticityThreeCityScenario({
+      page,
+      rec,
+      screenshot: (p, name) => screenshot(p, name),
+    })
+  } finally {
+    report.scenarios.p7MulticityThreeCity = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1445,7 +1481,7 @@ try {
     root: frontendRoot,
     // 依赖预构建缓存写到 Temp 区，不写共享 node_modules/.vite
     cacheDir: resolve(tmpdir(), 'opencode', 'night-20261105', 'vite-cache'),
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     // 与 vite.config.ts 的 alias 保持一致：S2 起组件用 @/components/ui/* 导入，
     // 内联配置（configFile:false）若缺 resolve.alias，Vite 解析会 500、App 不挂载
     resolve: {
@@ -1516,6 +1552,9 @@ try {
   await scenarioP7Stamp()
   await scenarioP7SwapFlyTo()
   await scenarioP7Cinema()
+  setP7MulticityAppOrigin(appOrigin)
+  await scenarioP7MulticityTwoCity()
+  await scenarioP7MulticityThreeCity()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))
