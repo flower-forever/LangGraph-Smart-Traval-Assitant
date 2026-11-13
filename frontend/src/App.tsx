@@ -17,7 +17,8 @@ import DetourInterceptCard from './components/DetourInterceptCard'
 import StampSeal from './components/StampSeal'
 import { useReducedMotion } from './lib/useReducedMotion'
 import { projectStopFacts } from './lib/stopFacts'
-import { paceLabelOf, type HealthPace } from './lib/itineraryHealth'
+import { paceLabelOf, type HealthItem, type HealthPace } from './lib/itineraryHealth'
+import type { MealWindowKey } from './lib/mealGap'
 import SavedTripsPanel from './components/SavedTripsPanel'
 import TripMap from './components/TripMap'
 import TripTransferPanel from './components/TripTransferPanel'
@@ -40,11 +41,11 @@ import {
   ChecklistPanel,
   ConstraintsPanel,
 } from './components/lazyWorkspacePanels'
-import { type ConstraintsPanelApplyRequest } from './components/ConstraintsPanel'
-import { type ChecklistChangeHandler } from './components/ChecklistPanel'
-import {
-  type CandidatePoolSaveStatus,
-  type CandidatePoolStorageStatus,
+import type { ConstraintsPanelApplyRequest } from './components/ConstraintsPanel'
+import type { ChecklistChangeHandler } from './components/ChecklistPanel'
+import type {
+  CandidatePoolSaveStatus,
+  CandidatePoolStorageStatus,
 } from './components/CandidatePoolPanel'
 import PoiCardPanel from './components/PoiCardPanel'
 import PoiCardBackupPanel from './components/PoiCardBackupPanel'
@@ -488,6 +489,8 @@ export default function App() {
   const [draft, setDraft] = useState<TripDraft | null>(null)
   /** 六期 S8：体检条目级操作面板（顺延 / 补一餐）；null = 关闭。 */
   const [healthAction, setHealthAction] = useState<'postpone' | 'meal' | null>(null)
+  /** S8-36：本次补餐优先采用的体检提示窗口；null = 无偏好（沿用午餐 → 晚餐）。 */
+  const [healthMealWindow, setHealthMealWindow] = useState<MealWindowKey | null>(null)
   /** 新建相邻路段的出行方式，进入编辑前由用户显式选择，不猜、不混用 */
   const [draftMode, setDraftMode] = useState<TravelMode>('walking')
   /** 编辑草稿时出错的提示（创建草稿失败等），只在编辑区显示 */
@@ -2557,14 +2560,15 @@ export default function App() {
     setHealthAction('postpone')
   }, [])
 
-  /** 打开补餐面板：候选库只读加载（不写）+ 收起资料/网页面板。 */
-  const openMealSuggest = useCallback(() => {
+  /** 打开补餐面板：候选库只读加载（不写）+ 收起资料/网页面板；S8-36 带上体检提示窗口。 */
+  const openMealSuggest = useCallback((item: HealthItem) => {
     setPoiSourcesOpen(false)
     setWebSourcesOpen(false)
     if (candidatesRecord === null) {
       const read = loadCandidatesRecord(storageRef.current)
       if (read.record !== null) setCandidatesRecord(read.record)
     }
+    setHealthMealWindow(item.preferredWindow ?? null)
     setHealthAction('meal')
   }, [candidatesRecord])
 
@@ -4536,6 +4540,7 @@ export default function App() {
                       baseDay={currentDay}
                       draft={draft}
                       city={trip && isMultiCityTrip(trip) ? activeCity : undefined}
+                      preferredWindow={healthMealWindow}
                       onCreateDraft={createHealthDraft}
                       onDraftChange={setDraft}
                       candidates={candidatesRecord?.items ?? null}

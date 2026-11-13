@@ -181,6 +181,33 @@ describe('findMealInsertion', () => {
     expect(result.message).toContain('不提供会重叠的方案')
     expect(result.gaps).toHaveLength(0)
   })
+
+  it('S8-36 优先体检提示窗口：两窗都可用时，晚餐偏好选晚餐而非默认午餐', () => {
+    const day = makeDay([
+      makeStop('09:00', 60),
+      makeStop('11:00', 60),
+      makeStop('13:00', 60),
+      makeStop('17:00', 90),
+    ])
+    const lunch = findMealInsertion(day, 'lunch')
+    const dinner = findMealInsertion(day, 'dinner')
+    expect(lunch.ok).toBe(true)
+    expect(dinner.ok).toBe(true)
+    if (!lunch.ok || !dinner.ok) return
+    expect(lunch.slot.window).toBe('lunch')
+    expect(lunch.slot.startTime).toBe('12:00')
+    expect(dinner.slot.window).toBe('dinner')
+    expect(dinner.slot.startTime).toBe('18:30')
+  })
+
+  it('S8-36 提示窗口无 45 分钟空档 → 回退另一窗口（由面板显式说明）', () => {
+    const day = mealDay()
+    const result = findMealInsertion(day, 'dinner')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.slot.window).toBe('lunch')
+    expect(result.slot.startTime).toBe('12:00')
+  })
 })
 
 describe('buildMealCandidates', () => {
@@ -325,6 +352,42 @@ describe('applyMealInsertionToDraft', () => {
       '17:00',
     ])
     expect(undone.draft.days[0].legs).toEqual(day.legs)
+  })
+
+  it('S8-36 传入提示窗口时，预览与写入使用同一窗口（晚餐 18:30）', () => {
+    const day = makeDay([
+      makeStop('09:00', 60),
+      makeStop('11:00', 60),
+      makeStop('13:00', 60),
+      makeStop('17:00', 90),
+    ])
+    const draftCreated = createTripDraft(makeTrip(day), {
+      forkTripId: 'trip-meal-fork-3',
+      newLegMode: 'walking',
+    })
+    if (!draftCreated.ok) throw new Error(draftCreated.message)
+    const [candidateItem] = buildMealCandidates({
+      candidates: [candidate('c1', '老字号面馆')],
+      anchorStop: day.stops[3],
+      now: NOW,
+    })
+    const slotResult = findMealInsertion(day, 'dinner')
+    if (!slotResult.ok) throw new Error(slotResult.message)
+    expect(slotResult.slot.window).toBe('dinner')
+    expect(slotResult.slot.startTime).toBe('18:30')
+
+    const written = applyMealInsertionToDraft(
+      draftCreated.draft,
+      1,
+      slotResult.slot,
+      candidateItem,
+      'meal-stop-3',
+      'dinner',
+    )
+    expect(written.ok).toBe(true)
+    if (!written.ok) return
+    expect(written.draft.days[0].stops[4].time).toBe('18:30')
+    expect(written.draft.days[0].stops[4].name).toBe('老字号面馆')
   })
 
   it('预览后空档变化 → 拒绝写入，草稿保持原样', () => {

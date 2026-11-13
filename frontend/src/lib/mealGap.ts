@@ -234,15 +234,26 @@ export type MealInsertionResult =
     }
 
 /**
- * 找「最近的可用用餐空档」：按午餐 → 晚餐顺序，取当天最早一个 ≥45 分钟的空档。
+ * 找「最近的可用用餐空档」：默认按午餐 → 晚餐顺序，取当天最早一个 ≥45 分钟的空档。
+ * S8-36：调用方给出 preferredWindow 时，先在该窗口内取最早可用空档；
+ * 该窗口没有 ≥45 分钟空档时再回退到另一窗口（由界面显式说明回退，不静默换窗）。
  * 没有这样的空档 → no_slot（不提供会重叠的插入方案）。
  */
-export function findMealInsertion(day: TripDay): MealInsertionResult {
+export function findMealInsertion(
+  day: TripDay,
+  preferredWindow: MealWindowKey | null = null,
+): MealInsertionResult {
   const scan = scanMealGaps(day)
   if (!scan.ok) {
     return { ok: false, reason: scan.reason, message: scan.message, gaps: [] }
   }
-  const usable = scan.gaps.find((gap) => gap.minutes >= MEAL_MINUTES)
+  const usableInPreferred =
+    preferredWindow === null
+      ? undefined
+      : scan.gaps.find(
+          (gap) => gap.window === preferredWindow && gap.minutes >= MEAL_MINUTES,
+        )
+  const usable = usableInPreferred ?? scan.gaps.find((gap) => gap.minutes >= MEAL_MINUTES)
   if (usable === undefined) {
     const largest = scan.gaps.reduce((max, gap) => Math.max(max, gap.minutes), 0)
     const largestText = largest > 0 ? `最大空档只有 ${largest} 分钟` : '两个窗口都没有空档'
@@ -484,6 +495,7 @@ export function applyMealInsertionToDraft(
   slot: MealInsertionSlot,
   candidate: MealCandidate,
   stopId: string,
+  preferredWindow: MealWindowKey | null = null,
 ): DraftEditResult {
   const day = draft.days.find((item) => item.day === dayNumber)
   if (!day) {
@@ -493,7 +505,7 @@ export function applyMealInsertionToDraft(
       message: `草稿里没有第 ${dayNumber} 天，补餐未生效。`,
     }
   }
-  const current = findMealInsertion(day)
+  const current = findMealInsertion(day, preferredWindow)
   if (
     !current.ok ||
     current.slot.window !== slot.window ||

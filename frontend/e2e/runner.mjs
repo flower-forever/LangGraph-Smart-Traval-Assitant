@@ -91,6 +91,13 @@ import {
   runP7MulticityTwoCityScenario,
   setP7MulticityAppOrigin,
 } from './p7MulticityScenarios.mjs'
+import {
+  runP7LazyAnchorsScenario,
+  runP7LazyCandidatePoolScenario,
+  runP7LazyChecklistScenario,
+  runP7LazyConstraintsScenario,
+  setP7LazyAppOrigin,
+} from './p7LazyWorkspaceScenarios.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendRoot = resolve(here, '..')
@@ -1460,6 +1467,35 @@ async function scenarioP7MulticityThreeCity() {
   }
 }
 
+/** ───────────────────────── 七期 S2 · 四个 lazy 面板 ───────────────────────── */
+
+async function runLazyPanelScenario(label, runner) {
+  const { context, page } = await newOfflineContext(label)
+  const rec = makeStepRecorder(label, 'desktop-1440')
+  try {
+    await runner({ page, rec, screenshot: (p, name) => screenshot(p, name) })
+  } finally {
+    report.scenarios[label] = rec.state
+    await context.close().catch(() => {})
+  }
+}
+
+async function scenarioP7LazyAnchors() {
+  await runLazyPanelScenario('p7LazyAnchors', runP7LazyAnchorsScenario)
+}
+
+async function scenarioP7LazyConstraints() {
+  await runLazyPanelScenario('p7LazyConstraints', runP7LazyConstraintsScenario)
+}
+
+async function scenarioP7LazyChecklist() {
+  await runLazyPanelScenario('p7LazyChecklist', runP7LazyChecklistScenario)
+}
+
+async function scenarioP7LazyCandidatePool() {
+  await runLazyPanelScenario('p7LazyCandidatePool', runP7LazyCandidatePoolScenario)
+}
+
 /** ───────────────────────── 编排：从第一个资源起全程 try/finally ───────────────────────── */
 
 let bootstrapError = null
@@ -1555,6 +1591,11 @@ try {
   setP7MulticityAppOrigin(appOrigin)
   await scenarioP7MulticityTwoCity()
   await scenarioP7MulticityThreeCity()
+  setP7LazyAppOrigin(appOrigin)
+  await scenarioP7LazyAnchors()
+  await scenarioP7LazyConstraints()
+  await scenarioP7LazyChecklist()
+  await scenarioP7LazyCandidatePool()
 } catch (error) {
   bootstrapError = error
   recordFailure('bootstrap', String(error).slice(0, 400))

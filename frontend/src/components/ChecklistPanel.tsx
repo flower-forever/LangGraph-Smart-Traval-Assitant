@@ -669,6 +669,7 @@ export default function ChecklistPanel({
     <section
       className="grid min-w-0 gap-4 rounded-[14px] border border-[color:var(--color-line-strong)] bg-card p-5 shadow-[var(--shadow-1)] max-md:p-4"
       aria-labelledby={headingId}
+      data-testid="checklist-panel"
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">

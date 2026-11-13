@@ -586,7 +586,7 @@ export default function ConstraintsPanel(props: ConstraintsPanelProps) {
       : (trip.days.find((entry) => entry.day === formDayNumber)?.stops ?? [])
 
   return (
-    <section className={PANEL} aria-labelledby={`${ids}-heading`}>
+    <section className={PANEL} aria-labelledby={`${ids}-heading`} data-testid="constraints-panel">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-[1_1_260px]">
           <p className="m-0 mb-1 text-xs tracking-[0.12em] text-[color:var(--color-accent-foreground)]">

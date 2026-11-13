@@ -115,6 +115,7 @@ function Harness({
   initialDraft = null,
   day = DAY,
   candidates = CANDIDATES,
+  preferredWindow = null,
   onCreateDraft = () => createTripDraft(TRIP, { forkTripId: 'trip-meal-panel-fork', newLegMode: 'walking' }),
   createStopId = () => 'meal-stop-panel',
   onChangeSpy,
@@ -123,6 +124,7 @@ function Harness({
   initialDraft?: TripDraft | null
   day?: TripDay
   candidates?: readonly CandidateItemV1[]
+  preferredWindow?: 'lunch' | 'dinner' | null
   onCreateDraft?: () => ReturnType<typeof createTripDraft>
   createStopId?: () => string
   onChangeSpy?: (next: TripDraft) => void
@@ -134,6 +136,7 @@ function Harness({
       <MealSuggestPanel
         baseDay={day}
         draft={draft}
+        preferredWindow={preferredWindow}
         onCreateDraft={onCreateDraft}
         onDraftChange={(next) => {
           setDraft(next)
@@ -260,6 +263,29 @@ describe('MealSuggestPanel', () => {
     const missing = screen.getByTestId('meal-slot-missing')
     expect(missing.textContent).toContain('不提供会重叠的方案')
     expect(screen.queryAllByTestId('meal-candidate')).toHaveLength(0)
+  })
+
+  it('S8-36 有提示窗口时优先该窗口；两窗都可用也不退回默认午餐', () => {
+    const bothDay = makeDay([
+      makeStop('09:00', 60, { id: 'both-s1', name: '上午站' }),
+      makeStop('11:00', 60, { id: 'both-s2', name: '午前站' }),
+      makeStop('13:00', 60, { id: 'both-s3', name: '下午站' }),
+      makeStop('17:00', 90, { id: 'both-s4', name: '傍晚站' }),
+    ])
+    render(<Harness day={bothDay} preferredWindow="dinner" />)
+    const slot = screen.getByTestId('meal-slot')
+    expect(slot.textContent).toContain('晚餐 18:30–19:15')
+    expect(screen.queryByTestId('meal-window-fallback')).toBeNull()
+  })
+
+  it('S8-36 提示窗口没有 45 分钟空档 → 回退另一窗口并显式说明，不静默换窗', () => {
+    render(<Harness preferredWindow="dinner" />)
+    const slot = screen.getByTestId('meal-slot')
+    expect(slot.textContent).toContain('午餐 12:00–12:45')
+    const fallback = screen.getByTestId('meal-window-fallback')
+    expect(fallback.textContent).toContain('晚餐窗口偏紧')
+    expect(fallback.textContent).toContain('已改用午餐空档')
+    expect(fallback.textContent).toContain('建议顺延')
   })
 
   it('创建草稿失败 → 明示错误且不写任何草稿', async () => {

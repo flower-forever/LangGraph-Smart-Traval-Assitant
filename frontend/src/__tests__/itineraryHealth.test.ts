@@ -190,6 +190,24 @@ describe('inspectDayHealth · 十类问题行程', () => {
     expectNoFalseCertainty(report.items)
   })
 
+  it('5b. S8-36 体检条目携带首个出问题的窗口，供补餐优先选择', () => {
+    const lunchDay = makeDay([makeStop({ time: '11:00', duration_minutes: 180 })])
+    const lunchReport = inspectDayHealth(lunchDay, 'balanced', noFacts(lunchDay.stops))
+    expect(itemOf(lunchReport, 'meal_gap')?.preferredWindow).toBe('lunch')
+
+    const dinnerDay = makeDay([makeStop({ time: '17:00', duration_minutes: 180 })])
+    const dinnerReport = inspectDayHealth(dinnerDay, 'balanced', noFacts(dinnerDay.stops))
+    expect(itemOf(dinnerReport, 'meal_gap')?.preferredWindow).toBe('dinner')
+
+    // 两个窗口都偏紧时仍只给一个首选（午餐在前）。
+    const bothDay = makeDay([
+      makeStop({ time: '11:00', duration_minutes: 180 }),
+      makeStop({ time: '17:00', duration_minutes: 180 }),
+    ])
+    const bothReport = inspectDayHealth(bothDay, 'balanced', noFacts(bothDay.stops))
+    expect(itemOf(bothReport, 'meal_gap')?.preferredWindow).toBe('lunch')
+  })
+
   it('6. 日跨度过长：balanced 上限 10h，行程 11h → pace notice + evidence', () => {
     // 08:00 到达 + 600 分钟末站停留 → 跨度 600 分钟 = 10h，需要再超一点
     const stops = [makeStop({ time: '08:00', duration_minutes: 60 })]

@@ -15,7 +15,7 @@
 
 import type { TripDay, TripLeg, TripStop } from './api'
 import { findIntercityLeg } from './cityScope'
-import { isMealStopLike } from './mealGap'
+import { isMealStopLike, type MealWindowKey } from './mealGap'
 import type { StopFactField, StopFacts } from './stopFacts'
 import { analyzeDayRoute, haversineKm } from './routeFlow'
 
@@ -46,6 +46,11 @@ export interface HealthItem {
   evidence: string
   /** 只指向手动入口的说明；unknown 项为 null。 */
   suggestion: string | null
+  /**
+   * S8-36：meal_gap 首个出问题的用餐窗口，供「补一餐」优先选择。
+   * 仅 meal_gap notice 携带；其他条目 / unknown 缺省不写。
+   */
+  preferredWindow?: MealWindowKey
 }
 
 /** 一天的体检输出：问题清单 + 汇总计数。 */
@@ -358,13 +363,15 @@ function checkMealGaps(day: TripDay): HealthItem | null {
   if (day.stops.length === 0) return null
 
   const problems: string[] = []
+  /** S8-36：记录首个出问题的窗口，供补餐面板「优先体检提示窗口」。 */
+  let preferredWindow: MealWindowKey | undefined
   /** S8-39：窗口内已有餐饮站 → 视为已安排正餐，不再按空档不足报 notice。 */
   const mealStops: string[] = []
-  const windows: Array<[string, { start: string; end: string }]> = [
-    ['午餐', LUNCH_WINDOW],
-    ['晚餐', DINNER_WINDOW],
+  const windows: Array<[MealWindowKey, string, { start: string; end: string }]> = [
+    ['lunch', '午餐', LUNCH_WINDOW],
+    ['dinner', '晚餐', DINNER_WINDOW],
   ]
-  for (const [label, window] of windows) {
+  for (const [key, label, window] of windows) {
     const windowStart = parseHhMm(window.start)
     const windowEnd = parseHhMm(window.end)
     // 口径：到达时间落在窗口内（左闭右开）且站名 / 描述命中餐饮关键词。
@@ -389,6 +396,7 @@ function checkMealGaps(day: TripDay): HealthItem | null {
     if (gap === null) continue
     if (gap < MAIN_MEAL_MIN_MINUTES) {
       problems.push(`${label}（${window.start}–${window.end}）窗口内最大空档仅 ${gap} 分钟`)
+      if (preferredWindow === undefined) preferredWindow = key
     }
   }
 
@@ -408,6 +416,7 @@ function checkMealGaps(day: TripDay): HealthItem | null {
         `${DINNER_WINDOW.start}-${DINNER_WINDOW.end} 各留至少 ${MAIN_MEAL_MIN_MINUTES} 分钟；` +
         '占用按站点到达时间 + 停留时长计算。本体检不确认沿途是否有餐馆。',
       suggestion: '可在「编辑这趟行程」里留出用餐时间，或让「AI 调整单日」避开饭点。',
+      ...(preferredWindow === undefined ? {} : { preferredWindow }),
     }
   }
   return null

@@ -24,6 +24,7 @@ import PostponePanel from '../components/PostponePanel'
 import MealSuggestPanel from '../components/MealSuggestPanel'
 import type { Trip, TripDay, TripLeg, TripStop } from '../lib/api'
 import { inspectDayHealth, type HealthPace } from '../lib/itineraryHealth'
+import type { MealWindowKey } from '../lib/mealGap'
 import { createTripDraft, type TripDraft } from '../lib/tripDraft'
 import type { CandidateItemV1 } from '../lib/workspace'
 
@@ -138,6 +139,7 @@ const TRIP = makeTrip(variant)
 function HarnessApp() {
   const [draft, setDraft] = useState<TripDraft | null>(null)
   const [panel, setPanel] = useState<'postpone' | 'meal' | null>(null)
+  const [mealPreferredWindow, setMealPreferredWindow] = useState<MealWindowKey | null>(null)
   const [recheckCount, setRecheckCount] = useState(0)
   const [recheckDay, setRecheckDay] = useState<number | null>(null)
   const stopSeqRef = useRef(0)
@@ -179,7 +181,10 @@ function HarnessApp() {
             <HealthActionEntry
               item={item}
               onSuggestPostpone={() => setPanel('postpone')}
-              onSuggestMeal={() => setPanel('meal')}
+              onSuggestMeal={(item) => {
+                setMealPreferredWindow(item.preferredWindow ?? null)
+                setPanel('meal')
+              }}
             />
           </div>
         ))}
@@ -201,6 +206,7 @@ function HarnessApp() {
         <MealSuggestPanel
           baseDay={TRIP.days[0]}
           draft={draft}
+          preferredWindow={mealPreferredWindow}
           onCreateDraft={createDraft}
           onDraftChange={setDraft}
           candidates={emptyCandidates ? [] : MEAL_CANDIDATES}

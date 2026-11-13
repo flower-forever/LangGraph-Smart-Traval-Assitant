@@ -20,12 +20,14 @@ import type { PoiCardsRecordV1 } from '../lib/poiCards'
 import type { CandidateItemV1 } from '../lib/workspace'
 import {
   MEAL_CANDIDATE_LIMIT,
+  MEAL_WINDOWS,
   applyMealInsertionToDraft,
   buildMealCandidates,
   findMealInsertion,
   topMealCandidates,
   type MealCandidate,
   type MealInsertionSlot,
+  type MealWindowKey,
 } from '../lib/mealGap'
 import { SWAP_TRUST_LABELS, formatStraightDistance } from '../lib/stopSwap'
 import type { DraftCreateResult, TripDraft } from '../lib/tripDraft'
@@ -51,6 +53,11 @@ export interface MealSuggestPanelProps {
    * 缺省 / 空串 = 与旧行为一致。
    */
   city?: string | null
+  /**
+   * S8-36：体检提示的用餐窗口。传入时优先在该窗口找空档；
+   * 该窗口没有 45 分钟空档才回退到另一窗口，并在面板明示回退。
+   */
+  preferredWindow?: MealWindowKey | null
   /** 资料卡库；可空。 */
   poiCards?: PoiCardsRecordV1 | null
   /** 新站点 id 由调用方生成（与 TripDraftEditor 的 createStopId 同一纪律）。 */
@@ -96,6 +103,7 @@ export default function MealSuggestPanel({
   onDraftChange,
   candidates = null,
   city = null,
+  preferredWindow = null,
   poiCards = null,
   createStopId,
   now,
@@ -106,7 +114,10 @@ export default function MealSuggestPanel({
   const day = draft?.days.find((item) => item.day === baseDay.day) ?? baseDay
   const nowValue = now ?? Date.now()
 
-  const insertion = useMemo(() => findMealInsertion(day), [day])
+  const insertion = useMemo(
+    () => findMealInsertion(day, preferredWindow),
+    [day, preferredWindow],
+  )
   const anchorStop = useMemo(() => {
     if (!insertion.ok) return null
     return day.stops[insertion.slot.index - 1] ?? day.stops[insertion.slot.index] ?? null
@@ -189,6 +200,7 @@ export default function MealSuggestPanel({
       preview.slot,
       preview.candidate,
       stopId,
+      preferredWindow,
     )
     if (!written.ok) {
       setError(written.message)
@@ -243,6 +255,10 @@ export default function MealSuggestPanel({
     ? (insertion.slot.index > 0 ? 1 : 0) +
       (insertion.slot.index < day.stops.length ? 1 : 0)
     : 0
+  const preferredLabel =
+    preferredWindow === null ? null : MEAL_WINDOWS[preferredWindow].label
+  const windowFallback =
+    insertion.ok && preferredLabel !== null && insertion.slot.window !== preferredWindow
 
   return (
     <section
@@ -282,6 +298,17 @@ export default function MealSuggestPanel({
           最近用餐空档：{insertion.slot.label} {insertion.slot.startTime}–{insertion.slot.endTime}
           （本餐 {insertion.slot.minutes} 分钟，空档共 {insertion.slot.gapMinutes} 分钟）；
           插入位置：{positionText(insertion.slot)}。
+        </p>
+      )}
+
+      {windowFallback && (
+        <p
+          className="m-0 rounded-[6px] border border-[color:var(--color-line)] px-3 py-2 text-xs leading-relaxed text-[color:var(--color-warn-ink)]"
+          role="status"
+          data-testid="meal-window-fallback"
+        >
+          体检提示{preferredLabel}窗口偏紧：该窗口内没有 45 分钟连续空档，已改用
+          {insertion.slot.label}空档。如需留在{preferredLabel}，请先用「建议顺延」拉开时段。
         </p>
       )}
 

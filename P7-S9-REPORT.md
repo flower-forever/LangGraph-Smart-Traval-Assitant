@@ -36,29 +36,38 @@
 
 ## 二、DoD 复核
 
+> 2026-11-14 P7 收官更新：本表为 S9 当日（11-13）基线数字；S8-36 与 S2 lazy 修复已在收官补做，
+> 见下文「S8-36 与 S2 lazy 修复」一节与更新后的验证数字。
+
 | # | 要求 | 结果 |
 |---|---|---|
-| 1 | fullsuite 全绿 | vitest 186 文件 / 3083 例；pytest 2100 passed / 3 skipped；E2E 37 场景 / 0 failure |
+| 1 | fullsuite 全绿 | vitest 186 文件 / 3089 例（11-14 复跑）；pytest 2100 passed / 3 skipped（11-14 复跑）；E2E 41 场景 / 0 failure（37 + 新增 4 个 lazy 场景） |
 | 2 | 两城端到端真实演示 + 地图取证 + 三城冒烟 | 两城与三城均走真实 App；地图站点点数、城市切换、城际卡均有断言；7 张截图 |
-| 3 | 既有回归 | 37 个 E2E 场景全量执行（含既有 32 个与 P7 前 3 个）；既有 fixture 未改；typecheck 0 error |
-| 4 | 主包 ≤1450 kB | 1337.05 kB |
+| 3 | 既有回归 | 41 个 E2E 场景全量执行（既有 37 个断言未动）；既有 fixture 未改；typecheck 0 error |
+| 4 | 主包 ≤1450 kB | 1337.29 kB（11-14 复测；S2 lazy 修复后 Constraints/Checklist/CandidatePool 拆为独立 chunk，主包几乎不变） |
 | 5 | 城际三态 + model_generated 取证 | estimated / unknown / 无卡三态齐备；导览徽标与 fixture source 取证 |
-| 6 | S8-36 / S6-30 / S8-39 / 3 个 E2E | S8-36 全仓无 preferredWindow，确认不适用；S6-30 已有单测；S8-39 为用户授权的识别扩展；P7 E2E 3 个均在 |
-| 7 | 未完项归档、双 CI 一致 | 见下节；feat 与 main 推送后各跑一次全量 CI |
+| 6 | S8-36 / S6-30 / S8-39 / 3 个 E2E | ~~S8-36 全仓无 preferredWindow，确认不适用~~（**11-14 更正：已实现**，见下节）；S6-30 已有单测；S8-39 为用户授权的识别扩展；P7 E2E 3 个均在 |
+| 7 | 未完项归档 + 双 CI 一致 | 未完项已归档至 `P7-P8-ARCHIVE.md`（六部分：已消解项 / P6 剩余 27 条 / P6.5 留观 8 条+X2-M1 触发条件 / 八期四缺口 / 新增观察项 / 永不修 7 条）；feat 与 main 推送后同一提交、全量 CI |
 
 ## 三、验证命令与结果
 
-在仓库根目录执行：
+在仓库根目录执行（2026-11-14 收官复跑）：
 
 ```text
 pnpm --dir frontend typecheck        # 345 个 .ts/.tsx，0 error
-pnpm --dir frontend test             # 186 files / 3083 tests passed（149.67s）
-.venv\Scripts\python.exe -m pytest -q  # 2100 passed / 3 skipped（357.46s）
-pnpm --dir frontend build            # 主包 1337.05 kB（门禁 1450）
-pnpm --dir frontend run verify:e2e   # 37 scenarios / 0 failures
+pnpm --dir frontend test             # 186 files / 3089 tests passed（137.28s）
+.venv\Scripts\python.exe -m pytest -q  # 2100 passed / 3 skipped
+pnpm --dir frontend build            # 主包 1337.29 kB（门禁 1450）
+pnpm --dir frontend run verify:e2e   # 41 scenarios / 0 failures（37 + 4 lazy）
 ```
 
-E2E 路由取证：`fulfilledTiles=823`、`abortedExternal=0`、`continuedLocal=6645`、`handlerErrors=0`、`actualOutbound=0`；console 未预期 0。报告文件 `frontend/e2e/artifacts/report.json`，`scenarios.p7MulticityTwoCity.ok=true`、`scenarios.p7MulticityThreeCity.ok=true`。
+E2E 路由取证：`fulfilledTiles=865`、`abortedExternal=0`、`continuedLocal=6972`、`handlerErrors=0`、`actualOutbound=0`；console 未预期 0。报告文件 `frontend/e2e/artifacts/report.json`，`scenarios.p7MulticityTwoCity.ok=true`、`scenarios.p7MulticityThreeCity.ok=true`、4 个 lazy 场景 `ok=true`。
+
+## 三A、S8-36 与 S2 lazy 修复（2026-11-14 收官补做）
+
+**S8-36 补餐优先体检提示窗口**：`itineraryHealth.checkMealGaps` 现在为出问题的补餐缺口记录 `preferredWindow`（午餐优先），`MealSuggestPanel` 接收该 prop；`findMealInsertion(day, preferredWindow?)` 优先在该窗口找 45 分钟空档，找不到时**回退另一窗口并在面板明示**（`meal-window-fallback` 文案，如「晚餐窗口偏紧，已改用午餐空档」），不静默换窗；`applyMealInsertionToDraft` 同参数保证预览与写入一致。新增 6 个单测（mealGap / MealSuggestPanel / itineraryHealth）与 E2E fallback 断言。修正 S8 当时「不适用」的误判——S8-36 实为待新增的透传参数，非既有能力缺失。
+
+**S2 lazy 面板首屏抢跑修复**：App.tsx 原先 `import { type X } from './components/...'` 在 Vite/esbuild 下被保留为 `import {} from`，导致 ConstraintsPanel / ChecklistPanel / CandidatePoolPanel 首屏即被请求，lazy 实际失效。已改为 `import type { ... }`，三面板拆为独立 chunk、点击后才加载。新增 `p7LazyWorkspaceScenarios.mjs` 4 个场景（Anchors / Constraints / Checklist / CandidatePool），各自断言首屏模块请求 0、点击后 ≥1、面板真实内容出现、无横向溢出。
 
 ## 四、范围与限制（如实说明）
 
@@ -68,4 +77,4 @@ E2E 路由取证：`fulfilledTiles=823`、`abortedExternal=0`、`continuedLocal=
 
 ## 五、提交
 
-本次只 stage 上述 2 个 E2E 文件与 S8/S9 报告；不包含既存 `_repro_surrogate.py`。未使用 force/reset/stash/clean/worktree，未读 `.env` 与 `_repro_surrogate.py`。
+本次 stage 上述 2 个 E2E 文件、S8-36/lazy 相关源码与测试、S8/S9 报告与 `P7-P8-ARCHIVE.md`；不包含既存 `_repro_surrogate.py`。未使用 force/reset/stash/clean/worktree，未读 `.env` 与 `_repro_surrogate.py`。

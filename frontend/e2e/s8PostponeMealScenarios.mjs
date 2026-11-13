@@ -30,6 +30,7 @@ const sel = {
   postponeForkNote: '[data-testid="postpone-fork-note"]',
   mealPanel: '[data-testid="meal-suggest-panel"]',
   mealSlot: '[data-testid="meal-slot"]',
+  mealWindowFallback: '[data-testid="meal-window-fallback"]',
   mealCandidate: '[data-testid="meal-candidate"]',
   mealPreview: '[data-testid="meal-preview"]',
   mealConfirm: '[data-testid="meal-confirm"]',
@@ -139,6 +140,9 @@ export async function runS8MealSequence({ page, rec, screenshot, appOrigin }) {
     expectTrue(slot.includes('午餐 12:00–12:45'), `最近空档异常：${slot}`)
     expectTrue(slot.includes('第 2 站「龙井村」之后'), `插入位置（前一站）异常：${slot}`)
     expectTrue(slot.includes('第 3 站「西湖」之前'), `插入位置（后一站）异常：${slot}`)
+    const fallback = await textOf(page, sel.mealWindowFallback)
+    expectTrue(fallback.includes('晚餐窗口偏紧'), `S8-36 未优先体检提示窗口：${fallback}`)
+    expectTrue(fallback.includes('已改用午餐空档'), `S8-36 回退未显式说明：${fallback}`)
     expectTrue((await textOf(page, sel.mealForkNote)).includes('基于当前行程创建'), '无草稿 fork 提示缺失')
 
     const count = await page.locator(sel.mealCandidate).count()
